@@ -4,7 +4,7 @@ Windows와 macOS에서 이미지 배경을 로컬로 제거하고 일괄 변환�
 
 ## 현재 구현
 
-- React/TypeScript 기반 3단 작업 화면과 확대·축소·이동 가능한 원본·결과 미리보기, 드래그 분할 비교
+- React/TypeScript 기반 3단 작업 화면과 접을 수 있는 좌우 패널, 확대·축소·이동 가능한 원본·편집 미리보기, 드래그 분할 비교
 - 파일·폴더 drag-and-drop 및 native picker, Rust 기반 이미지 유효성·크기 검사와 목록 썸네일 즉시 선로딩
 - UI와 분리된 동일 실행 파일의 `--worker` 모드 및 버전이 명시된 JSONL protocol
 - 최초 처리 시 U2NetP 모델 다운로드, 파일 크기·SHA-256 검증, 안전한 임시 파일 교체

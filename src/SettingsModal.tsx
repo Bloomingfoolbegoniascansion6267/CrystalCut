@@ -2,10 +2,11 @@ import { KeyboardEvent, useEffect, useRef, useState } from "react";
 import type { AppDiagnostics, AppPreferences, ModelStatus, OutputSettings } from "./types";
 import { formatBytes } from "./lib/format";
 
-type SettingsTab = "general" | "model" | "privacy" | "diagnostics";
+export type SettingsTab = "general" | "model" | "privacy" | "diagnostics";
 
 interface SettingsModalProps {
   open: boolean;
+  initialTab: SettingsTab;
   preferences: AppPreferences;
   currentSettings: OutputSettings;
   modelStatus: ModelStatus | null;
@@ -36,6 +37,7 @@ const clonePreferences = (preferences: AppPreferences): AppPreferences => ({
 
 export default function SettingsModal({
   open,
+  initialTab,
   preferences,
   currentSettings,
   modelStatus,
@@ -58,10 +60,10 @@ export default function SettingsModal({
   useEffect(() => {
     if (!open) return;
     setDraft(clonePreferences(preferences));
-    setTab("general");
+    setTab(initialTab);
     const frame = window.requestAnimationFrame(() => headingRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
-  }, [open, preferences]);
+  }, [initialTab, open, preferences]);
 
   if (!open) return null;
 
@@ -137,7 +139,7 @@ export default function SettingsModal({
 
       <section className="preferences-card">
         <div className="preferences-card-heading stacked">
-          <div><strong>새 작업 기본값</strong><span>작업 목록이 비어 있을 때 사용할 출력 recipe입니다.</span></div>
+          <div><strong>새 작업 기본값</strong><span>작업 목록이 비어 있을 때 사용할 출력 설정 조합입니다.</span></div>
           <button className="small-action" type="button" onClick={() => setDraft((current) => ({ ...current, defaultSettings: { ...currentSettings } }))}>현재 작업 설정 가져오기</button>
         </div>
         <div className="preferences-form-grid">
@@ -205,9 +207,9 @@ export default function SettingsModal({
         <dl className="metric-list">
           <div><dt>작업 데이터베이스</dt><dd>{formatBytes(diagnostics?.databaseBytes ?? 0)}</dd></div>
           <div><dt>자동 제거 모델</dt><dd>{formatBytes(modelStatus?.installedBytes ?? 0)}</dd></div>
-          <div><dt>현재 처리 장치</dt><dd>CPU · 자동 fallback</dd></div>
+          <div><dt>현재 처리 장치</dt><dd>CPU · 필요 시 자동 전환</dd></div>
         </dl>
-        <p className="preferences-note">{processing ? "현재 batch 처리 중이므로 모델 변경은 잠겨 있습니다." : "GPU provider 선택은 실제 DirectML/CoreML 검증을 마친 뒤 활성화합니다."}</p>
+        <p className="preferences-note">{processing ? "현재 일괄 처리 중이므로 모델 변경은 잠겨 있습니다." : "GPU 처리 장치 선택은 실제 DirectML/CoreML 검증을 마친 뒤 활성화합니다."}</p>
       </section>
     </div>
   );
@@ -239,7 +241,7 @@ export default function SettingsModal({
         </div>
         <dl className="metric-list diagnostics-list">
           <div><dt>Clearcut</dt><dd>v{diagnostics?.appVersion ?? "-"}</dd></div>
-          <div><dt>Worker protocol</dt><dd>v{diagnostics?.workerProtocolVersion ?? "-"}</dd></div>
+          <div><dt>처리 엔진 버전</dt><dd>v{diagnostics?.workerProtocolVersion ?? "-"}</dd></div>
           <div><dt>운영체제</dt><dd>{diagnostics ? `${diagnostics.operatingSystem} · ${diagnostics.architecture}` : "-"}</dd></div>
           <div><dt>모델</dt><dd>{modelStatus ? `${modelStatus.id} · ${modelStatus.installed ? "ready" : "not installed"}` : "-"}</dd></div>
         </dl>

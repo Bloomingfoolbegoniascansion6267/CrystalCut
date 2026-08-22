@@ -138,6 +138,8 @@ export default function PreviewEditor({
   const resultUrl = selectionNeedsPrompt ? null : previewIsActive
     ? asset.editBasePreviewUrl ?? asset.resultPreviewUrl ?? null
     : asset.resultPreviewUrl ?? asset.editBasePreviewUrl ?? null;
+  const showingEditPreview = Boolean(asset.editBasePreviewUrl) && (previewIsActive || !asset.resultPreviewUrl);
+  const resultLabel = showingEditPreview ? "저장 전 미리보기" : "저장된 결과";
   const maskId = `manual-mask-${asset.id.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const canPaint = editing && tool !== "pan" && asset.maskRecipe.mode !== "automatic";
 
@@ -305,11 +307,11 @@ export default function PreviewEditor({
         {(viewMode === "original" || viewMode === "compare" || (!resultUrl && viewMode === "result")) && asset.previewUrl && (
           <img className="editor-source-image" src={asset.previewUrl} alt={`${asset.name} 원본`} style={imageStyle} onLoad={(event) => setSourceSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} draggable={false} />
         )}
-        {viewMode === "result" && resultUrl && <img className="editor-result-image" src={resultUrl} alt={`${asset.name} 배경 제거 결과`} draggable={false} />}
+        {viewMode === "result" && resultUrl && <img className="editor-result-image" src={resultUrl} alt={`${asset.name} ${resultLabel}`} draggable={false} />}
         {viewMode === "mask" && asset.maskPreviewUrl && <img className="editor-result-image mask-image" src={asset.maskPreviewUrl} alt={`${asset.name} 흑백 마스크`} draggable={false} />}
         {viewMode === "compare" && resultUrl && (
           <div className="compare-result-clip" style={{ clipPath: `inset(0 0 0 ${comparePosition}%)` }}>
-            <img className="editor-result-image" src={resultUrl} alt={`${asset.name} 수정본`} draggable={false} />
+            <img className="editor-result-image" src={resultUrl} alt={`${asset.name} ${resultLabel}`} draggable={false} />
           </div>
         )}
         {editing && correctionActive && viewMode !== "compare" && (
@@ -328,8 +330,9 @@ export default function PreviewEditor({
         )}
       </div>
 
-      {viewMode === "compare" && resultUrl && <><span className="compare-label left">원본</span><span className="compare-label right">결과</span></>}
-      {(editing || previewStatus !== "idle") && <div className={`mask-preview-status ${previewStatus === "error" ? "error" : previewStatus}`} title={previewError ?? undefined}>{previewStatus === "updating" && <span className="spinner" />}{previewStatus === "updating" ? "미리보기 갱신 중" : previewStatus === "error" ? "미리보기 오류" : previewStatus === "current" ? "저장 설정과 일치" : "미리보기 준비"}</div>}
+      {viewMode === "result" && resultUrl && <span className={`preview-kind-label ${showingEditPreview ? "draft" : "saved"}`}>{resultLabel}</span>}
+      {viewMode === "compare" && resultUrl && <><span className="compare-label left">원본</span><span className="compare-label right">{resultLabel}</span></>}
+      {(editing || previewStatus !== "idle") && <div className={`mask-preview-status ${previewStatus === "error" ? "error" : previewStatus}`} role="status" aria-live="polite" title={previewError ?? undefined}>{previewStatus === "updating" && <span className="spinner" />}{previewStatus === "updating" ? "미리보기 갱신 중" : previewStatus === "error" ? "미리보기 오류" : previewStatus === "current" ? "현재 설정 반영됨" : "미리보기 준비"}</div>}
 
       {editing && (
         <>

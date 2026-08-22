@@ -1,10 +1,10 @@
-import { ChangeEvent, DragEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, ModelStatus, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
-import SettingsModal from "./SettingsModal";
+import SettingsModal, { type SettingsTab } from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
@@ -62,11 +62,22 @@ const STATUS_LABEL: Record<ImageAsset["status"], string> = {
   ready: "준비됨",
   queued: "대기 중",
   processing: "처리 중",
-  retrying: "Worker 복구 중",
+  retrying: "처리 엔진 복구 중",
   done: "완료",
   failed: "실패",
   cancelled: "취소됨",
   interrupted: "중단됨",
+};
+
+const STATUS_SHORT_LABEL: Record<ImageAsset["status"], string> = {
+  ready: "준비",
+  queued: "대기",
+  processing: "처리",
+  retrying: "재시도",
+  done: "완료",
+  failed: "오류",
+  cancelled: "취소",
+  interrupted: "중단",
 };
 
 const toPersistedAsset = (asset: ImageAsset): PersistedAsset => ({
@@ -135,6 +146,9 @@ function App() {
   const [isWorkspaceLoaded, setIsWorkspaceLoaded] = useState(!isTauri());
   const [preferences, setPreferences] = useState<AppPreferences>(DEFAULT_PREFERENCES);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("general");
+  const [isLibraryCollapsed, setIsLibraryCollapsed] = useState(false);
+  const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
   const [settingsBusyAction, setSettingsBusyAction] = useState<"save" | "model" | "reset" | null>(null);
   const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -766,7 +780,8 @@ function App() {
     }
   };
 
-  const openSettings = () => {
+  const openSettings = (tab: SettingsTab = "general") => {
+    setSettingsInitialTab(tab);
     setIsSettingsOpen(true);
     void refreshSettingsData();
   };
@@ -908,6 +923,11 @@ function App() {
 
   const setFormat = (format: OutputFormat) => setSettings((current) => ({ ...current, format }));
 
+  const resetOutputSettings = () => {
+    setSettings({ ...preferences.defaultSettings });
+    setNotice("출력 설정을 새 작업 기본값으로 되돌렸습니다. 파일별 객체·가장자리 편집은 유지됩니다.");
+  };
+
   const setProcessingMode = (processingMode: OutputSettings["processingMode"]) => {
     setSettings((current) => ({
       ...current,
@@ -1023,9 +1043,24 @@ function App() {
     document.execCommand(action);
   };
 
+  const handleViewTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const tabs = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("button[role='tab']:not([aria-disabled='true'])") ?? []);
+    if (!tabs.length) return;
+    const currentIndex = Math.max(0, tabs.indexOf(event.currentTarget));
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? tabs.length - 1
+        : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    event.preventDefault();
+    tabs[nextIndex].focus();
+    tabs[nextIndex].click();
+  };
+
   return (
     <div
-      className="app"
+      className={`app ${isLibraryCollapsed ? "library-collapsed" : ""} ${isInspectorCollapsed ? "inspector-collapsed" : ""}`}
       onContextMenu={openAppContextMenu}
       onDragEnter={(event) => { event.preventDefault(); setIsDragging(true); }}
       onDragOver={(event) => event.preventDefault()}
@@ -1040,20 +1075,21 @@ function App() {
           <span>Clearcut</span>
         </div>
         <div className="topbar-actions">
-          <span className={`model-pill ${modelStatus?.installed ? "ready" : ""}`} title={modelStatus?.purpose}>
+          <button className={`model-pill ${modelStatus?.installed ? "ready" : ""}`} title="AI 모델 설정 열기" onClick={() => openSettings("model")}>
             <span />자동 제거 AI {modelStatus?.installed ? "준비됨" : "필요 시 설치"}
-          </span>
+          </button>
           <button className="button secondary" onClick={addFilesFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="add" />파일 추가</button>
           <button className="button secondary desktop-only" onClick={addFolderFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="folder" />폴더 추가</button>
-          <button ref={settingsButtonRef} className="icon-button" aria-label="환경 설정" aria-haspopup="dialog" aria-expanded={isSettingsOpen} aria-controls="preferences-dialog" onClick={openSettings}><Icon name="settings" /></button>
+          <button ref={settingsButtonRef} className="icon-button" aria-label="환경 설정" title="환경 설정" aria-haspopup="dialog" aria-expanded={isSettingsOpen} aria-controls="preferences-dialog" onClick={() => openSettings("general")}><Icon name="settings" /></button>
         </div>
       </header>
 
       <main className="workspace">
-        <aside className="library-panel">
+        <aside className={`library-panel ${isLibraryCollapsed ? "collapsed" : ""}`}>
           <div className="panel-heading">
             <div><span className="eyebrow">작업 목록</span><strong>{assets.length}</strong></div>
             {assets.length > 0 && <span className="muted">{formatBytes(totalBytes)}</span>}
+            <button className="panel-toggle" onClick={() => setIsLibraryCollapsed((value) => !value)} aria-expanded={!isLibraryCollapsed} aria-label={isLibraryCollapsed ? "작업 목록 펼치기" : "작업 목록 접기"} title={isLibraryCollapsed ? "작업 목록 펼치기" : "작업 목록 접기"}><Icon name="chevron" size={15} /></button>
           </div>
           <div className="asset-list">
             {assets.length === 0 ? (
@@ -1066,7 +1102,7 @@ function App() {
                   <strong title={asset.name}>{asset.name}</strong>
                   <small>{formatDimensions(asset.width, asset.height)} · {formatBytes(asset.sizeBytes)}</small>
                 </span>
-                <span className={`status-dot ${asset.status}`} title={asset.error || STATUS_LABEL[asset.status]} />
+                <span className={`asset-status-badge ${asset.status}`} title={asset.error || STATUS_LABEL[asset.status]}>{STATUS_SHORT_LABEL[asset.status]}</span>
               </button>
             ))}
           </div>
@@ -1081,10 +1117,10 @@ function App() {
         <section className="canvas-panel">
           <div className="canvas-toolbar">
             <div className="view-tabs" role="tablist" aria-label="미리보기 모드">
-              <button className={effectiveViewMode === "original" ? "active" : ""} onClick={() => setViewMode("original")} role="tab" aria-selected={effectiveViewMode === "original"}>원본</button>
-              <button className={effectiveViewMode === "result" ? "active" : ""} onClick={() => setViewMode("result")} role="tab" disabled={!hasResultView}>결과</button>
-              <button className={effectiveViewMode === "mask" ? "active" : ""} onClick={() => setViewMode("mask")} role="tab" disabled={!hasMaskView}>마스크</button>
-              <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => setViewMode("compare")} role="tab" disabled={!hasResultView}>비교</button>
+              <button className={effectiveViewMode === "original" ? "active" : ""} onClick={() => setViewMode("original")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "original"}>원본</button>
+              <button className={effectiveViewMode === "result" ? "active" : ""} onClick={() => hasResultView ? setViewMode("result") : setNotice("객체 편집이나 가장자리 미리보기를 열면 편집 미리보기를 확인할 수 있습니다.")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "result"} aria-disabled={!hasResultView} title={hasResultView ? "현재 편집 미리보기 보기" : "먼저 객체 편집 또는 가장자리 미리보기를 실행하세요"}>미리보기</button>
+              <button className={effectiveViewMode === "mask" ? "active" : ""} onClick={() => hasMaskView ? setViewMode("mask") : setNotice("객체 편집이나 가장자리 미리보기를 열면 마스크를 확인할 수 있습니다.")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "mask"} aria-disabled={!hasMaskView} title={hasMaskView ? "흑백 마스크 보기" : "먼저 객체 편집 또는 가장자리 미리보기를 실행하세요"}>마스크</button>
+              <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => hasResultView ? setViewMode("compare") : setNotice("편집 미리보기가 준비된 뒤 원본과 비교할 수 있습니다.")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "compare"} aria-disabled={!hasResultView} title={hasResultView ? "원본과 현재 미리보기 비교" : "먼저 미리보기를 준비하세요"}>비교</button>
             </div>
             <div className="canvas-actions">
               <div className="preview-backgrounds" aria-label="미리보기 배경">
@@ -1095,10 +1131,10 @@ function App() {
               <span className="divider" />
               <button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={16} />{isMaskEditing ? "편집 중" : "객체 편집"}</button>
               <span className="divider" />
-              <button className="icon-button" aria-label="왼쪽으로 회전" onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
-              <button className="icon-button" aria-label="오른쪽으로 회전" onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /></button>
+              <button className="icon-button" aria-label="왼쪽으로 회전" title="왼쪽으로 90° 회전" onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
+              <button className="icon-button" aria-label="오른쪽으로 회전" title="오른쪽으로 90° 회전" onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /></button>
               <span className="divider" />
-              <button className="icon-button danger-hover" aria-label="목록에서 제거" onClick={removeSelected} disabled={!selected}><Icon name="trash" /></button>
+              <button className="icon-button danger-hover" aria-label="목록에서 제거" title="목록에서 제거 · 원본 유지" onClick={removeSelected} disabled={!selected}><Icon name="trash" /></button>
             </div>
           </div>
 
@@ -1144,22 +1180,24 @@ function App() {
           )}
         </section>
 
-        <aside className="inspector-panel">
+        <aside className={`inspector-panel ${isInspectorCollapsed ? "collapsed" : ""}`}>
           <div className="inspector-header">
             <span className="eyebrow">출력 설정</span>
-            <button className="text-button" onClick={() => setSettings(DEFAULT_SETTINGS)}>초기화</button>
+            <button className="text-button" onClick={resetOutputSettings} title="환경 설정의 새 작업 기본값으로 되돌립니다">출력 설정 초기화</button>
+            <button className="panel-toggle inspector-toggle" onClick={() => setIsInspectorCollapsed((value) => !value)} aria-expanded={!isInspectorCollapsed} aria-label={isInspectorCollapsed ? "설정 패널 펼치기" : "설정 패널 접기"} title={isInspectorCollapsed ? "설정 패널 펼치기" : "설정 패널 접기"}><Icon name="chevron" size={15} /></button>
           </div>
 
+          <div className="inspector-group-heading"><span>모든 파일</span><strong>출력과 저장</strong></div>
+
           <section className="setting-section preset-section">
-            <div className="label-row"><label className="setting-label" htmlFor="output-preset">출력 프리셋</label><span className="live-badge">전체 설정</span></div>
+            <div className="label-row"><label className="setting-label" htmlFor="output-preset">출력 프리셋</label><span className="scope-badge">모든 파일</span></div>
             <div className="preset-controls">
               <select id="output-preset" value={activePresetId} onChange={(event) => applyOutputPreset(event.target.value)}>
                 <option value="">{preferences.presets.length ? "현재 사용자 설정" : "저장된 프리셋 없음"}</option>
                 {preferences.presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
               </select>
-              <button type="button" className="preset-icon-button" onClick={() => { setPresetName(""); setIsPresetNaming(true); }} title="현재 출력 설정을 프리셋으로 저장">＋</button>
-              <button type="button" className="preset-icon-button danger" onClick={() => void deleteOutputPreset()} disabled={!activePresetId} title="선택한 프리셋 삭제">−</button>
             </div>
+            <div className="preset-actions"><button type="button" onClick={() => { setPresetName(preferences.presets.find((preset) => preset.id === activePresetId)?.name ?? ""); setIsPresetNaming(true); }}>현재 설정 저장</button><button type="button" className="danger" onClick={() => void deleteOutputPreset()} disabled={!activePresetId}>선택 프리셋 삭제</button></div>
             {isPresetNaming && <div className="preset-name-row"><input autoFocus type="text" value={presetName} maxLength={40} placeholder="예: 쇼핑몰 PNG 2000px" onChange={(event) => setPresetName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void saveOutputPreset(); if (event.key === "Escape") setIsPresetNaming(false); }} /><button type="button" onClick={() => void saveOutputPreset()} disabled={!presetName.trim()}>저장</button><button type="button" onClick={() => setIsPresetNaming(false)}>취소</button></div>}
             <p className="setting-help">형식, 품질, 크기, 저장 위치, 이름 규칙과 메타데이터 설정을 함께 저장합니다.</p>
           </section>
@@ -1233,7 +1271,7 @@ function App() {
           </section>
 
           <section className="setting-section naming-section">
-            <div className="label-row"><label className="setting-label" htmlFor="name-template">파일 이름</label><span className="live-badge">동적 규칙</span></div>
+            <div className="label-row"><label className="setting-label" htmlFor="name-template">파일 이름</label><span className="scope-badge neutral">이름 규칙</span></div>
             <div className="name-grid">
               <label><span>앞에 붙이기</span><input type="text" value={settings.prefix} placeholder="예: cut_" onChange={(e) => setSettings({ ...settings, prefix: e.target.value })} /></label>
               <label><span>뒤에 붙이기</span><input type="text" value={settings.suffix} placeholder={settings.processingMode === "convert" ? "예: _converted" : "예: _bg"} onChange={(e) => setSettings({ ...settings, suffix: e.target.value })} /></label>
@@ -1252,8 +1290,10 @@ function App() {
             {exportPlan?.warnings[0] && <p className="setting-warning">{exportPlan.warnings[0]}</p>}
           </section>
 
+          {settings.processingMode === "removeBackground" && <div className="inspector-group-heading edit"><span>현재 파일</span><strong>객체와 가장자리 편집</strong></div>}
+
           {settings.processingMode === "removeBackground" && <section className="setting-section mask-summary-section">
-            <div className="label-row"><span className="setting-label">객체 마스크</span><span className="live-badge">파일별 · 미리보기</span></div>
+            <div className="label-row"><span className="setting-label">객체 선택</span><span className="state-badge-small">실시간 미리보기</span></div>
             <p className="setting-help flush">{!selected
               ? "이미지를 선택하면 브러시로 유지할 객체와 제거할 영역을 지정할 수 있습니다."
               : selected.maskRecipe.mode === "manual"
@@ -1300,9 +1340,9 @@ function App() {
       </main>
 
       <footer className="actionbar">
-        <div className="estimate">
-          <span className="estimate-label">{isProcessing ? "처리 중" : displayOutputBytes === null ? "예상 결과" : "결과"}</span>
-          <strong>{assets.length ? `${isProcessing ? batchCompleted : assets.filter((asset) => asset.status === "done").length} / ${isProcessing ? batchTotal : assets.length}개` : "이미지를 추가해주세요"}</strong>
+        <div className="estimate" role="status" aria-live="polite">
+          <span className="estimate-label">{isProcessing ? "처리 중" : displayOutputBytes === null ? "예상 용량" : "실제 용량"}</span>
+          <strong>{assets.length ? `저장 완료 ${isProcessing ? batchCompleted : assets.filter((asset) => asset.status === "done").length} / ${isProcessing ? batchTotal : assets.length}` : "이미지를 추가해주세요"}</strong>
           {assets.length > 0 && <span className="muted">{
             displayOutputBytes !== null
               ? `${formatBytes(totalBytes)} → ${formatBytes(displayOutputBytes)} 저장`
@@ -1366,18 +1406,18 @@ function App() {
               <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.path)}><span>원본 파일 위치 열기</span></button>
               <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.outputPath!)} disabled={!contextAsset.outputPath}><span>결과 파일 위치 열기</span></button>
               <span className="context-separator" />
-              <button className="danger" role="menuitem" onClick={() => { setContextMenu(null); removeAsset(contextAsset.id); }} disabled={isProcessing}><span>작업 목록에서 제거</span></button>
+              <button className="danger" role="menuitem" onClick={() => { setContextMenu(null); removeAsset(contextAsset.id); }} disabled={isProcessing}><span>목록에서 제거 · 원본 유지</span></button>
             </>
           ) : (
             <>
               <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!selected?.previewUrl || settings.processingMode === "convert"}><span>브러시로 객체 편집</span></button>
               <span className="context-separator" />
               <button role="menuitem" onClick={() => { setViewMode("original"); setContextMenu(null); }} disabled={!selected}><span>원본 보기</span></button>
-              <button role="menuitem" onClick={() => { setViewMode("result"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>결과 보기</span></button>
+              <button role="menuitem" onClick={() => { setViewMode("result"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>저장 결과 보기</span></button>
               <button role="menuitem" onClick={() => { setViewMode("compare"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>드래그 비교</span></button>
               <span className="context-separator" />
               <button role="menuitem" onClick={() => { setContextMenu(null); void addFilesFromDialog(); }}><span>이미지 추가…</span></button>
-              <button role="menuitem" onClick={() => { setContextMenu(null); openSettings(); }}><span>환경설정…</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); openSettings("general"); }}><span>환경설정…</span></button>
             </>
           )}
         </div>
@@ -1385,6 +1425,7 @@ function App() {
 
       <SettingsModal
         open={isSettingsOpen}
+        initialTab={settingsInitialTab}
         preferences={preferences}
         currentSettings={settings}
         modelStatus={modelStatus}
@@ -1400,7 +1441,7 @@ function App() {
         onRefreshDiagnostics={refreshSettingsData}
       />
 
-      {notice && <button className="toast" onClick={() => setNotice(null)}>{notice}<span>닫기</span></button>}
+      {notice && <button className="toast" role="alert" aria-live="assertive" onClick={() => setNotice(null)}>{notice}<span>닫기</span></button>}
     </div>
   );
 }
