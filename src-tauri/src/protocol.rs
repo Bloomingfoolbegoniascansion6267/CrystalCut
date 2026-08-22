@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const WORKER_PROTOCOL_VERSION: u16 = 3;
+pub const WORKER_PROTOCOL_VERSION: u16 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,6 +14,8 @@ pub struct ProcessItem {
     pub exif: Option<crate::metadata::ExifSummary>,
     #[serde(default)]
     pub mask_recipe: ManualMaskRecipe,
+    #[serde(default)]
+    pub edge_settings: EdgeSettings,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -21,6 +23,30 @@ pub struct ProcessItem {
 pub struct ManualMaskRecipe {
     pub mode: MaskMode,
     pub strokes: Vec<BrushStroke>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct EdgeSettings {
+    pub edge_smoothing: u8,
+    pub edge_feather: u8,
+    pub edge_shift: i8,
+    pub alpha_threshold: u8,
+    pub mask_contrast: i8,
+    pub preserve_original_alpha: bool,
+}
+
+impl Default for EdgeSettings {
+    fn default() -> Self {
+        Self {
+            edge_smoothing: 2,
+            edge_feather: 1,
+            edge_shift: 0,
+            alpha_threshold: 2,
+            mask_contrast: 0,
+            preserve_original_alpha: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,12 +97,7 @@ pub struct OutputSettings {
     pub suffix: String,
     #[serde(default = "crate::naming::default_name_template")]
     pub name_template: String,
-    pub edge_smoothing: u8,
-    pub edge_feather: u8,
-    pub edge_shift: i8,
-    pub alpha_threshold: u8,
-    pub mask_contrast: i8,
-    pub preserve_original_alpha: bool,
+    pub preserve_metadata: bool,
 }
 
 impl Default for OutputSettings {
@@ -95,12 +116,7 @@ impl Default for OutputSettings {
             prefix: String::new(),
             suffix: "_bg".to_owned(),
             name_template: crate::naming::default_name_template(),
-            edge_smoothing: 2,
-            edge_feather: 1,
-            edge_shift: 0,
-            alpha_threshold: 2,
-            mask_contrast: 0,
-            preserve_original_alpha: true,
+            preserve_metadata: false,
         }
     }
 }
@@ -158,6 +174,7 @@ pub struct WorkerRequest {
     pub rotation: u16,
     pub settings: OutputSettings,
     pub mask_recipe: ManualMaskRecipe,
+    pub edge_settings: EdgeSettings,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

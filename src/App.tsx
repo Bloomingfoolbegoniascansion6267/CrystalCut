@@ -2,7 +2,7 @@ import { ChangeEvent, DragEvent, MouseEvent as ReactMouseEvent, useCallback, use
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, ModelStatus, OutputFormat, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
+import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, ModelStatus, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 import SettingsModal from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
@@ -23,6 +23,10 @@ const DEFAULT_SETTINGS: OutputSettings = {
   prefix: "",
   suffix: "_bg",
   nameTemplate: "{prefix}{name}{suffix}",
+  preserveMetadata: false,
+};
+
+const DEFAULT_EDGE_SETTINGS: EdgeSettings = {
   edgeSmoothing: 2,
   edgeFeather: 1,
   edgeShift: 0,
@@ -38,9 +42,18 @@ interface MaskPreviewBundle {
   maskPreviewUrl: string;
 }
 
+interface ContextMenuState {
+  x: number;
+  y: number;
+  kind: "text" | "asset" | "canvas";
+  textField?: HTMLInputElement | HTMLTextAreaElement | null;
+  assetId?: string;
+}
+
 const DEFAULT_PREFERENCES: AppPreferences = {
   defaultSettings: DEFAULT_SETTINGS,
   restoreWorkspace: true,
+  presets: [],
 };
 
 const isTauri = () => Boolean(window.__TAURI_INTERNALS__);
@@ -71,6 +84,7 @@ const toPersistedAsset = (asset: ImageAsset): PersistedAsset => ({
   outputBytes: asset.outputBytes,
   error: asset.error,
   maskRecipe: asset.maskRecipe,
+  edgeSettings: asset.edgeSettings,
 });
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
@@ -123,7 +137,9 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsBusyAction, setSettingsBusyAction] = useState<"save" | "model" | "reset" | null>(null);
   const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; textField: HTMLInputElement | HTMLTextAreaElement | null } | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [isPresetNaming, setIsPresetNaming] = useState(false);
+  const [presetName, setPresetName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const skipNextWorkspaceSave = useRef(false);
@@ -133,6 +149,7 @@ function App() {
   const maskPreviewSnapshot = useRef<{ editBasePreviewUrl?: string; maskPreviewUrl?: string } | null>(null);
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
+  const contextAsset = contextMenu?.assetId ? assets.find((asset) => asset.id === contextMenu.assetId) ?? null : null;
   const totalBytes = useMemo(() => assets.reduce((sum, asset) => sum + asset.sizeBytes, 0), [assets]);
   const previewRecipe = isMaskEditing ? maskDraft ?? selected?.maskRecipe : selected?.maskRecipe;
   const previewRecipeReady = !previewRecipe || !((previewRecipe.mode === "manual" || previewRecipe.mode === "sam")
@@ -150,23 +167,13 @@ function App() {
     resizeMode: settings.resizeMode,
     resizeValue: settings.resizeValue,
     preventUpscale: settings.preventUpscale,
-    edgeSmoothing: settings.edgeSmoothing,
-    edgeFeather: settings.edgeFeather,
-    edgeShift: settings.edgeShift,
-    alphaThreshold: settings.alphaThreshold,
-    maskContrast: settings.maskContrast,
-    preserveOriginalAlpha: settings.preserveOriginalAlpha,
+    edgeSettings: selected?.edgeSettings,
   }), [
     settings.processingMode,
     settings.resizeMode,
     settings.resizeValue,
     settings.preventUpscale,
-    settings.edgeSmoothing,
-    settings.edgeFeather,
-    settings.edgeShift,
-    settings.alphaThreshold,
-    settings.maskContrast,
-    settings.preserveOriginalAlpha,
+    selected?.edgeSettings,
   ]);
   const retryableAssets = useMemo(
     () => assets.filter((asset) => asset.status === "failed" || asset.status === "cancelled" || asset.status === "interrupted"),
@@ -177,10 +184,11 @@ function App() {
     [assets],
   );
   const displayOutputBytes = lastOutputBytes ?? (completedOutputBytes > 0 ? completedOutputBytes : null);
+  const activePresetId = preferences.presets.find((preset) => JSON.stringify(preset.settings) === JSON.stringify(settings))?.id ?? "";
   const persistedAssets = useMemo(() => assets.map(toPersistedAsset), [assets]);
   const workspaceKey = useMemo(() => JSON.stringify({ items: persistedAssets, settings }), [persistedAssets, settings]);
   const planKey = useMemo(() => JSON.stringify({
-    items: assets.map(({ path, rotation, maskRecipe }) => ({ path, rotation, maskRecipe })),
+    items: assets.map(({ path, rotation, maskRecipe, edgeSettings }) => ({ path, rotation, maskRecipe, edgeSettings })),
     settings,
   }), [assets, settings]);
 
@@ -199,7 +207,7 @@ function App() {
     if (!paths.length) return;
     try {
       const inspected = await invoke<Omit<ImageAsset, "status" | "rotation">[]>("inspect_paths", { paths });
-      addAssets(inspected.map((asset) => ({ ...asset, status: "ready", rotation: 0, maskRecipe: DEFAULT_MASK_RECIPE })));
+      addAssets(inspected.map((asset) => ({ ...asset, status: "ready", rotation: 0, maskRecipe: DEFAULT_MASK_RECIPE, edgeSettings: { ...DEFAULT_EDGE_SETTINGS } })));
     } catch (error) {
       setNotice(`파일을 불러오지 못했습니다: ${String(error)}`);
     }
@@ -342,7 +350,7 @@ function App() {
     const timer = window.setTimeout(() => {
       setIsEstimating(true);
       void invoke<ExportPlan>("prepare_export_plan", {
-        items: assets.map((asset, index) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, sequence: index + 1, exif: asset.exif, maskRecipe: asset.maskRecipe })),
+        items: assets.map((asset, index) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, sequence: index + 1, exif: asset.exif, maskRecipe: asset.maskRecipe, edgeSettings: asset.edgeSettings })),
         settings,
       })
         .then((plan) => {
@@ -403,6 +411,7 @@ function App() {
         path: selected.path,
         rotation: selected.rotation,
         maskRecipe: previewRecipe,
+        edgeSettings: selected.edgeSettings,
         settings,
       }).then(({ resultPreviewUrl: editBasePreviewUrl, maskPreviewUrl }) => {
         if (maskPreviewRevision.current !== revision) return;
@@ -472,6 +481,7 @@ function App() {
         previewUrl: URL.createObjectURL(file),
         rotation: 0,
         maskRecipe: DEFAULT_MASK_RECIPE,
+        edgeSettings: { ...DEFAULT_EDGE_SETTINGS },
       }));
     addAssets(incoming);
     event.target.value = "";
@@ -539,6 +549,20 @@ function App() {
     if (isMaskEditing) setViewMode("result");
   }, [isMaskEditing, selectedId]);
 
+  const updateSelectedEdgeSettings = useCallback((patch: Partial<EdgeSettings>) => {
+    if (!selectedId) return;
+    setMaskPreviewStatus("updating");
+    setAssets((current) => current.map((asset) => asset.id === selectedId ? {
+      ...asset,
+      edgeSettings: { ...asset.edgeSettings, ...patch },
+      status: "ready",
+      outputPath: undefined,
+      outputBytes: undefined,
+      resultPreviewUrl: undefined,
+      error: undefined,
+    } : asset));
+  }, [selectedId]);
+
   useEffect(() => {
     setIsMaskEditing(false);
     setMaskDraft(null);
@@ -576,13 +600,17 @@ function App() {
     };
   }, [contextMenu]);
 
-  const removeSelected = () => {
-    if (!selectedId) return;
+  const removeAsset = (assetId: string) => {
     setAssets((current) => {
-      const next = current.filter((asset) => asset.id !== selectedId);
-      setSelectedId(next[0]?.id ?? null);
+      const removedIndex = current.findIndex((asset) => asset.id === assetId);
+      const next = current.filter((asset) => asset.id !== assetId);
+      if (selectedId === assetId) setSelectedId(next[Math.min(Math.max(removedIndex, 0), next.length - 1)]?.id ?? null);
       return next;
     });
+  };
+
+  const removeSelected = () => {
+    if (selectedId) removeAsset(selectedId);
   };
 
   const clearWorkspace = async () => {
@@ -652,6 +680,7 @@ function App() {
           sequence: assets.findIndex((candidate) => candidate.id === asset.id) + 1,
           exif: asset.exif,
           maskRecipe: asset.maskRecipe,
+          edgeSettings: asset.edgeSettings,
         })),
         settings,
       });
@@ -730,6 +759,50 @@ function App() {
     } finally {
       setSettingsBusyAction(null);
     }
+  };
+
+  const persistPresetPreferences = async (nextPreferences: AppPreferences, message: string) => {
+    try {
+      if (isTauri()) await invoke<void>("save_app_preferences", { preferences: nextPreferences });
+      setPreferences(nextPreferences);
+      setNotice(message);
+    } catch (error) {
+      setNotice(`출력 프리셋을 저장하지 못했습니다: ${String(error)}`);
+    }
+  };
+
+  const applyOutputPreset = (presetId: string) => {
+    const preset = preferences.presets.find((candidate) => candidate.id === presetId);
+    if (!preset) return;
+    setSettings({ ...preset.settings });
+    setNotice(`'${preset.name}' 출력 프리셋을 불러왔습니다.`);
+  };
+
+  const saveOutputPreset = async () => {
+    const name = presetName.trim();
+    if (!name) return;
+    const existing = preferences.presets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    const preset: OutputPreset = {
+      id: existing?.id ?? (crypto.randomUUID?.() ?? `preset-${Date.now()}`),
+      name,
+      settings: { ...settings },
+    };
+    const presets = existing
+      ? preferences.presets.map((candidate) => candidate.id === existing.id ? preset : candidate)
+      : [...preferences.presets, preset];
+    await persistPresetPreferences({ ...preferences, presets }, existing ? `'${name}' 프리셋을 현재 설정으로 업데이트했습니다.` : `'${name}' 프리셋을 저장했습니다.`);
+    setPresetName("");
+    setIsPresetNaming(false);
+  };
+
+  const deleteOutputPreset = async () => {
+    if (!activePresetId) return;
+    const preset = preferences.presets.find((candidate) => candidate.id === activePresetId);
+    if (!preset || !window.confirm(`'${preset.name}' 출력 프리셋을 삭제할까요?`)) return;
+    await persistPresetPreferences(
+      { ...preferences, presets: preferences.presets.filter((candidate) => candidate.id !== activePresetId) },
+      `'${preset.name}' 프리셋을 삭제했습니다.`,
+    );
   };
 
   const resetPreferences = async () => {
@@ -867,8 +940,31 @@ function App() {
     setContextMenu({
       x: Math.min(event.clientX, window.innerWidth - 190),
       y: Math.min(event.clientY, window.innerHeight - (textField ? 188 : 230)),
+      kind: textField ? "text" : "canvas",
       textField,
     });
+  };
+
+  const openAssetContextMenu = (event: ReactMouseEvent<HTMLButtonElement>, assetId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedId(assetId);
+    setContextMenu({
+      x: Math.min(event.clientX, window.innerWidth - 220),
+      y: Math.min(event.clientY, window.innerHeight - 300),
+      kind: "asset",
+      assetId,
+    });
+  };
+
+  const revealAssetPath = async (path: string) => {
+    setContextMenu(null);
+    if (!isTauri()) return;
+    try {
+      await invoke<void>("reveal_in_file_manager", { path });
+    } catch (error) {
+      setNotice(`파일 위치를 열지 못했습니다: ${String(error)}`);
+    }
   };
 
   const runTextMenuAction = async (action: "undo" | "cut" | "copy" | "paste" | "selectAll") => {
@@ -934,7 +1030,7 @@ function App() {
             {assets.length === 0 ? (
               <div className="library-empty"><Icon name="image" size={24} /><span>{isWorkspaceLoaded ? <>이미지를 추가하면<br />여기에 표시됩니다.</> : "저장된 작업 확인 중…"}</span></div>
             ) : assets.map((asset, index) => (
-              <button key={asset.id} className={`asset-row ${asset.id === selectedId ? "selected" : ""}`} onClick={() => setSelectedId(asset.id)}>
+              <button key={asset.id} className={`asset-row ${asset.id === selectedId ? "selected" : ""}`} onClick={() => setSelectedId(asset.id)} onContextMenu={(event) => openAssetContextMenu(event, asset.id)}>
                 <span className="asset-index">{String(index + 1).padStart(2, "0")}</span>
                 <span className="asset-thumb">{asset.previewUrl ? <img src={asset.previewUrl} alt="" /> : <Icon name="image" size={16} />}</span>
                 <span className="asset-copy">
@@ -1025,6 +1121,20 @@ function App() {
             <button className="text-button" onClick={() => setSettings(DEFAULT_SETTINGS)}>초기화</button>
           </div>
 
+          <section className="setting-section preset-section">
+            <div className="label-row"><label className="setting-label" htmlFor="output-preset">출력 프리셋</label><span className="live-badge">전체 설정</span></div>
+            <div className="preset-controls">
+              <select id="output-preset" value={activePresetId} onChange={(event) => applyOutputPreset(event.target.value)}>
+                <option value="">{preferences.presets.length ? "현재 사용자 설정" : "저장된 프리셋 없음"}</option>
+                {preferences.presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+              </select>
+              <button type="button" className="preset-icon-button" onClick={() => { setPresetName(""); setIsPresetNaming(true); }} title="현재 출력 설정을 프리셋으로 저장">＋</button>
+              <button type="button" className="preset-icon-button danger" onClick={() => void deleteOutputPreset()} disabled={!activePresetId} title="선택한 프리셋 삭제">−</button>
+            </div>
+            {isPresetNaming && <div className="preset-name-row"><input autoFocus type="text" value={presetName} maxLength={40} placeholder="예: 쇼핑몰 PNG 2000px" onChange={(event) => setPresetName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void saveOutputPreset(); if (event.key === "Escape") setIsPresetNaming(false); }} /><button type="button" onClick={() => void saveOutputPreset()} disabled={!presetName.trim()}>저장</button><button type="button" onClick={() => setIsPresetNaming(false)}>취소</button></div>}
+            <p className="setting-help">형식, 품질, 크기, 저장 위치, 이름 규칙과 메타데이터 설정을 함께 저장합니다.</p>
+          </section>
+
           <section className="setting-section">
             <label className="setting-label">처리 방식</label>
             <div className="segmented processing-mode">
@@ -1059,6 +1169,8 @@ function App() {
                 <p className="setting-help flush">화질은 유지되고 저장 시간과 용량만 달라집니다.</p>
               </div>
             )}
+            <label className="check-row metadata-check"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setSettings({ ...settings, preserveMetadata: event.target.checked })} /><span><Icon name="check" size={13} /></span>촬영 메타데이터 보존</label>
+            <p className="setting-help flush">촬영일·카메라·렌즈를 출력 파일에 기록합니다. GPS는 항상 제외합니다.</p>
           </section>
 
           <section className="setting-section">
@@ -1128,30 +1240,31 @@ function App() {
           {settings.processingMode === "removeBackground" && <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings"><span>가장자리 및 고급 옵션</span><Icon name="chevron" size={15} /></button>}
           {settings.processingMode === "removeBackground" && isAdvancedOpen && (
             <section id="advanced-settings" className="setting-section advanced-settings" onInputCapture={() => setMaskPreviewStatus("updating")}>
+              <div className="advanced-section-title"><div><strong>파일별 가장자리</strong><span>{selected?.name ?? "이미지를 선택하세요"}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected}>가장자리만 기본값</button></div>
               <div className="advanced-preview-heading"><span>{maskPreviewStatus === "updating" ? "미리보기 갱신 중…" : maskPreviewStatus === "current" ? "선택 이미지에 실시간 반영됨" : "선택 이미지를 기준으로 미리보기"}</span>{maskPreviewStatus === "updating" && <span className="spinner" />}</div>
               <div className="sub-setting first">
-                <div className="label-row"><label htmlFor="edge-smoothing">가장자리 매끄럽게</label><output>{settings.edgeSmoothing}</output></div>
-                <input id="edge-smoothing" type="range" min="0" max="10" value={settings.edgeSmoothing} onChange={(event) => setSettings({ ...settings, edgeSmoothing: Number(event.target.value) })} />
+                <div className="label-row"><label htmlFor="edge-smoothing">가장자리 매끄럽게</label><output>{selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing}</output></div>
+                <input id="edge-smoothing" type="range" min="0" max="10" value={selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing} onChange={(event) => updateSelectedEdgeSettings({ edgeSmoothing: Number(event.target.value) })} disabled={!selected} />
                 <p className="setting-help flush">톱니 모양의 마스크 경계를 부드럽게 정리합니다.</p>
               </div>
               <div className="sub-setting">
-                <div className="label-row"><label htmlFor="edge-feather">가장자리 페더</label><output>{settings.edgeFeather}px</output></div>
-                <input id="edge-feather" type="range" min="0" max="20" value={settings.edgeFeather} onChange={(event) => setSettings({ ...settings, edgeFeather: Number(event.target.value) })} />
+                <div className="label-row"><label htmlFor="edge-feather">가장자리 페더</label><output>{selected?.edgeSettings.edgeFeather ?? DEFAULT_EDGE_SETTINGS.edgeFeather}px</output></div>
+                <input id="edge-feather" type="range" min="0" max="20" value={selected?.edgeSettings.edgeFeather ?? DEFAULT_EDGE_SETTINGS.edgeFeather} onChange={(event) => updateSelectedEdgeSettings({ edgeFeather: Number(event.target.value) })} disabled={!selected} />
               </div>
               <div className="sub-setting">
-                <div className="label-row"><label htmlFor="edge-shift">마스크 확장·축소</label><output>{settings.edgeShift > 0 ? "+" : ""}{settings.edgeShift}px</output></div>
-                <input id="edge-shift" type="range" min="-8" max="8" value={settings.edgeShift} onChange={(event) => setSettings({ ...settings, edgeShift: Number(event.target.value) })} />
+                <div className="label-row"><label htmlFor="edge-shift">마스크 확장·축소</label><output>{(selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift) > 0 ? "+" : ""}{selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift}px</output></div>
+                <input id="edge-shift" type="range" min="-8" max="8" value={selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift} onChange={(event) => updateSelectedEdgeSettings({ edgeShift: Number(event.target.value) })} disabled={!selected} />
               </div>
               <div className="sub-setting">
-                <div className="label-row"><label htmlFor="alpha-threshold">희미한 배경 제거</label><output>{settings.alphaThreshold}%</output></div>
-                <input id="alpha-threshold" type="range" min="0" max="30" value={settings.alphaThreshold} onChange={(event) => setSettings({ ...settings, alphaThreshold: Number(event.target.value) })} />
+                <div className="label-row"><label htmlFor="alpha-threshold">희미한 배경 제거</label><output>{selected?.edgeSettings.alphaThreshold ?? DEFAULT_EDGE_SETTINGS.alphaThreshold}%</output></div>
+                <input id="alpha-threshold" type="range" min="0" max="30" value={selected?.edgeSettings.alphaThreshold ?? DEFAULT_EDGE_SETTINGS.alphaThreshold} onChange={(event) => updateSelectedEdgeSettings({ alphaThreshold: Number(event.target.value) })} disabled={!selected} />
               </div>
               <div className="sub-setting">
-                <div className="label-row"><label htmlFor="mask-contrast">마스크 대비</label><output>{settings.maskContrast > 0 ? "+" : ""}{settings.maskContrast}</output></div>
-                <input id="mask-contrast" type="range" min="-50" max="50" value={settings.maskContrast} onChange={(event) => setSettings({ ...settings, maskContrast: Number(event.target.value) })} />
+                <div className="label-row"><label htmlFor="mask-contrast">마스크 대비</label><output>{(selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast) > 0 ? "+" : ""}{selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast}</output></div>
+                <input id="mask-contrast" type="range" min="-50" max="50" value={selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast} onChange={(event) => updateSelectedEdgeSettings({ maskContrast: Number(event.target.value) })} disabled={!selected} />
               </div>
-              <label className="check-row"><input type="checkbox" checked={settings.preserveOriginalAlpha} onChange={(event) => setSettings({ ...settings, preserveOriginalAlpha: event.target.checked })} /><span><Icon name="check" size={13} /></span>원본 투명도 보존</label>
-              <p className="setting-help">고급 옵션은 모든 파일에 적용되며, 브러시 마스크는 선택한 파일에만 적용됩니다.</p>
+              <label className="check-row"><input type="checkbox" checked={selected?.edgeSettings.preserveOriginalAlpha ?? DEFAULT_EDGE_SETTINGS.preserveOriginalAlpha} onChange={(event) => updateSelectedEdgeSettings({ preserveOriginalAlpha: event.target.checked })} disabled={!selected} /><span><Icon name="check" size={13} /></span>원본 투명도 보존</label>
+              <p className="setting-help">이 설정은 현재 선택한 파일에만 적용됩니다. 다른 파일을 선택하면 해당 파일의 값으로 전환됩니다.</p>
             </section>
           )}
         </aside>
@@ -1201,7 +1314,7 @@ function App() {
 
       {contextMenu && (
         <div className="app-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}>
-          {contextMenu.textField ? (
+          {contextMenu.kind === "text" ? (
             <>
               <button role="menuitem" onClick={() => void runTextMenuAction("undo")}><span>실행 취소</span><kbd>Ctrl+Z</kbd></button>
               <span className="context-separator" />
@@ -1210,6 +1323,21 @@ function App() {
               <button role="menuitem" onClick={() => void runTextMenuAction("paste")}><span>붙여넣기</span><kbd>Ctrl+V</kbd></button>
               <span className="context-separator" />
               <button role="menuitem" onClick={() => void runTextMenuAction("selectAll")}><span>모두 선택</span><kbd>Ctrl+A</kbd></button>
+            </>
+          ) : contextMenu.kind === "asset" && contextAsset ? (
+            <>
+              <div className="context-file-heading"><strong title={contextAsset.name}>{contextAsset.name}</strong><span>{formatDimensions(contextAsset.width, contextAsset.height)} · {contextAsset.extension.toUpperCase()}</span></div>
+              <span className="context-separator" />
+              <button role="menuitem" onClick={() => { setContextMenu(null); setViewMode("original"); }}><span>원본 미리보기</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!contextAsset.previewUrl || settings.processingMode === "convert"}><span>객체 마스크 편집</span></button>
+              <span className="context-separator" />
+              <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(-1); }}><span>왼쪽으로 90° 회전</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(1); }}><span>오른쪽으로 90° 회전</span></button>
+              <span className="context-separator" />
+              <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.path)}><span>원본 파일 위치 열기</span></button>
+              <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.outputPath!)} disabled={!contextAsset.outputPath}><span>결과 파일 위치 열기</span></button>
+              <span className="context-separator" />
+              <button className="danger" role="menuitem" onClick={() => { setContextMenu(null); removeAsset(contextAsset.id); }} disabled={isProcessing}><span>작업 목록에서 제거</span></button>
             </>
           ) : (
             <>

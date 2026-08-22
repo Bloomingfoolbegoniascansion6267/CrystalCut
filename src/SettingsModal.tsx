@@ -31,6 +31,7 @@ const TAB_LABELS: Array<{ id: SettingsTab; label: string; description: string }>
 const clonePreferences = (preferences: AppPreferences): AppPreferences => ({
   ...preferences,
   defaultSettings: { ...preferences.defaultSettings },
+  presets: preferences.presets.map((preset) => ({ ...preset, settings: { ...preset.settings } })),
 });
 
 export default function SettingsModal({
@@ -173,6 +174,7 @@ export default function SettingsModal({
           <span>파일 이름 템플릿</span>
           <input value={draft.defaultSettings.nameTemplate} spellCheck={false} onChange={(event) => updateDefaultSettings({ nameTemplate: event.target.value })} />
         </label>
+        <label className="check-row preferences-metadata-check"><input type="checkbox" checked={draft.defaultSettings.preserveMetadata} onChange={(event) => updateDefaultSettings({ preserveMetadata: event.target.checked })} /><span aria-hidden="true">✓</span>새 작업에서 촬영 메타데이터 보존</label>
         <p className="preferences-note">품질·압축·크기 변경 값도 함께 저장됩니다. 세부 값은 현재 작업 설정을 가져온 뒤 저장할 수 있습니다.</p>
       </section>
     </div>
@@ -221,7 +223,8 @@ export default function SettingsModal({
         <ul className="policy-list">
           <li><span className="policy-check">✓</span><div><strong>GPS 비수집</strong><small>위치 EXIF는 읽거나 작업 DB에 저장하지 않습니다.</small></div></li>
           <li><span className="policy-check">✓</span><div><strong>필요한 EXIF만 요약</strong><small>촬영일, 카메라, 렌즈, orientation만 파일명과 회전에 사용합니다.</small></div></li>
-          <li><span className="policy-pending">–</span><div><strong>출력 메타데이터</strong><small>현재 결과 파일에는 EXIF와 ICC를 복사하지 않습니다. 보존 정책은 후속 구현에서 명시적으로 선택하게 합니다.</small></div></li>
+          <li><span className="policy-check">✓</span><div><strong>출력 촬영 정보 선택</strong><small>출력 설정에서 촬영일·카메라·렌즈 보존을 선택할 수 있습니다. 회전 정보는 픽셀 기준으로 정규화됩니다.</small></div></li>
+          <li><span className="policy-check">✓</span><div><strong>민감 정보 제외</strong><small>GPS와 원본 전체 EXIF는 복사하지 않으며, 선택한 비민감 요약 정보만 PNG·WebP에 기록합니다.</small></div></li>
         </ul>
       </section>
     </div>

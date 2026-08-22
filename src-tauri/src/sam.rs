@@ -19,7 +19,7 @@ use ureq::{
 
 use crate::{
     engine,
-    protocol::{BrushMode, ManualMaskRecipe, OutputSettings, WorkerRequest},
+    protocol::{BrushMode, EdgeSettings, ManualMaskRecipe, OutputSettings, WorkerRequest},
 };
 
 const MODEL_ID: &str = "slimsam-77-uniform";
@@ -268,6 +268,7 @@ impl SamEngine {
 
     pub fn process(&mut self, request: &WorkerRequest) -> Result<u64, String> {
         let input_path = Path::new(&request.input_path);
+        let source_metadata = crate::metadata::read_exif_summary(input_path);
         let source = engine::load_oriented_rotated(input_path, request.rotation)?;
         let mask = self.predict_mask(
             &source,
@@ -279,6 +280,8 @@ impl SamEngine {
             mask,
             Path::new(&request.output_path),
             &request.settings,
+            &request.edge_settings,
+            Some(&source_metadata),
         )
     }
 
@@ -288,6 +291,7 @@ impl SamEngine {
         rotation: u16,
         recipe: &ManualMaskRecipe,
         settings: &OutputSettings,
+        edge_settings: &EdgeSettings,
     ) -> Result<(DynamicImage, DynamicImage), String> {
         let source = engine::load_oriented_rotated(input_path, rotation)?;
         let image_key = cache_key(input_path, rotation);
@@ -310,7 +314,12 @@ impl SamEngine {
             });
             mask
         };
-        Ok(engine::compose_preview_bundle(source, mask, settings))
+        Ok(engine::compose_preview_bundle(
+            source,
+            mask,
+            settings,
+            edge_settings,
+        ))
     }
 
     fn predict_mask(
@@ -475,7 +484,7 @@ fn prompt_points(
             });
         }
     }
-    if !labels.iter().any(|label| *label == 1) {
+    if !labels.contains(&1) {
         return Err("AI 객체 선택에서는 유지할 객체를 초록색으로 먼저 표시해주세요.".to_owned());
     }
     Ok((points, labels))

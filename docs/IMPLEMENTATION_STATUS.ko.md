@@ -60,25 +60,27 @@ Windows/macOS system TLS를 쓰도록 ureq Native TLS Agent를 명시적으로 �
 
 worker 표준 입출력이 끊기거나 protocol 응답이 손상되면 해당 요청에 한해 프로세스를 새로 만들고 한 번 재전송한다. 첫 worker가 atomic rename까지 마친 뒤 응답 전에 종료된 경우에는 예약 출력 파일의 존재와 크기를 확인해 성공으로 회수한다. 두 번째 통신도 실패하면 해당 항목만 실패시키고 다음 항목에서 새 worker를 시작한다.
 
-작업 목록, 출력 설정, 회전, EXIF 요약과 항목별 처리 결과는 앱 데이터 폴더의 `workspace.sqlite3`에 120ms 단위로 순서대로 자동 저장한다. 미리보기 bitmap과 GPS는 저장하지 않는다. SQLite는 bundled build와 WAL mode를 사용하며, 전체 snapshot을 하나의 transaction으로 교체해 목록과 설정이 서로 다른 시점으로 남지 않게 한다.
+작업 목록, 출력 설정, 회전, 파일별 마스크·가장자리 설정, EXIF 요약과 항목별 처리 결과는 앱 데이터 폴더의 `workspace.sqlite3`에 120ms 단위로 순서대로 자동 저장한다. 미리보기 bitmap과 GPS는 저장하지 않는다. SQLite는 bundled build와 WAL mode를 사용하며, 전체 snapshot을 하나의 transaction으로 교체해 목록과 설정이 서로 다른 시점으로 남지 않게 한다.
 
 앱 시작 시 원본 경로와 파일 크기, 완료 결과 경로를 다시 검사한다. 사라진 원본은 목록에서 제외하고, 변경된 원본·실행 중 종료된 항목·사라진 결과는 `interrupted`로 복구해 미완료 재시도 대상으로 제공한다. 완료 결과가 남아 있으면 다시 처리하지 않고 결과 미리보기를 복원한다. UI의 작업 비우기는 SQLite snapshot만 제거하며 원본과 결과 파일은 삭제하지 않는다.
 
-SQLite schema v3는 작업 snapshot과 분리된 `app_preferences` table 및 파일별 `mask_recipe_json`을 저장한다. 톱니바퀴 환경설정에서 새 작업의 기본 출력 recipe와 재시작 복구 여부를 저장하며, 전역 기본값 변경은 이미 목록에 들어온 작업을 자동 변경하지 않는다. schema v1 DB는 작업 table을 보존한 채 v2와 v3으로 순서대로 migration하고 손상된 환경설정 JSON은 권장 기본값으로 fallback한다.
+SQLite schema v4는 작업 snapshot과 분리된 `app_preferences` table, 파일별 `mask_recipe_json`과 `edge_settings_json`을 저장한다. 톱니바퀴 환경설정에서 새 작업의 기본 출력 recipe와 재시작 복구 여부를 저장하며, 최대 100개의 출력 프리셋도 함께 보존한다. 전역 출력 설정이나 다른 파일의 가장자리 값을 변경해도 이미 지정한 파일별 값은 바뀌지 않는다. schema v1 DB는 작업 table을 보존한 채 v2부터 v4까지 순서대로 migration하고 손상된 환경설정 JSON은 권장 기본값으로 fallback한다.
 
-환경설정 modal은 focus trap, Esc 닫기와 호출 버튼 focus 복귀를 지원한다. 일반, AI 모델·저장 공간, 개인정보, 진단 영역을 제공하며 모델 설치·삭제는 batch와 같은 실행 잠금을 사용한다. 앱 version, worker protocol, OS/architecture, DB 크기와 앱 데이터 경로는 실제 Tauri command에서 읽는다. 아직 검증하지 않은 GPU provider나 EXIF/ICC 보존 option은 활성 control로 노출하지 않는다.
+환경설정 modal은 focus trap, Esc 닫기와 호출 버튼 focus 복귀를 지원한다. 일반, AI 모델·저장 공간, 개인정보, 진단 영역을 제공하며 모델 설치·삭제는 batch와 같은 실행 잠금을 사용한다. 앱 version, worker protocol, OS/architecture, DB 크기와 앱 데이터 경로는 실제 Tauri command에서 읽는다. 새 작업 기본값과 현재 출력 설정에서 촬영 메타데이터 보존을 선택할 수 있다. ICC 보존과 아직 검증하지 않은 GPU provider는 활성 control로 노출하지 않는다.
 
 미리보기 canvas는 휠과 버튼 확대·축소, pointer drag 이동, 화면 맞춤을 지원한다. 비교 모드는 원본과 수정본을 같은 좌표계에 겹치고 수직 분할 바를 좌우로 움직여 경계를 확인한다. 브러시 편집 좌표는 zoom·pan과 무관한 회전 후 이미지의 정규화 좌표로 저장한다.
 
-마스크는 `automatic`, `refine`, `manual`, `sam` 네 방식이다. `refine`은 U2NetP 결과 화면을 편집 기준으로 삼아 초록 유지·빨강 제거 stroke를 합성하고, `manual`은 빈 마스크에서 유지 stroke로 객체를 직접 칠한다. `sam`은 SlimSAM 77 Uniform의 양자화 ONNX image encoder와 prompt/mask decoder를 실행해 초록·빨강 stroke가 가리키는 물체 전체를 선택한다. 같은 파일의 image embedding은 재사용한다. 회전 시 stroke 좌표도 함께 변환하며 Undo/Redo와 전체 지우기를 제공한다. worker는 선택된 mask를 만든 다음 가장자리 smoothing, feather, 확장·축소, alpha threshold와 mask contrast를 순서대로 처리한다.
+마스크는 `automatic`, `refine`, `manual`, `sam` 네 방식이다. `refine`은 U2NetP 결과 화면을 편집 기준으로 삼아 초록 유지·빨강 제거 stroke를 합성하고, `manual`은 빈 마스크에서 유지 stroke로 객체를 직접 칠한다. `sam`은 SlimSAM 77 Uniform의 양자화 ONNX image encoder와 prompt/mask decoder를 실행해 초록·빨강 stroke가 가리키는 물체 전체를 선택한다. 같은 파일의 image embedding은 재사용한다. 회전 시 stroke 좌표도 함께 변환하며 Undo/Redo와 전체 지우기를 제공한다. worker는 선택된 mask를 만든 다음 파일별 smoothing, feather, 확장·축소, alpha threshold와 mask contrast를 순서대로 처리한다. 각 값은 선택한 파일의 실시간 미리보기에 반영되며 해당 항목만 권장 기본값으로 되돌릴 수 있다.
 
-출력 설정에는 `배경 제거`와 `이미지만 변환` 처리 방식이 있다. 변환 mode는 AI 모델과 마스크를 완전히 건너뛰고 EXIF 방향 보정, 사용자 회전, resize, PNG/WebP 압축과 안전한 atomic 저장만 수행한다. 기본 하위 폴더도 `Removed Background`와 `Converted Images`로 구분한다.
+출력 설정에는 `배경 제거`와 `이미지만 변환` 처리 방식이 있다. 변환 mode는 AI 모델과 마스크를 완전히 건너뛰고 EXIF 방향 보정, 사용자 회전, resize, PNG/WebP 압축과 안전한 atomic 저장만 수행한다. 기본 하위 폴더도 `Removed Background`와 `Converted Images`로 구분한다. 출력 프리셋은 처리 방식, 형식, 품질·압축, 크기, 저장 위치, 이름 규칙과 메타데이터 선택을 하나의 recipe로 저장·불러오기·삭제한다.
 
-브라우저 기본 context menu는 텍스트 편집 명령과 Clearcut의 브러시·미리보기·파일 추가·환경설정 명령을 제공하는 앱 메뉴로 교체했다. Windows release는 GUI subsystem으로 빌드해 console 창을 숨기고 debug build에서는 console을 유지한다.
+`촬영 메타데이터 보존`을 켜면 원본에서 이미 안전하게 추출한 촬영일·카메라·렌즈만 새 EXIF profile로 만들고 orientation은 픽셀 회전이 반영된 `1`로 정규화한다. PNG에는 `eXIf` chunk, WebP에는 extended RIFF의 `EXIF` chunk로 기록한다. GPS와 원본 전체 EXIF는 복사하지 않으며 ICC profile은 현재 보존하지 않는다.
+
+브라우저 기본 context menu는 텍스트 편집 명령과 Clearcut의 브러시·미리보기·파일 추가·환경설정 명령을 제공하는 앱 메뉴로 교체했다. 작업 목록의 파일을 우클릭하면 해당 파일의 원본 미리보기, 객체 편집, 회전, Explorer/Finder에서 원본·결과 위치 열기와 작업 목록 제거를 제공한다. 목록 제거는 원본·결과 파일을 삭제하지 않는다. Windows release는 GUI subsystem으로 빌드해 console 창을 숨기고 debug build에서는 console을 유지한다.
 
 ## 5. 검증 범위
 
-- Rust 단위 테스트 36개: resize 비율, 확대 방지, AI 없는 변환 저장, 기존 alpha 결합·교체, 수동 유지·제거 마스크와 입력 검증, 가장자리 확장, U2NetP 입력 layout·정규화, U2NetP/SlimSAM model hash·TLS provider, 실제 SlimSAM prompt 추론, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌, SQLite v1→v3 migration·브러시 recipe·환경설정 fallback·snapshot round trip·중단/완료 결과 복구
+- Rust 단위 테스트 39개(네트워크 모델 다운로드 1개 기본 제외): resize 비율, 확대 방지, AI 없는 변환 저장, 기존 alpha 결합·교체, 수동 유지·제거 마스크와 입력 검증, 가장자리 확장, U2NetP 입력 layout·정규화, U2NetP/SlimSAM model hash·TLS provider, 실제 SlimSAM prompt 추론, EXIF 추출·안전한 PNG/WebP 출력 EXIF, 동적 이름 template, 파일명 및 경로 충돌, SQLite v1→v4 migration·파일별 마스크/가장자리 recipe·출력 프리셋·환경설정 fallback·snapshot round trip·중단/완료 결과 복구
 - TypeScript production build
 - 공식 U-2-Net 테스트 사진을 사용한 worker 스모크 테스트
   - 400×267 PNG 입력
@@ -96,7 +98,7 @@ SQLite schema v3는 작업 snapshot과 분리된 `app_preferences` table 및 파
 3. 브러시 overlay·SlimSAM 미리보기와 최종 export mask의 pixel 일치 golden test
 4. 여러 파일의 image embedding LRU cache와 preview worker 분리
 5. 현재 추론까지 즉시 중단하는 강제 취소 option과 `.partial` 정리 검증
-6. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
+6. ICC color profile 보존 범위와 색 공간 변환 정책 구현
 7. 대규모 목록 virtual scroll과 SQLite delta 저장 최적화
 8. 서명된 Windows/macOS installer와 updater 검증
 

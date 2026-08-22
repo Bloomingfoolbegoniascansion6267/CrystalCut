@@ -9,10 +9,10 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     metadata::ExifSummary,
-    protocol::{ManualMaskRecipe, OutputSettings},
+    protocol::{EdgeSettings, ManualMaskRecipe, OutputSettings},
 };
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const DATABASE_FILE: &str = "workspace.sqlite3";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +37,8 @@ pub struct PersistedAsset {
     pub rotation: u16,
     #[serde(default)]
     pub mask_recipe: ManualMaskRecipe,
+    #[serde(default)]
+    pub edge_settings: EdgeSettings,
     pub output_path: Option<String>,
     pub output_bytes: Option<u64>,
     pub error: Option<String>,
@@ -99,6 +101,15 @@ pub struct RestoredWorkspace {
 pub struct AppPreferences {
     pub default_settings: OutputSettings,
     pub restore_workspace: bool,
+    pub presets: Vec<OutputPreset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputPreset {
+    pub id: String,
+    pub name: String,
+    pub settings: OutputSettings,
 }
 
 impl Default for AppPreferences {
@@ -106,6 +117,7 @@ impl Default for AppPreferences {
         Self {
             default_settings: OutputSettings::default(),
             restore_workspace: true,
+            presets: Vec::new(),
         }
     }
 }
@@ -140,7 +152,7 @@ pub fn load_preferences(app: &AppHandle) -> Result<AppPreferences, String> {
 }
 
 pub fn save_preferences(app: &AppHandle, preferences: AppPreferences) -> Result<(), String> {
-    crate::validate_settings(&preferences.default_settings)?;
+    validate_preferences(&preferences)?;
     let connection = open(app)?;
     save_preferences_to_connection(&connection, &preferences)
 }
@@ -264,6 +276,17 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                  COMMIT;",
             )
             .map_err(|error| format!("브러시 마스크 schema를 만들지 못했습니다: {error}"))?;
+        version = 3;
+    }
+    if version == 3 {
+        connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 ALTER TABLE workspace_items ADD COLUMN edge_settings_json TEXT NOT NULL DEFAULT '{\"edgeSmoothing\":2,\"edgeFeather\":1,\"edgeShift\":0,\"alphaThreshold\":2,\"maskContrast\":0,\"preserveOriginalAlpha\":true}';
+                 PRAGMA user_version = 4;
+                 COMMIT;",
+            )
+            .map_err(|error| format!("파일별 가장자리 설정 schema를 만들지 못했습니다: {error}"))?;
     }
     Ok(())
 }
@@ -279,10 +302,29 @@ fn load_preferences_from_connection(connection: &Connection) -> Result<AppPrefer
         .map_err(|error| format!("환경설정을 읽지 못했습니다: {error}"))?;
     Ok(stored
         .and_then(|json| serde_json::from_str(&json).ok())
-        .filter(|preferences: &AppPreferences| {
-            crate::validate_settings(&preferences.default_settings).is_ok()
-        })
+        .filter(|preferences: &AppPreferences| validate_preferences(preferences).is_ok())
         .unwrap_or_default())
+}
+
+fn validate_preferences(preferences: &AppPreferences) -> Result<(), String> {
+    crate::validate_settings(&preferences.default_settings)?;
+    if preferences.presets.len() > 100 {
+        return Err("출력 프리셋은 최대 100개까지 저장할 수 있습니다.".to_owned());
+    }
+    let mut ids = std::collections::HashSet::new();
+    for preset in &preferences.presets {
+        if preset.id.trim().is_empty()
+            || preset.name.trim().is_empty()
+            || preset.name.chars().count() > 40
+        {
+            return Err("출력 프리셋의 이름이 올바르지 않습니다.".to_owned());
+        }
+        if !ids.insert(preset.id.as_str()) {
+            return Err("중복된 출력 프리셋 ID가 있습니다.".to_owned());
+        }
+        crate::validate_settings(&preset.settings)?;
+    }
+    Ok(())
 }
 
 fn save_preferences_to_connection(
@@ -347,13 +389,15 @@ fn insert_asset(
         .map_err(|error| format!("EXIF 요약을 직렬화하지 못했습니다: {error}"))?;
     let mask_recipe_json = serde_json::to_string(&item.mask_recipe)
         .map_err(|error| format!("브러시 마스크를 직렬화하지 못했습니다: {error}"))?;
+    let edge_settings_json = serde_json::to_string(&item.edge_settings)
+        .map_err(|error| format!("가장자리 설정을 직렬화하지 못했습니다: {error}"))?;
     let modified_at_ms = file_modified_ms(Path::new(&item.path));
     transaction
         .execute(
             "INSERT INTO workspace_items(
                 id, position, name, path, size_bytes, modified_at_ms, extension, width, height,
-                exif_json, status, rotation, mask_recipe_json, output_path, output_bytes, error
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                exif_json, status, rotation, mask_recipe_json, edge_settings_json, output_path, output_bytes, error
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 item.id,
                 to_i64(position as u64),
@@ -368,6 +412,7 @@ fn insert_asset(
                 item.status.as_str(),
                 i64::from(item.rotation),
                 mask_recipe_json,
+                edge_settings_json,
                 item.output_path,
                 item.output_bytes.map(to_i64),
                 item.error,
@@ -394,7 +439,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
     let mut statement = connection
         .prepare(
             "SELECT id, name, path, size_bytes, modified_at_ms, extension, width, height, exif_json,
-                    status, rotation, mask_recipe_json, output_path, output_bytes, error
+                    status, rotation, mask_recipe_json, edge_settings_json, output_path, output_bytes, error
              FROM workspace_items ORDER BY position",
         )
         .map_err(|error| format!("저장된 작업 항목 query를 준비하지 못했습니다: {error}"))?;
@@ -413,9 +458,10 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
                 row.get::<_, String>(9)?,
                 row.get::<_, i64>(10)?,
                 row.get::<_, String>(11)?,
-                row.get::<_, Option<String>>(12)?,
-                row.get::<_, Option<i64>>(13)?,
-                row.get::<_, Option<String>>(14)?,
+                row.get::<_, String>(12)?,
+                row.get::<_, Option<String>>(13)?,
+                row.get::<_, Option<i64>>(14)?,
+                row.get::<_, Option<String>>(15)?,
             ))
         })
         .map_err(|error| format!("저장된 작업 항목을 읽지 못했습니다: {error}"))?;
@@ -437,6 +483,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             status,
             rotation,
             mask_recipe_json,
+            edge_settings_json,
             output_path,
             output_bytes,
             error,
@@ -449,6 +496,8 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             .map_err(|error| format!("저장된 EXIF 요약이 올바르지 않습니다: {error}"))?;
         let mask_recipe = serde_json::from_str(&mask_recipe_json)
             .map_err(|error| format!("저장된 브러시 마스크가 올바르지 않습니다: {error}"))?;
+        let edge_settings = serde_json::from_str(&edge_settings_json)
+            .map_err(|error| format!("저장된 가장자리 설정이 올바르지 않습니다: {error}"))?;
         let mut item = PersistedAsset {
             id,
             name,
@@ -461,6 +510,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             status: PersistedStatus::from_str(&status)?,
             rotation: u16::try_from(rotation).unwrap_or(0),
             mask_recipe,
+            edge_settings,
             output_path,
             output_bytes: output_bytes.map(to_u64),
             error,
@@ -513,6 +563,7 @@ fn normalize_restored_asset(item: &mut PersistedAsset, saved_modified_at_ms: Opt
 }
 
 fn validate_asset(item: &PersistedAsset) -> Result<(), String> {
+    crate::validate_edge_settings(&item.edge_settings)?;
     if item.id.trim().is_empty() || item.path.trim().is_empty() {
         return Err("저장할 작업 항목의 ID와 경로는 비워둘 수 없습니다.".to_owned());
     }
@@ -592,6 +643,7 @@ mod tests {
             status,
             rotation: 0,
             mask_recipe: ManualMaskRecipe::default(),
+            edge_settings: EdgeSettings::default(),
             output_path: None,
             output_bytes: None,
             error: None,
@@ -622,6 +674,7 @@ mod tests {
                 points: vec![MaskPoint { x: 0.25, y: 0.75 }],
             }],
         };
+        edited.edge_settings.edge_feather = 7;
         let snapshot = WorkspaceSnapshot {
             items: vec![edited, asset(&second, PersistedStatus::Failed)],
             settings: settings(),
@@ -638,6 +691,7 @@ mod tests {
             MaskMode::Manual
         ));
         assert_eq!(restored.items[0].mask_recipe.strokes.len(), 1);
+        assert_eq!(restored.items[0].edge_settings.edge_feather, 7);
         assert_eq!(restored.items[1].status, PersistedStatus::Failed);
         assert_eq!(restored.settings.suffix, "_bg");
 
@@ -709,6 +763,14 @@ mod tests {
                 prefix: "default_".to_owned(),
                 ..OutputSettings::default()
             },
+            presets: vec![OutputPreset {
+                id: "web-store".to_owned(),
+                name: "웹 스토어".to_owned(),
+                settings: OutputSettings {
+                    format: OutputFormat::Webp,
+                    ..OutputSettings::default()
+                },
+            }],
         };
 
         save_preferences_to_connection(&connection, &preferences).expect("save preferences");

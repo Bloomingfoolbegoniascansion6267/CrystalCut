@@ -389,11 +389,25 @@ select, input[type="text"], input[type="number"] {
   padding: 0 10px;
   color: var(--ink);
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--surface);
   font-size: 10.5px;
 }
-select { cursor: pointer; }
+select {
+  appearance: none;
+  padding-right: 34px;
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='m4 5.5 3 3 3-3' stroke='%23686b73' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"), linear-gradient(180deg, #fff, #fbfbfc);
+  background-repeat: no-repeat, no-repeat;
+  background-position: right 10px center, 0 0;
+  background-size: 14px 14px, 100% 100%;
+  box-shadow: 0 1px 2px rgba(22,25,34,.04), inset 0 1px 0 rgba(255,255,255,.8);
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+select:hover:not(:disabled) { border-color: #bfc1ca; box-shadow: 0 2px 5px rgba(22,25,34,.07); }
+select:focus { border-color: #b9adf1; box-shadow: 0 0 0 3px rgba(113,87,232,.1); }
+select:disabled { color: var(--ink-faint); background-color: var(--surface-muted); }
 .input-with-unit { position: relative; margin-top: 8px; }
 .input-with-unit input { padding-right: 34px; }
 .input-with-unit span { position: absolute; top: 50%; right: 11px; color: var(--ink-faint); font-size: 10px; transform: translateY(-50%); }
@@ -424,6 +438,23 @@ select { cursor: pointer; }
 .advanced-preview-heading .spinner { width: 12px; height: 12px; }
 .mask-summary-section .setting-label { margin: 0; }
 .mask-summary-button { width: 100%; justify-content: center; margin-top: 11px; font-size: 10px; }
+.preset-section { background: linear-gradient(180deg, #fff, #fcfbff); }
+.preset-section .setting-label { margin: 0; }
+.preset-controls { display: grid; grid-template-columns: minmax(0, 1fr) 32px 32px; gap: 5px; margin-top: 9px; }
+.preset-controls select { min-width: 0; }
+.preset-icon-button { height: 34px; padding: 0; color: var(--accent-dark); border: 1px solid #d9d1fa; border-radius: 10px; background: var(--accent-soft); font-size: 16px; font-weight: 500; cursor: pointer; }
+.preset-icon-button:hover:not(:disabled) { border-color: #bfb2f7; background: #e9e3ff; }
+.preset-icon-button.danger { color: var(--ink-faint); border-color: var(--line); background: white; }
+.preset-icon-button.danger:hover:not(:disabled) { color: var(--danger); border-color: #efc2c9; background: #fff4f5; }
+.preset-name-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 5px; margin-top: 7px; }
+.preset-name-row button { padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink-soft); font-size: 8.5px; font-weight: 700; cursor: pointer; }
+.preset-name-row button:first-of-type { color: white; border-color: var(--accent); background: var(--accent); }
+.metadata-check { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.advanced-section-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin: -2px 0 11px; }
+.advanced-section-title strong, .advanced-section-title span { display: block; }
+.advanced-section-title strong { margin-bottom: 3px; font-size: 10px; }
+.advanced-section-title span { max-width: 145px; overflow: hidden; color: var(--ink-faint); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.advanced-section-title button { flex: 0 0 auto; padding: 5px 7px; color: var(--accent-dark); border: 1px solid #d9d1fa; border-radius: 7px; background: white; font-size: 8px; font-weight: 700; cursor: pointer; }
 
 .actionbar {
   z-index: 5;
@@ -472,8 +503,14 @@ select { cursor: pointer; }
 .app-context-menu { position: fixed; z-index: 80; display: grid; min-width: 184px; padding: 5px; border: 1px solid rgba(31,34,43,.16); border-radius: 10px; background: rgba(255,255,255,.98); box-shadow: 0 14px 42px rgba(22,25,34,.22); backdrop-filter: blur(14px); animation: context-menu-in 90ms ease-out; }
 .app-context-menu button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 29px; gap: 18px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: 9.5px; cursor: pointer; }
 .app-context-menu button:hover:not(:disabled) { color: var(--accent-dark); background: var(--accent-soft); }
+.app-context-menu button.danger { color: var(--danger); }
+.app-context-menu button.danger:hover:not(:disabled) { color: #b62c40; background: #fff0f2; }
 .app-context-menu kbd { color: var(--ink-faint); font-family: inherit; font-size: 8px; }
 .context-separator { display: block; height: 1px; margin: 4px 3px; background: var(--line); }
+.context-file-heading { min-width: 210px; padding: 7px 8px 6px; }
+.context-file-heading strong, .context-file-heading span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-file-heading strong { margin-bottom: 4px; font-size: 10px; }
+.context-file-heading span { color: var(--ink-faint); font-size: 8px; }
 @keyframes context-menu-in { from { opacity: 0; transform: translateY(-3px) scale(.98); } }
 
 .modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 28px; background: rgba(24, 25, 31, .42); backdrop-filter: blur(10px); animation: modal-fade 140ms ease-out; }
@@ -515,6 +552,7 @@ select { cursor: pointer; }
 .preferences-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-top: 16px; }
 .preferences-form-grid label > span, .preferences-wide-field > span { display: block; margin: 0 0 6px 2px; color: var(--ink-soft); font-size: 9px; font-weight: 600; }
 .preferences-wide-field { display: block; margin-top: 11px; }
+.preferences-metadata-check { margin-top: 13px; }
 .preferences-wide-field input { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .preferences-form-grid input, .preferences-wide-field input { height: 34px; font-size: 10.5px; }
 .preferences-path-picker { display: flex; align-items: center; justify-content: space-between; width: 100%; height: 36px; gap: 10px; margin-top: 11px; padding: 0 10px; color: var(--ink-soft); border: 1px solid var(--line-strong); border-radius: 8px; background: white; font-size: 9.5px; cursor: pointer; }

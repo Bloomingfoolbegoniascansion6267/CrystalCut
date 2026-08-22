@@ -19,8 +19,8 @@ use ort::{
 use crate::{
     metadata,
     protocol::{
-        BrushMode, BrushStroke, ManualMaskRecipe, MaskMode, OutputFormat, OutputSettings,
-        ResizeMode, WorkerRequest,
+        BrushMode, BrushStroke, EdgeSettings, ManualMaskRecipe, MaskMode, OutputFormat,
+        OutputSettings, ResizeMode, WorkerRequest,
     },
 };
 
@@ -86,10 +86,11 @@ impl InferenceEngine {
         let source = rotate(source, request.rotation)?;
         let mask = rotate_mask(mask, request.rotation)?;
         let mask = apply_manual_mask(mask, &request.mask_recipe);
-        let mask = refine_mask(mask, &request.settings);
-        let mut composed = apply_alpha(source, &mask, request.settings.preserve_original_alpha);
+        let mask = refine_mask(mask, &request.edge_settings);
+        let mut composed =
+            apply_alpha(source, &mask, request.edge_settings.preserve_original_alpha);
         composed = resize(composed, &request.settings);
-        let encoded = encode(&composed, &request.settings)?;
+        let encoded = encode(&composed, &request.settings, Some(&exif))?;
         atomic_write(output_path, &encoded)?;
         Ok(encoded.len() as u64)
     }
@@ -100,6 +101,7 @@ impl InferenceEngine {
         rotation: u16,
         recipe: &ManualMaskRecipe,
         settings: &OutputSettings,
+        edge_settings: &EdgeSettings,
     ) -> Result<(DynamicImage, DynamicImage), String> {
         let mut source = image::open(input_path)
             .map_err(|error| format!("입력 이미지를 열지 못했습니다: {error}"))?;
@@ -134,7 +136,12 @@ impl InferenceEngine {
         let source = rotate(source, rotation)?;
         let mask = rotate_mask(mask, rotation)?;
         let mask = apply_manual_mask(mask, recipe);
-        Ok(compose_preview_bundle(source, mask, settings))
+        Ok(compose_preview_bundle(
+            source,
+            mask,
+            settings,
+            edge_settings,
+        ))
     }
 
     fn infer_mask(&mut self, source: &DynamicImage) -> Result<GrayImage, String> {
@@ -187,9 +194,10 @@ pub(crate) fn process_conversion(request: &WorkerRequest) -> Result<u64, String>
     if output_path.exists() {
         return Err("안전을 위해 기존 출력 파일을 덮어쓰지 않았습니다.".to_owned());
     }
+    let exif = metadata::read_exif_summary(input_path);
     let source = load_oriented_rotated(input_path, request.rotation)?;
     let converted = resize(source, &request.settings);
-    let encoded = encode(&converted, &request.settings)?;
+    let encoded = encode(&converted, &request.settings, Some(&exif))?;
     atomic_write(output_path, &encoded)?;
     Ok(encoded.len() as u64)
 }
@@ -209,9 +217,10 @@ pub(crate) fn compose_with_mask(
     source: DynamicImage,
     mask: GrayImage,
     settings: &OutputSettings,
+    edge_settings: &EdgeSettings,
 ) -> DynamicImage {
-    let mask = refine_mask(mask, settings);
-    let composed = apply_alpha(source, &mask, settings.preserve_original_alpha);
+    let mask = refine_mask(mask, edge_settings);
+    let composed = apply_alpha(source, &mask, edge_settings.preserve_original_alpha);
     resize(composed, settings)
 }
 
@@ -219,10 +228,11 @@ pub(crate) fn compose_preview_bundle(
     source: DynamicImage,
     mask: GrayImage,
     settings: &OutputSettings,
+    edge_settings: &EdgeSettings,
 ) -> (DynamicImage, DynamicImage) {
-    let mask = refine_mask(mask, settings);
+    let mask = refine_mask(mask, edge_settings);
     let composed = resize(
-        apply_alpha(source, &mask, settings.preserve_original_alpha),
+        apply_alpha(source, &mask, edge_settings.preserve_original_alpha),
         settings,
     );
     let mask_preview = resize(DynamicImage::ImageLuma8(mask), settings);
@@ -234,13 +244,15 @@ pub(crate) fn write_masked_output(
     mask: GrayImage,
     output_path: &Path,
     settings: &OutputSettings,
+    edge_settings: &EdgeSettings,
+    source_metadata: Option<&metadata::ExifSummary>,
 ) -> Result<u64, String> {
     validate_output_extension(output_path, settings.format)?;
     if output_path.exists() {
         return Err("안전을 위해 기존 출력 파일을 덮어쓰지 않았습니다.".to_owned());
     }
-    let composed = compose_with_mask(source, mask, settings);
-    let encoded = encode(&composed, settings)?;
+    let composed = compose_with_mask(source, mask, settings, edge_settings);
+    let encoded = encode(&composed, settings, source_metadata)?;
     atomic_write(output_path, &encoded)?;
     Ok(encoded.len() as u64)
 }
@@ -285,7 +297,8 @@ pub(crate) fn estimate_output_size(
     let sample = source.resize_exact(sample_width, sample_height, ResizeFilter::Lanczos3);
     let mut sample_settings = settings.clone();
     sample_settings.resize_mode = ResizeMode::Original;
-    let sample_bytes = encode(&sample, &sample_settings)?.len() as f64;
+    let sample_metadata = metadata::read_exif_summary(input_path);
+    let sample_bytes = encode(&sample, &sample_settings, Some(&sample_metadata))?.len() as f64;
     let sample_pixels = f64::from(sample_width) * f64::from(sample_height);
     let target_pixels = f64::from(target_width) * f64::from(target_height);
     Ok((sample_bytes * target_pixels / sample_pixels).round() as u64)
@@ -413,7 +426,7 @@ fn draw_disc(mask: &mut GrayImage, center_x: i32, center_y: i32, radius: i32, va
     }
 }
 
-fn refine_mask(mut mask: GrayImage, settings: &OutputSettings) -> GrayImage {
+fn refine_mask(mut mask: GrayImage, settings: &EdgeSettings) -> GrayImage {
     if settings.edge_shift != 0 {
         mask = shift_mask(mask, settings.edge_shift);
     }
@@ -562,9 +575,14 @@ fn target_dimensions(width: u32, height: u32, settings: &OutputSettings) -> (u32
     }
 }
 
-fn encode(image: &DynamicImage, settings: &OutputSettings) -> Result<Vec<u8>, String> {
+fn encode(
+    image: &DynamicImage,
+    settings: &OutputSettings,
+    source_metadata: Option<&metadata::ExifSummary>,
+) -> Result<Vec<u8>, String> {
     let rgba: RgbaImage = image.to_rgba8();
-    match settings.format {
+    let has_alpha = rgba.pixels().any(|pixel| pixel[3] < 255);
+    let mut encoded = match settings.format {
         OutputFormat::Png => {
             let compression = match settings.png_effort {
                 1..=3 => CompressionType::Fast,
@@ -580,7 +598,7 @@ fn encode(image: &DynamicImage, settings: &OutputSettings) -> Result<Vec<u8>, St
                     ExtendedColorType::Rgba8,
                 )
                 .map_err(|error| format!("PNG를 인코딩하지 못했습니다: {error}"))?;
-            Ok(encoded)
+            encoded
         }
         OutputFormat::Webp => {
             let encoder = webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height());
@@ -589,9 +607,119 @@ fn encode(image: &DynamicImage, settings: &OutputSettings) -> Result<Vec<u8>, St
             } else {
                 encoder.encode(f32::from(settings.webp_quality))
             };
-            Ok(encoded.to_vec())
+            encoded.to_vec()
+        }
+    };
+    if settings.preserve_metadata {
+        if let Some(profile) = source_metadata
+            .map(metadata::safe_exif_profile)
+            .transpose()?
+            .flatten()
+        {
+            encoded = match settings.format {
+                OutputFormat::Png => embed_png_exif(encoded, &profile)?,
+                OutputFormat::Webp => {
+                    embed_webp_exif(encoded, &profile, rgba.width(), rgba.height(), has_alpha)?
+                }
+            };
         }
     }
+    Ok(encoded)
+}
+
+fn embed_png_exif(mut png: Vec<u8>, profile: &[u8]) -> Result<Vec<u8>, String> {
+    const SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if !png.starts_with(SIGNATURE) || png.len() < 33 || &png[12..16] != b"IHDR" {
+        return Err("PNG 메타데이터를 기록할 수 없는 파일 구조입니다.".to_owned());
+    }
+    let ihdr_length = u32::from_be_bytes(png[8..12].try_into().unwrap()) as usize;
+    let insert_at = 8_usize
+        .checked_add(12)
+        .and_then(|value| value.checked_add(ihdr_length))
+        .filter(|position| *position <= png.len())
+        .ok_or_else(|| "PNG IHDR 크기가 올바르지 않습니다.".to_owned())?;
+    let chunk = png_chunk(*b"eXIf", profile)?;
+    png.splice(insert_at..insert_at, chunk);
+    Ok(png)
+}
+
+fn png_chunk(kind: [u8; 4], data: &[u8]) -> Result<Vec<u8>, String> {
+    let length = u32::try_from(data.len())
+        .map_err(|_| "출력 EXIF가 PNG 청크 제한을 초과했습니다.".to_owned())?;
+    let mut chunk = Vec::with_capacity(data.len() + 12);
+    chunk.extend_from_slice(&length.to_be_bytes());
+    chunk.extend_from_slice(&kind);
+    chunk.extend_from_slice(data);
+    chunk.extend_from_slice(&png_crc32(&chunk[4..]).to_be_bytes());
+    Ok(chunk)
+}
+
+fn png_crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffff_u32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xedb8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+fn embed_webp_exif(
+    webp: Vec<u8>,
+    profile: &[u8],
+    width: u32,
+    height: u32,
+    has_alpha: bool,
+) -> Result<Vec<u8>, String> {
+    if webp.len() < 12 || &webp[0..4] != b"RIFF" || &webp[8..12] != b"WEBP" {
+        return Err("WebP 메타데이터를 기록할 수 없는 파일 구조입니다.".to_owned());
+    }
+    let mut output = if webp.get(12..16) == Some(b"VP8X") {
+        if webp.len() < 30 || u32::from_le_bytes(webp[16..20].try_into().unwrap()) < 10 {
+            return Err("WebP VP8X 청크가 올바르지 않습니다.".to_owned());
+        }
+        let mut extended = webp;
+        extended[20] |= 0x08;
+        extended
+    } else {
+        let mut extended = Vec::with_capacity(webp.len() + profile.len() + 32);
+        extended.extend_from_slice(b"RIFF\0\0\0\0WEBP");
+        let mut vp8x = [0_u8; 10];
+        vp8x[0] = 0x08 | if has_alpha { 0x10 } else { 0 };
+        write_u24(&mut vp8x[4..7], width.saturating_sub(1));
+        write_u24(&mut vp8x[7..10], height.saturating_sub(1));
+        append_riff_chunk(&mut extended, *b"VP8X", &vp8x)?;
+        extended.extend_from_slice(&webp[12..]);
+        extended
+    };
+    append_riff_chunk(&mut output, *b"EXIF", profile)?;
+    let riff_size = u32::try_from(output.len().saturating_sub(8))
+        .map_err(|_| "메타데이터를 포함한 WebP가 RIFF 크기 제한을 초과했습니다.".to_owned())?;
+    output[4..8].copy_from_slice(&riff_size.to_le_bytes());
+    Ok(output)
+}
+
+fn append_riff_chunk(target: &mut Vec<u8>, kind: [u8; 4], data: &[u8]) -> Result<(), String> {
+    let length = u32::try_from(data.len())
+        .map_err(|_| "출력 EXIF가 WebP 청크 제한을 초과했습니다.".to_owned())?;
+    target.extend_from_slice(&kind);
+    target.extend_from_slice(&length.to_le_bytes());
+    target.extend_from_slice(data);
+    if data.len() % 2 == 1 {
+        target.push(0);
+    }
+    Ok(())
+}
+
+fn write_u24(target: &mut [u8], value: u32) {
+    target[0] = value as u8;
+    target[1] = (value >> 8) as u8;
+    target[2] = (value >> 16) as u8;
 }
 
 fn atomic_write(output_path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -672,7 +800,8 @@ mod tests {
             DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 4, image::Rgba([120, 80, 40, 255])));
         let mask = GrayImage::from_pixel(8, 4, image::Luma([192]));
         let preview_settings = settings(ResizeMode::LongEdge, 4, true);
-        let (result, mask_preview) = compose_preview_bundle(source, mask, &preview_settings);
+        let (result, mask_preview) =
+            compose_preview_bundle(source, mask, &preview_settings, &EdgeSettings::default());
 
         assert_eq!(result.dimensions(), (4, 2));
         assert_eq!(mask_preview.dimensions(), result.dimensions());
@@ -740,6 +869,43 @@ mod tests {
     }
 
     #[test]
+    fn png_and_webp_outputs_embed_only_safe_metadata_when_enabled() {
+        let directory =
+            std::env::temp_dir().join(format!("clearcut-output-exif-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create metadata fixture directory");
+        let source = DynamicImage::ImageRgba8(RgbaImage::from_pixel(
+            8,
+            4,
+            image::Rgba([80, 120, 160, 192]),
+        ));
+        let summary = metadata::ExifSummary {
+            taken_at: Some("2026-08-22 15:04:09".to_owned()),
+            camera: Some("Clearcut Camera One".to_owned()),
+            lens: Some("Prime 35mm".to_owned()),
+            orientation: 6,
+        };
+
+        for format in [OutputFormat::Png, OutputFormat::Webp] {
+            let mut output_settings = settings(ResizeMode::Original, 1, true);
+            output_settings.format = format;
+            output_settings.preserve_metadata = true;
+            output_settings.webp_lossless = true;
+            let encoded = encode(&source, &output_settings, Some(&summary))
+                .expect("encode output with safe metadata");
+            let output = directory.join(format!("result.{}", format.extension()));
+            std::fs::write(&output, encoded).expect("write metadata output");
+            image::open(&output).expect("metadata output remains decodable");
+            let restored = metadata::read_exif_summary(&output);
+            assert_eq!(restored.taken_at, summary.taken_at);
+            assert_eq!(restored.camera, summary.camera);
+            assert_eq!(restored.lens, summary.lens);
+            assert_eq!(restored.orientation, 1);
+        }
+
+        std::fs::remove_dir_all(directory).expect("remove metadata fixture directory");
+    }
+
+    #[test]
     fn conversion_path_resizes_and_encodes_without_any_ai_model() {
         let directory =
             std::env::temp_dir().join(format!("clearcut-convert-{}", std::process::id()));
@@ -763,6 +929,7 @@ mod tests {
             rotation: 0,
             settings: output_settings,
             mask_recipe: ManualMaskRecipe::default(),
+            edge_settings: EdgeSettings::default(),
         };
         assert!(process_conversion(&request).expect("run conversion") > 0);
         assert_eq!(

@@ -22,9 +22,9 @@ use std::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::{GenericImageView, ImageFormat, ImageReader};
 use protocol::{
-    BatchItemStatus, BatchProgress, BatchResult, ExportPlan, MaskMode, OutputLocation,
-    OutputSettings, PlannedOutput, ProcessItem, ProcessedItemResult, ProcessingMode, ResizeMode,
-    WorkerRequest, WorkerResponse, WORKER_PROTOCOL_VERSION,
+    BatchItemStatus, BatchProgress, BatchResult, EdgeSettings, ExportPlan, MaskMode,
+    OutputLocation, OutputSettings, PlannedOutput, ProcessItem, ProcessedItemResult,
+    ProcessingMode, ResizeMode, WorkerRequest, WorkerResponse, WORKER_PROTOCOL_VERSION,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -332,9 +332,11 @@ async fn generate_mask_preview(
     path: String,
     rotation: u16,
     mask_recipe: protocol::ManualMaskRecipe,
+    edge_settings: EdgeSettings,
     settings: OutputSettings,
 ) -> Result<MaskPreviewBundle, String> {
     validate_mask_recipe(&mask_recipe)?;
+    validate_edge_settings(&edge_settings)?;
     let controller = controller.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let model_path = model::ensure_default_model(&app)?;
@@ -351,7 +353,13 @@ async fn generate_mask_preview(
         let (result, mask) = slot
             .as_mut()
             .ok_or_else(|| "자동 미리보기 엔진을 준비하지 못했습니다.".to_owned())?
-            .render_preview_bundle(Path::new(&path), rotation, &mask_recipe, &settings)?;
+            .render_preview_bundle(
+                Path::new(&path),
+                rotation,
+                &mask_recipe,
+                &settings,
+                &edge_settings,
+            )?;
         encode_mask_preview_bundle(result, mask)
     })
     .await
@@ -365,9 +373,11 @@ async fn generate_sam_preview(
     path: String,
     rotation: u16,
     mask_recipe: protocol::ManualMaskRecipe,
+    edge_settings: EdgeSettings,
     settings: OutputSettings,
 ) -> Result<MaskPreviewBundle, String> {
     validate_mask_recipe(&mask_recipe)?;
+    validate_edge_settings(&edge_settings)?;
     let controller = controller.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let paths = sam::ensure_models(&app)?;
@@ -384,7 +394,13 @@ async fn generate_sam_preview(
         let (result, mask) = slot
             .as_mut()
             .ok_or_else(|| "SAM 미리보기 엔진을 준비하지 못했습니다.".to_owned())?
-            .render_preview_bundle(Path::new(&path), rotation, &mask_recipe, &settings)?;
+            .render_preview_bundle(
+                Path::new(&path),
+                rotation,
+                &mask_recipe,
+                &settings,
+                &edge_settings,
+            )?;
         encode_mask_preview_bundle(result, mask)
     })
     .await
@@ -599,6 +615,41 @@ async fn reset_app_preferences(app: AppHandle) -> Result<workspace::AppPreferenc
         .map_err(|error| format!("환경설정 초기화를 실행하지 못했습니다: {error}"))?
 }
 
+#[tauri::command]
+fn reveal_in_file_manager(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if !target.exists() {
+        return Err("파일 또는 폴더를 찾을 수 없습니다.".to_owned());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        Command::new("explorer.exe")
+            .arg(format!("/select,{}", target.display()))
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|error| format!("파일 탐색기를 열지 못했습니다: {error}"))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    Command::new("open")
+        .arg("-R")
+        .arg(&target)
+        .spawn()
+        .map_err(|error| format!("Finder를 열지 못했습니다: {error}"))?;
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    Command::new("xdg-open")
+        .arg(target.parent().unwrap_or(&target))
+        .spawn()
+        .map_err(|error| format!("파일 관리자를 열지 못했습니다: {error}"))?;
+
+    Ok(())
+}
+
 fn process_batch_blocking(
     app: AppHandle,
     items: Vec<ProcessItem>,
@@ -608,6 +659,7 @@ fn process_batch_blocking(
     if matches!(settings.processing_mode, ProcessingMode::RemoveBackground) {
         for item in &items {
             validate_mask_recipe(&item.mask_recipe)?;
+            validate_edge_settings(&item.edge_settings)?;
         }
     }
     let total = items.len();
@@ -666,6 +718,7 @@ fn process_batch_blocking(
             rotation: item.rotation,
             settings: settings.clone(),
             mask_recipe: item.mask_recipe.clone(),
+            edge_settings: item.edge_settings.clone(),
         });
         emit_progress(
             &app,
@@ -990,21 +1043,6 @@ fn validate_settings(settings: &OutputSettings) -> Result<(), String> {
     if matches!(settings.resize_mode, ResizeMode::LongEdge) && settings.resize_value > 32_768 {
         return Err("긴 변은 안전을 위해 32,768px 이하여야 합니다.".to_owned());
     }
-    if settings.edge_smoothing > 10 {
-        return Err("가장자리 매끄럽게 값은 0에서 10 사이여야 합니다.".to_owned());
-    }
-    if settings.edge_feather > 20 {
-        return Err("가장자리 페더는 0에서 20px 사이여야 합니다.".to_owned());
-    }
-    if !(-8..=8).contains(&settings.edge_shift) {
-        return Err("마스크 확장·축소는 -8에서 8px 사이여야 합니다.".to_owned());
-    }
-    if settings.alpha_threshold > 100 {
-        return Err("희미한 배경 제거 값은 0에서 100% 사이여야 합니다.".to_owned());
-    }
-    if !(-50..=50).contains(&settings.mask_contrast) {
-        return Err("마스크 대비는 -50에서 50 사이여야 합니다.".to_owned());
-    }
     if matches!(settings.output_location, OutputLocation::Custom)
         && settings.output_directory.trim().is_empty()
     {
@@ -1021,6 +1059,25 @@ fn validate_settings(settings: &OutputSettings) -> Result<(), String> {
             metadata: &sample_metadata,
         },
     )?;
+    Ok(())
+}
+
+fn validate_edge_settings(settings: &EdgeSettings) -> Result<(), String> {
+    if settings.edge_smoothing > 10 {
+        return Err("가장자리 매끄럽게 값은 0에서 10 사이여야 합니다.".to_owned());
+    }
+    if settings.edge_feather > 20 {
+        return Err("가장자리 페더는 0에서 20px 사이여야 합니다.".to_owned());
+    }
+    if !(-8..=8).contains(&settings.edge_shift) {
+        return Err("마스크 확장·축소는 -8에서 8px 사이여야 합니다.".to_owned());
+    }
+    if settings.alpha_threshold > 100 {
+        return Err("희미한 배경 제거 값은 0에서 100% 사이여야 합니다.".to_owned());
+    }
+    if !(-50..=50).contains(&settings.mask_contrast) {
+        return Err("마스크 대비는 -50에서 50 사이여야 합니다.".to_owned());
+    }
     Ok(())
 }
 
@@ -1089,7 +1146,8 @@ pub fn run() {
             clear_workspace,
             load_app_preferences,
             save_app_preferences,
-            reset_app_preferences
+            reset_app_preferences,
+            reveal_in_file_manager
         ])
         .run(tauri::generate_context!())
         .expect("error while running Clearcut");
@@ -1205,6 +1263,7 @@ mod tests {
             sequence: None,
             exif: None,
             mask_recipe: protocol::ManualMaskRecipe::default(),
+            edge_settings: EdgeSettings::default(),
         }];
 
         let plan = prepare_export_plan_blocking(items, settings()).expect("prepare export plan");

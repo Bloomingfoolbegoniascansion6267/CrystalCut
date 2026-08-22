@@ -19,6 +19,7 @@ export interface ImageAsset {
   error?: string;
   rotation: 0 | 90 | 180 | 270;
   maskRecipe: ManualMaskRecipe;
+  edgeSettings: EdgeSettings;
 }
 
 export type MaskMode = "automatic" | "refine" | "manual" | "sam";
@@ -38,6 +39,15 @@ export interface BrushStroke {
 export interface ManualMaskRecipe {
   mode: MaskMode;
   strokes: BrushStroke[];
+}
+
+export interface EdgeSettings {
+  edgeSmoothing: number;
+  edgeFeather: number;
+  edgeShift: number;
+  alphaThreshold: number;
+  maskContrast: number;
+  preserveOriginalAlpha: boolean;
 }
 
 export interface ExifSummary {
@@ -66,12 +76,7 @@ export interface OutputSettings {
   prefix: string;
   suffix: string;
   nameTemplate: string;
-  edgeSmoothing: number;
-  edgeFeather: number;
-  edgeShift: number;
-  alphaThreshold: number;
-  maskContrast: number;
-  preserveOriginalAlpha: boolean;
+  preserveMetadata: boolean;
 }
 
 export type PersistedAsset = Omit<ImageAsset, "previewUrl" | "resultPreviewUrl" | "editBasePreviewUrl" | "maskPreviewUrl">;
@@ -108,6 +113,7 @@ export interface ProcessItem {
   sequence?: number;
   exif?: ExifSummary;
   maskRecipe: ManualMaskRecipe;
+  edgeSettings: EdgeSettings;
 }
 
 export type BatchProgressStatus = "modelDownloading" | "queued" | "processing" | "retryingWorker" | "completed" | "failed" | "cancelled";
@@ -154,6 +160,13 @@ export interface ModelStatus {
 export interface AppPreferences {
   defaultSettings: OutputSettings;
   restoreWorkspace: boolean;
+  presets: OutputPreset[];
+}
+
+export interface OutputPreset {
+  id: string;
+  name: string;
+  settings: OutputSettings;
 }
 
 export interface AppDiagnostics {

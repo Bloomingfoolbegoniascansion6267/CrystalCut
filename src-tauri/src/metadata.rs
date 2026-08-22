@@ -1,6 +1,10 @@
-use std::{fs::File, io::BufReader, path::Path};
+use std::{
+    fs::File,
+    io::{BufReader, Cursor},
+    path::Path,
+};
 
-use exif::{DateTime, In, Reader, Tag, Value};
+use exif::{experimental::Writer, DateTime, Field, In, Reader, Tag, Value};
 use image::{metadata::Orientation, DynamicImage};
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +63,56 @@ pub fn apply_orientation(image: &mut DynamicImage, orientation: u8) {
     }
 }
 
+pub fn safe_exif_profile(summary: &ExifSummary) -> Result<Option<Vec<u8>>, String> {
+    if summary.taken_at.is_none() && summary.camera.is_none() && summary.lens.is_none() {
+        return Ok(None);
+    }
+    let mut fields = Vec::new();
+    if let Some(taken_at) = summary.taken_at.as_deref().and_then(to_exif_datetime) {
+        fields.push(Field {
+            tag: Tag::DateTimeOriginal,
+            ifd_num: In::PRIMARY,
+            value: Value::Ascii(vec![taken_at.into_bytes()]),
+        });
+    }
+    if let Some(camera) = summary.camera.as_deref() {
+        fields.push(Field {
+            tag: Tag::Model,
+            ifd_num: In::PRIMARY,
+            value: Value::Ascii(vec![camera.as_bytes().to_vec()]),
+        });
+    }
+    if let Some(lens) = summary.lens.as_deref() {
+        fields.push(Field {
+            tag: Tag::LensModel,
+            ifd_num: In::PRIMARY,
+            value: Value::Ascii(vec![lens.as_bytes().to_vec()]),
+        });
+    }
+    fields.push(Field {
+        tag: Tag::Orientation,
+        ifd_num: In::PRIMARY,
+        value: Value::Short(vec![1]),
+    });
+    let mut writer = Writer::new();
+    for field in &fields {
+        writer.push_field(field);
+    }
+    let mut encoded = Cursor::new(Vec::new());
+    writer
+        .write(&mut encoded, false)
+        .map_err(|error| format!("출력 EXIF를 만들지 못했습니다: {error}"))?;
+    Ok(Some(encoded.into_inner()))
+}
+
+fn to_exif_datetime(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 19 || bytes[4] != b'-' || bytes[7] != b'-' || bytes[10] != b' ' {
+        return None;
+    }
+    Some(format!("{}:{}:{}", &value[0..4], &value[5..7], &value[8..]))
+}
+
 fn ascii_field(exif: &exif::Exif, tag: Tag) -> Option<String> {
     let field = exif.get_field(tag, In::PRIMARY)?;
     let Value::Ascii(values) = &field.value else {
@@ -98,6 +152,34 @@ mod tests {
     #[test]
     fn invalid_exif_datetime_is_ignored() {
         assert_eq!(parse_exif_datetime("not-a-date"), None);
+    }
+
+    #[test]
+    fn safe_output_profile_keeps_summary_and_normalizes_orientation() {
+        let summary = ExifSummary {
+            taken_at: Some("2026-08-22 15:04:09".to_owned()),
+            camera: Some("Clearcut Camera One".to_owned()),
+            lens: Some("Prime 35mm".to_owned()),
+            orientation: 6,
+        };
+        let profile = safe_exif_profile(&summary)
+            .expect("create safe profile")
+            .expect("profile exists");
+        let exif = Reader::new().read_raw(profile).expect("read safe profile");
+        assert_eq!(
+            ascii_field(&exif, Tag::DateTimeOriginal).as_deref(),
+            Some("2026:08:22 15:04:09")
+        );
+        assert_eq!(
+            ascii_field(&exif, Tag::Model).as_deref(),
+            Some("Clearcut Camera One")
+        );
+        assert_eq!(
+            exif.get_field(Tag::Orientation, In::PRIMARY)
+                .and_then(|field| field.value.get_uint(0)),
+            Some(1)
+        );
+        assert!(exif.get_field(Tag::GPSLatitude, In::PRIMARY).is_none());
     }
 
     #[test]
