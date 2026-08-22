@@ -308,6 +308,23 @@ fn encode_preview_data_url(image: image::DynamicImage) -> Result<String, String>
     ))
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MaskPreviewBundle {
+    result_preview_url: String,
+    mask_preview_url: String,
+}
+
+fn encode_mask_preview_bundle(
+    result: image::DynamicImage,
+    mask: image::DynamicImage,
+) -> Result<MaskPreviewBundle, String> {
+    Ok(MaskPreviewBundle {
+        result_preview_url: encode_preview_data_url(result)?,
+        mask_preview_url: encode_preview_data_url(mask)?,
+    })
+}
+
 #[tauri::command]
 async fn generate_mask_preview(
     app: AppHandle,
@@ -316,7 +333,7 @@ async fn generate_mask_preview(
     rotation: u16,
     mask_recipe: protocol::ManualMaskRecipe,
     settings: OutputSettings,
-) -> Result<String, String> {
+) -> Result<MaskPreviewBundle, String> {
     validate_mask_recipe(&mask_recipe)?;
     let controller = controller.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -331,11 +348,11 @@ async fn generate_mask_preview(
         {
             *slot = Some(engine::InferenceEngine::new(&model_path)?);
         }
-        let preview = slot
+        let (result, mask) = slot
             .as_mut()
             .ok_or_else(|| "자동 미리보기 엔진을 준비하지 못했습니다.".to_owned())?
-            .render_preview(Path::new(&path), rotation, &mask_recipe, &settings)?;
-        encode_preview_data_url(preview)
+            .render_preview_bundle(Path::new(&path), rotation, &mask_recipe, &settings)?;
+        encode_mask_preview_bundle(result, mask)
     })
     .await
     .map_err(|error| format!("자동 결과 미리보기를 실행하지 못했습니다: {error}"))?
@@ -349,7 +366,7 @@ async fn generate_sam_preview(
     rotation: u16,
     mask_recipe: protocol::ManualMaskRecipe,
     settings: OutputSettings,
-) -> Result<String, String> {
+) -> Result<MaskPreviewBundle, String> {
     validate_mask_recipe(&mask_recipe)?;
     let controller = controller.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -364,11 +381,11 @@ async fn generate_sam_preview(
         {
             *slot = Some(sam::SamEngine::new(&paths)?);
         }
-        let preview = slot
+        let (result, mask) = slot
             .as_mut()
             .ok_or_else(|| "SAM 미리보기 엔진을 준비하지 못했습니다.".to_owned())?
-            .render_preview(Path::new(&path), rotation, &mask_recipe, &settings)?;
-        encode_preview_data_url(preview)
+            .render_preview_bundle(Path::new(&path), rotation, &mask_recipe, &settings)?;
+        encode_mask_preview_bundle(result, mask)
     })
     .await
     .map_err(|error| format!("AI 객체 선택 미리보기를 실행하지 못했습니다: {error}"))?

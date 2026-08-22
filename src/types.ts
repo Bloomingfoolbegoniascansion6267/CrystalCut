@@ -13,6 +13,7 @@ export interface ImageAsset {
   previewUrl?: string;
   resultPreviewUrl?: string;
   editBasePreviewUrl?: string;
+  maskPreviewUrl?: string;
   outputPath?: string;
   outputBytes?: number;
   error?: string;
@@ -73,7 +74,7 @@ export interface OutputSettings {
   preserveOriginalAlpha: boolean;
 }
 
-export type PersistedAsset = Omit<ImageAsset, "previewUrl" | "resultPreviewUrl" | "editBasePreviewUrl">;
+export type PersistedAsset = Omit<ImageAsset, "previewUrl" | "resultPreviewUrl" | "editBasePreviewUrl" | "maskPreviewUrl">;
 
 export interface WorkspaceSnapshot {
   items: PersistedAsset[];

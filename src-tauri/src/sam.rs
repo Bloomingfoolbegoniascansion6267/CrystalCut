@@ -223,12 +223,18 @@ pub struct SamEngine {
     decoder: Session,
     paths: SamModelPaths,
     cached_embedding: Option<CachedEmbedding>,
+    cached_preview_mask: Option<CachedPromptMask>,
 }
 
 struct CachedEmbedding {
     key: String,
     image: Vec<f32>,
     positional: Vec<f32>,
+}
+
+struct CachedPromptMask {
+    key: String,
+    mask: GrayImage,
 }
 
 impl SamEngine {
@@ -252,6 +258,7 @@ impl SamEngine {
             decoder: open(&paths.decoder)?,
             paths: paths.clone(),
             cached_embedding: None,
+            cached_preview_mask: None,
         })
     }
 
@@ -275,16 +282,35 @@ impl SamEngine {
         )
     }
 
-    pub fn render_preview(
+    pub fn render_preview_bundle(
         &mut self,
         input_path: &Path,
         rotation: u16,
         recipe: &ManualMaskRecipe,
         settings: &OutputSettings,
-    ) -> Result<DynamicImage, String> {
+    ) -> Result<(DynamicImage, DynamicImage), String> {
         let source = engine::load_oriented_rotated(input_path, rotation)?;
-        let mask = self.predict_mask(&source, recipe, Some(cache_key(input_path, rotation)))?;
-        Ok(engine::compose_with_mask(source, mask, settings))
+        let image_key = cache_key(input_path, rotation);
+        let prompt_key = format!(
+            "{image_key}:{}",
+            serde_json::to_string(recipe)
+                .map_err(|error| format!("SAM 프롬프트 키를 만들지 못했습니다: {error}"))?
+        );
+        let mask = if let Some(cached) = self
+            .cached_preview_mask
+            .as_ref()
+            .filter(|cached| cached.key == prompt_key)
+        {
+            cached.mask.clone()
+        } else {
+            let mask = self.predict_mask(&source, recipe, Some(image_key))?;
+            self.cached_preview_mask = Some(CachedPromptMask {
+                key: prompt_key,
+                mask: mask.clone(),
+            });
+            mask
+        };
+        Ok(engine::compose_preview_bundle(source, mask, settings))
     }
 
     fn predict_mask(

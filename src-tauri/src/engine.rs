@@ -3,6 +3,7 @@ use std::{
     fs::{self, File},
     io::Write,
     path::{Path, PathBuf},
+    time::UNIX_EPOCH,
 };
 
 use image::{
@@ -31,6 +32,16 @@ const STD: [f32; 3] = [0.229, 0.224, 0.225];
 pub struct InferenceEngine {
     session: Session,
     model_path: PathBuf,
+    cached_preview_mask: Option<CachedPreviewMask>,
+}
+
+struct CachedPreviewMask {
+    path: PathBuf,
+    width: u32,
+    height: u32,
+    file_bytes: u64,
+    modified_nanos: u128,
+    mask: GrayImage,
 }
 
 impl InferenceEngine {
@@ -51,6 +62,7 @@ impl InferenceEngine {
         Ok(Self {
             session,
             model_path: model_path.to_owned(),
+            cached_preview_mask: None,
         })
     }
 
@@ -82,22 +94,47 @@ impl InferenceEngine {
         Ok(encoded.len() as u64)
     }
 
-    pub fn render_preview(
+    pub fn render_preview_bundle(
         &mut self,
         input_path: &Path,
         rotation: u16,
         recipe: &ManualMaskRecipe,
         settings: &OutputSettings,
-    ) -> Result<DynamicImage, String> {
+    ) -> Result<(DynamicImage, DynamicImage), String> {
         let mut source = image::open(input_path)
             .map_err(|error| format!("입력 이미지를 열지 못했습니다: {error}"))?;
         let exif = metadata::read_exif_summary(input_path);
         metadata::apply_orientation(&mut source, exif.orientation);
-        let mask = self.infer_mask(&source)?;
+        let file_metadata = fs::metadata(input_path).ok();
+        let file_bytes = file_metadata.as_ref().map_or(0, std::fs::Metadata::len);
+        let modified_nanos = file_metadata
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map_or(0, |duration| duration.as_nanos());
+        let mask = if let Some(cached) = self.cached_preview_mask.as_ref().filter(|cached| {
+            cached.path == input_path
+                && cached.width == source.width()
+                && cached.height == source.height()
+                && cached.file_bytes == file_bytes
+                && cached.modified_nanos == modified_nanos
+        }) {
+            cached.mask.clone()
+        } else {
+            let mask = self.infer_mask(&source)?;
+            self.cached_preview_mask = Some(CachedPreviewMask {
+                path: input_path.to_owned(),
+                width: source.width(),
+                height: source.height(),
+                file_bytes,
+                modified_nanos,
+                mask: mask.clone(),
+            });
+            mask
+        };
         let source = rotate(source, rotation)?;
         let mask = rotate_mask(mask, rotation)?;
         let mask = apply_manual_mask(mask, recipe);
-        Ok(compose_with_mask(source, mask, settings))
+        Ok(compose_preview_bundle(source, mask, settings))
     }
 
     fn infer_mask(&mut self, source: &DynamicImage) -> Result<GrayImage, String> {
@@ -176,6 +213,20 @@ pub(crate) fn compose_with_mask(
     let mask = refine_mask(mask, settings);
     let composed = apply_alpha(source, &mask, settings.preserve_original_alpha);
     resize(composed, settings)
+}
+
+pub(crate) fn compose_preview_bundle(
+    source: DynamicImage,
+    mask: GrayImage,
+    settings: &OutputSettings,
+) -> (DynamicImage, DynamicImage) {
+    let mask = refine_mask(mask, settings);
+    let composed = resize(
+        apply_alpha(source, &mask, settings.preserve_original_alpha),
+        settings,
+    );
+    let mask_preview = resize(DynamicImage::ImageLuma8(mask), settings);
+    (composed, mask_preview)
 }
 
 pub(crate) fn write_masked_output(
@@ -613,6 +664,22 @@ mod tests {
         let mask = GrayImage::from_pixel(1, 1, image::Luma([192]));
         let result = apply_alpha(DynamicImage::ImageRgba8(source), &mask, false).to_rgba8();
         assert_eq!(result.get_pixel(0, 0)[3], 192);
+    }
+
+    #[test]
+    fn preview_bundle_keeps_result_and_mask_at_matching_dimensions() {
+        let source =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 4, image::Rgba([120, 80, 40, 255])));
+        let mask = GrayImage::from_pixel(8, 4, image::Luma([192]));
+        let preview_settings = settings(ResizeMode::LongEdge, 4, true);
+        let (result, mask_preview) = compose_preview_bundle(source, mask, &preview_settings);
+
+        assert_eq!(result.dimensions(), (4, 2));
+        assert_eq!(mask_preview.dimensions(), result.dimensions());
+        let result_alpha = result.to_rgba8().get_pixel(0, 0)[3];
+        let mask_alpha = mask_preview.to_luma8().get_pixel(0, 0)[0];
+        assert_eq!(result_alpha, mask_alpha);
+        assert!(result_alpha > 0 && result_alpha < 255);
     }
 
     #[test]

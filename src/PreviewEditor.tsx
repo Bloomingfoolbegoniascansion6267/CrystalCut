@@ -7,17 +7,21 @@ import {
   useRef,
   useState,
 } from "react";
-import type { BrushMode, BrushStroke, ImageAsset, ManualMaskRecipe, MaskPoint } from "./types";
+import type { BrushMode, BrushStroke, ImageAsset, ManualMaskRecipe, MaskPoint, MaskMode } from "./types";
 
-type ViewMode = "original" | "result" | "compare";
+export type PreviewViewMode = "original" | "result" | "mask" | "compare";
+export type PreviewBackground = "checker" | "light" | "dark";
+export type PreviewStatus = "idle" | "updating" | "current" | "error";
 
 interface PreviewEditorProps {
   asset: ImageAsset;
-  viewMode: ViewMode;
+  viewMode: PreviewViewMode;
+  background: PreviewBackground;
   editing: boolean;
-  onEditingChange: (editing: boolean) => void;
   onMaskChange: (recipe: ManualMaskRecipe) => void;
-  previewBusy?: boolean;
+  onApply: () => void;
+  onCancel: () => void;
+  previewStatus?: PreviewStatus;
   previewError?: string | null;
 }
 
@@ -25,6 +29,9 @@ interface Size {
   width: number;
   height: number;
 }
+
+type EditorTool = "keep" | "remove" | "pan";
+type SelectionSource = "automatic" | "sam" | "manual";
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
 
@@ -43,7 +50,23 @@ function StrokeShape({ stroke, width, height, color, opacity = 1 }: {
   return <polyline points={points} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" opacity={opacity} />;
 }
 
-export default function PreviewEditor({ asset, viewMode, editing, onEditingChange, onMaskChange, previewBusy = false, previewError = null }: PreviewEditorProps) {
+const sourceForMode = (mode: MaskMode): SelectionSource => {
+  if (mode === "sam") return "sam";
+  if (mode === "manual") return "manual";
+  return "automatic";
+};
+
+export default function PreviewEditor({
+  asset,
+  viewMode,
+  background,
+  editing,
+  onMaskChange,
+  onApply,
+  onCancel,
+  previewStatus = "idle",
+  previewError = null,
+}: PreviewEditorProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const imageGroupRef = useRef<HTMLDivElement>(null);
   const [stageSize, setStageSize] = useState<Size>({ width: 0, height: 0 });
@@ -51,7 +74,7 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [comparePosition, setComparePosition] = useState(50);
-  const [brushMode, setBrushMode] = useState<BrushMode>("keep");
+  const [tool, setTool] = useState<EditorTool>("pan");
   const [brushSize, setBrushSize] = useState(48);
   const [activeStroke, setActiveStroke] = useState<BrushStroke | null>(null);
   const activeStrokeRef = useRef<BrushStroke | null>(null);
@@ -82,6 +105,7 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
     setComparePosition(50);
     setRedoStack([]);
     setActiveStroke(null);
+    setTool("pan");
     activeStrokeRef.current = null;
   }, [asset.id]);
 
@@ -90,8 +114,8 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
     ? { width: sourceSize.height, height: sourceSize.width }
     : sourceSize, [rotated, sourceSize]);
   const fitScale = Math.min(
-    Math.max(1, stageSize.width - 40) / Math.max(1, orientedSize.width),
-    Math.max(1, stageSize.height - (editing ? 118 : 40)) / Math.max(1, orientedSize.height),
+    Math.max(1, stageSize.width - (editing ? 112 : 40)) / Math.max(1, orientedSize.width),
+    Math.max(1, stageSize.height - (editing ? 136 : 40)) / Math.max(1, orientedSize.height),
   );
   const displaySize = {
     width: Math.max(1, orientedSize.width * fitScale),
@@ -102,11 +126,20 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
     : displaySize;
   const sourceMinimumEdge = Math.max(1, Math.min(asset.width ?? orientedSize.width, asset.height ?? orientedSize.height));
   const currentRadius = clamp(brushSize / 2 / sourceMinimumEdge, 0.0001, 0.5);
-  const visibleStrokes = activeStroke ? [...asset.maskRecipe.strokes, activeStroke] : asset.maskRecipe.strokes;
+  const correctionActive = asset.maskRecipe.mode !== "automatic";
+  const visibleStrokes = correctionActive
+    ? activeStroke ? [...asset.maskRecipe.strokes, activeStroke] : asset.maskRecipe.strokes
+    : [];
+  const inactiveStrokeCount = asset.maskRecipe.mode === "automatic" ? asset.maskRecipe.strokes.length : 0;
+  const selectionSource = sourceForMode(asset.maskRecipe.mode);
+  const previewIsActive = editing || previewStatus !== "idle";
+  const selectionNeedsPrompt = (asset.maskRecipe.mode === "manual" || asset.maskRecipe.mode === "sam")
+    && !asset.maskRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length > 0);
+  const resultUrl = selectionNeedsPrompt ? null : previewIsActive
+    ? asset.editBasePreviewUrl ?? asset.resultPreviewUrl ?? null
+    : asset.resultPreviewUrl ?? asset.editBasePreviewUrl ?? null;
   const maskId = `manual-mask-${asset.id.replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  const editingBaseUrl = asset.maskRecipe.mode === "automatic"
-    ? null
-    : asset.editBasePreviewUrl ?? asset.resultPreviewUrl ?? null;
+  const canPaint = editing && tool !== "pan" && asset.maskRecipe.mode !== "automatic";
 
   const normalizedPoint = useCallback((clientX: number, clientY: number): MaskPoint | null => {
     const bounds = imageGroupRef.current?.getBoundingClientRect();
@@ -117,10 +150,7 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
     return { x: clamp(x, 0, 1), y: clamp(y, 0, 1) };
   }, []);
 
-  const changeZoom = useCallback((next: number) => {
-    setZoom(clamp(next, 0.25, 8));
-  }, []);
-
+  const changeZoom = useCallback((next: number) => setZoom(clamp(next, 0.25, 8)), []);
   const fitToScreen = useCallback(() => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
@@ -146,21 +176,40 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
     onMaskChange({ ...asset.maskRecipe, strokes: [...asset.maskRecipe.strokes, stroke] });
   }, [asset.maskRecipe, onMaskChange, redoStack]);
 
+  const selectSource = (source: SelectionSource) => {
+    setRedoStack([]);
+    setTool("pan");
+    if (source === "automatic") {
+      onMaskChange({ ...asset.maskRecipe, mode: "automatic" });
+      return;
+    }
+    const nextMode: MaskMode = source === "sam" ? "sam" : "manual";
+    const sourceChanged = sourceForMode(asset.maskRecipe.mode) !== source;
+    onMaskChange({ mode: nextMode, strokes: sourceChanged ? [] : asset.maskRecipe.strokes });
+  };
+
+  const selectBrush = (mode: BrushMode) => {
+    if (asset.maskRecipe.mode === "automatic") {
+      onMaskChange({ ...asset.maskRecipe, mode: "refine" });
+    }
+    setTool(mode);
+  };
+
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 && event.button !== 1) return;
-    const shouldPaint = editing && asset.maskRecipe.mode !== "automatic" && event.button === 0 && !spacePressed.current;
+    const shouldPaint = canPaint && event.button === 0 && !spacePressed.current;
     if (shouldPaint) {
       const point = normalizedPoint(event.clientX, event.clientY);
       if (!point) return;
       event.currentTarget.setPointerCapture(event.pointerId);
       pointerAction.current = { type: "stroke", pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, panX: pan.x, panY: pan.y };
-      const stroke = { mode: brushMode, radius: currentRadius, points: [point] } satisfies BrushStroke;
+      const stroke = { mode: tool as BrushMode, radius: currentRadius, points: [point] } satisfies BrushStroke;
       activeStrokeRef.current = stroke;
       setActiveStroke(stroke);
       event.preventDefault();
       return;
     }
-    if (!editing || spacePressed.current || event.button === 1) {
+    if (!editing || tool === "pan" || spacePressed.current || event.button === 1) {
       event.currentTarget.setPointerCapture(event.pointerId);
       pointerAction.current = { type: "pan", pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, panX: pan.x, panY: pan.y };
       event.preventDefault();
@@ -215,6 +264,7 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
       event.preventDefault();
     }
     if (!editing) return;
+    if (event.key === "Escape") onCancel();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
       event.preventDefault();
       if (event.shiftKey) redo(); else undo();
@@ -229,10 +279,14 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
     transform: `translate(-50%, -50%) rotate(${asset.rotation}deg)`,
   };
 
+  const sourceLabel = selectionSource === "automatic" ? "자동 감지" : selectionSource === "sam" ? "AI 객체 선택" : "빈 마스크";
+  const keepLabel = selectionSource === "sam" ? "포함" : "복원";
+  const removeLabel = selectionSource === "sam" ? "제외" : "지우기";
+
   return (
     <div
       ref={stageRef}
-      className={`preview-stage interactive ${editing ? "mask-editing" : ""}`}
+      className={`preview-stage interactive preview-bg-${background} ${editing ? `mask-editing tool-${tool}` : ""}`}
       tabIndex={0}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -241,103 +295,67 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
       onKeyUp={(event) => { if (event.code === "Space") spacePressed.current = false; }}
-      aria-label={editing ? "브러시 마스크 편집 캔버스" : "이미지 미리보기. 드래그하여 이동하고 휠로 확대하거나 축소할 수 있습니다."}
+      aria-label={editing ? "객체 마스크 편집 캔버스" : "이미지 미리보기. 드래그하여 이동하고 휠로 확대하거나 축소할 수 있습니다."}
     >
       <div
         ref={imageGroupRef}
         className="preview-transform"
-        style={{
-          width: displaySize.width,
-          height: displaySize.height,
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-        }}
+        style={{ width: displaySize.width, height: displaySize.height, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
       >
-        {(viewMode === "original" || viewMode === "compare" || (editing && !editingBaseUrl)) && asset.previewUrl && (
+        {(viewMode === "original" || viewMode === "compare" || (!resultUrl && viewMode === "result")) && asset.previewUrl && (
           <img className="editor-source-image" src={asset.previewUrl} alt={`${asset.name} 원본`} style={imageStyle} onLoad={(event) => setSourceSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} draggable={false} />
         )}
-        {editing && editingBaseUrl && (
-          <img className="editor-result-image" src={editingBaseUrl} alt={`${asset.name} 편집 기준 결과`} draggable={false} />
-        )}
-        {viewMode === "result" && !editing && asset.resultPreviewUrl && (
-          <img className="editor-result-image" src={asset.resultPreviewUrl} alt={`${asset.name} 배경 제거 결과`} draggable={false} />
-        )}
-        {viewMode === "compare" && !editing && asset.resultPreviewUrl && (
+        {viewMode === "result" && resultUrl && <img className="editor-result-image" src={resultUrl} alt={`${asset.name} 배경 제거 결과`} draggable={false} />}
+        {viewMode === "mask" && asset.maskPreviewUrl && <img className="editor-result-image mask-image" src={asset.maskPreviewUrl} alt={`${asset.name} 흑백 마스크`} draggable={false} />}
+        {viewMode === "compare" && resultUrl && (
           <div className="compare-result-clip" style={{ clipPath: `inset(0 0 0 ${comparePosition}%)` }}>
-            <img className="editor-result-image" src={asset.resultPreviewUrl} alt={`${asset.name} 수정본`} draggable={false} />
+            <img className="editor-result-image" src={resultUrl} alt={`${asset.name} 수정본`} draggable={false} />
           </div>
         )}
-        {editing && (
+        {editing && correctionActive && viewMode !== "compare" && (
           <svg className="mask-overlay" viewBox={`0 0 ${displaySize.width} ${displaySize.height}`} aria-hidden="true">
-            {asset.maskRecipe.mode === "manual" && !editingBaseUrl && (
+            {asset.maskRecipe.mode === "manual" && !asset.maskPreviewUrl && (
               <>
-                <defs>
-                  <mask id={maskId}>
-                    <rect width="100%" height="100%" fill="white" />
-                    {visibleStrokes.map((stroke, index) => (
-                      <StrokeShape key={`mask-${index}`} stroke={stroke} width={displaySize.width} height={displaySize.height} color={stroke.mode === "keep" ? "black" : "white"} />
-                    ))}
-                  </mask>
-                </defs>
+                <defs><mask id={maskId}><rect width="100%" height="100%" fill="white" />{visibleStrokes.map((stroke, index) => <StrokeShape key={`mask-${index}`} stroke={stroke} width={displaySize.width} height={displaySize.height} color={stroke.mode === "keep" ? "black" : "white"} />)}</mask></defs>
                 <rect width="100%" height="100%" fill="rgba(31, 35, 43, .58)" mask={`url(#${maskId})`} />
               </>
             )}
-            {visibleStrokes.map((stroke, index) => (
-              <StrokeShape key={`stroke-${index}`} stroke={stroke} width={displaySize.width} height={displaySize.height} color={stroke.mode === "keep" ? "#35d07f" : "#ff506c"} opacity={0.68} />
-            ))}
+            {visibleStrokes.map((stroke, index) => <StrokeShape key={`stroke-${index}`} stroke={stroke} width={displaySize.width} height={displaySize.height} color={stroke.mode === "keep" ? "#35d07f" : "#ff506c"} opacity={0.68} />)}
           </svg>
         )}
-        {viewMode === "compare" && !editing && asset.resultPreviewUrl && (
-          <div
-            className="compare-control"
-            style={{ left: `${comparePosition}%` }}
-            role="slider"
-            tabIndex={0}
-            aria-label="원본과 수정본 비교 위치"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(comparePosition)}
-            onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); updateComparePosition(event.clientX); }}
-            onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) updateComparePosition(event.clientX); }}
-            onKeyDown={(event) => {
-              if (event.key === "ArrowLeft") setComparePosition((value) => clamp(value - 1, 0, 100));
-              if (event.key === "ArrowRight") setComparePosition((value) => clamp(value + 1, 0, 100));
-            }}
-          >
-            <span aria-hidden="true">↔</span>
-          </div>
+        {viewMode === "compare" && resultUrl && (
+          <div className="compare-control" style={{ left: `${comparePosition}%` }} role="slider" tabIndex={0} aria-label="원본과 수정본 비교 위치" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(comparePosition)} onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); updateComparePosition(event.clientX); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) updateComparePosition(event.clientX); }} onKeyDown={(event) => { if (event.key === "ArrowLeft") setComparePosition((value) => clamp(value - 1, 0, 100)); if (event.key === "ArrowRight") setComparePosition((value) => clamp(value + 1, 0, 100)); }}><span aria-hidden="true">↔</span></div>
         )}
       </div>
 
-      {viewMode === "compare" && !editing && <><span className="compare-label left">원본</span><span className="compare-label right">수정본</span></>}
-
-      {editing && previewBusy && <div className="mask-preview-status"><span className="spinner" />AI 마스크 갱신 중</div>}
-      {editing && previewError && <div className="mask-preview-status error" title={previewError}>미리보기 오류</div>}
+      {viewMode === "compare" && resultUrl && <><span className="compare-label left">원본</span><span className="compare-label right">결과</span></>}
+      {(editing || previewStatus !== "idle") && <div className={`mask-preview-status ${previewStatus === "error" ? "error" : previewStatus}`} title={previewError ?? undefined}>{previewStatus === "updating" && <span className="spinner" />}{previewStatus === "updating" ? "미리보기 갱신 중" : previewStatus === "error" ? "미리보기 오류" : previewStatus === "current" ? "저장 설정과 일치" : "미리보기 준비"}</div>}
 
       {editing && (
-        <div className="mask-editor-toolbar" onPointerDown={(event) => event.stopPropagation()}>
-          <div className="mask-mode-buttons" aria-label="마스크 방식">
-            <button className={asset.maskRecipe.mode === "automatic" ? "active" : ""} onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "automatic" })}>AI 자동 제거</button>
-            <button className={asset.maskRecipe.mode === "refine" ? "active" : ""} onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "refine" })}>AI 결과 보정</button>
-            <button className={asset.maskRecipe.mode === "manual" ? "active" : ""} onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "manual" })}>칠한 영역만 유지</button>
-            <button className={asset.maskRecipe.mode === "sam" ? "active" : ""} onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "sam" })}>AI 객체 선택</button>
+        <>
+          <div className="editor-source-card" onPointerDown={(event) => event.stopPropagation()}>
+            <label htmlFor="mask-selection-source">선택 기준</label>
+            <select id="mask-selection-source" value={selectionSource} onChange={(event) => selectSource(event.target.value as SelectionSource)}>
+              <option value="automatic">자동 감지</option><option value="sam">AI 객체 선택</option><option value="manual">빈 마스크에서 시작</option>
+            </select>
+            <small>{selectionSource === "sam" ? "포함·제외 표시로 객체를 찾습니다." : selectionSource === "manual" ? "복원 브러시로 유지할 부분을 칠합니다." : "AI 결과 위에서 복원·지우기로 보정합니다."}</small>
           </div>
-          <span className="toolbar-separator" />
-          <button className={`brush-tool keep ${brushMode === "keep" ? "active" : ""}`} onClick={() => setBrushMode("keep")} disabled={asset.maskRecipe.mode === "automatic"}>{asset.maskRecipe.mode === "sam" ? "+ 객체" : "+ 유지"}</button>
-          <button className={`brush-tool remove ${brushMode === "remove" ? "active" : ""}`} onClick={() => setBrushMode("remove")} disabled={asset.maskRecipe.mode === "automatic"}>{asset.maskRecipe.mode === "sam" ? "− 제외" : "− 제거"}</button>
-          <label className="brush-size-control">크기 <input type="range" min="4" max="240" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} disabled={asset.maskRecipe.mode === "automatic"} /><output>{brushSize}px</output></label>
-          <button className="toolbar-icon" onClick={undo} disabled={!asset.maskRecipe.strokes.length} title="실행 취소 (Ctrl/Cmd+Z)">↶</button>
-          <button className="toolbar-icon" onClick={redo} disabled={!redoStack.length} title="다시 실행">↷</button>
-          <button className="toolbar-text" onClick={() => { onMaskChange({ ...asset.maskRecipe, strokes: [] }); setRedoStack([]); }} disabled={!asset.maskRecipe.strokes.length}>지우기</button>
-          <button className="toolbar-done" onClick={() => onEditingChange(false)}>완료</button>
-        </div>
+          <div className="editor-commit-actions" onPointerDown={(event) => event.stopPropagation()}><button className="editor-cancel" onClick={onCancel}>취소</button><button className="editor-apply" onClick={onApply} disabled={previewStatus === "updating"}>적용하고 닫기</button></div>
+          <div className="editor-toolrail" aria-label="보정 도구" onPointerDown={(event) => event.stopPropagation()}>
+            <button className={tool === "keep" ? "active keep" : ""} onClick={() => selectBrush("keep")} title={`${keepLabel} 브러시`}><span>＋</span><small>{keepLabel}</small></button>
+            <button className={tool === "remove" ? "active remove" : ""} onClick={() => selectBrush("remove")} title={`${removeLabel} 브러시`}><span>−</span><small>{removeLabel}</small></button>
+            <button className={tool === "pan" ? "active" : ""} onClick={() => setTool("pan")} title="화면 이동"><span>✥</span><small>이동</small></button>
+          </div>
+          {inactiveStrokeCount > 0 && <div className="inactive-corrections" onPointerDown={(event) => event.stopPropagation()}><span>저장된 보정 {inactiveStrokeCount}개가 현재 자동 결과에는 적용되지 않습니다.</span><button onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "refine" })}>보정 다시 적용</button><button onClick={() => onMaskChange({ mode: "automatic", strokes: [] })}>삭제</button></div>}
+          <div className="editor-properties" onPointerDown={(event) => event.stopPropagation()}>
+            <div className="editor-mode-summary"><strong>{sourceLabel}</strong><span>{tool === "pan" ? "화면 이동" : `${tool === "keep" ? keepLabel : removeLabel} 브러시`}</span></div>
+            <label className="brush-size-control">크기 <input type="range" min="4" max="240" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} disabled={tool === "pan"} /><output>{brushSize}px</output></label>
+            <div className="editor-history-actions"><button className="toolbar-icon" onClick={undo} disabled={!asset.maskRecipe.strokes.length} title="실행 취소 (Ctrl/Cmd+Z)">↶</button><button className="toolbar-icon" onClick={redo} disabled={!redoStack.length} title="다시 실행">↷</button><button className="toolbar-text" onClick={() => { onMaskChange({ ...asset.maskRecipe, strokes: [] }); setRedoStack([]); }} disabled={!asset.maskRecipe.strokes.length}>보정 지우기</button></div>
+          </div>
+        </>
       )}
 
-      <div className="zoom-controls" onPointerDown={(event) => event.stopPropagation()}>
-        <button onClick={() => changeZoom(zoom / 1.2)} aria-label="축소">−</button>
-        <button className="zoom-value" onClick={fitToScreen} title="화면에 맞춤">{Math.round(zoom * 100)}%</button>
-        <button onClick={() => changeZoom(zoom * 1.2)} aria-label="확대">+</button>
-        <button className="fit-button" onClick={fitToScreen}>맞춤</button>
-      </div>
+      <div className="zoom-controls" onPointerDown={(event) => event.stopPropagation()}><button onClick={() => changeZoom(zoom / 1.2)} aria-label="축소">−</button><button className="zoom-value" onClick={fitToScreen} title="화면에 맞춤">{Math.round(zoom * 100)}%</button><button onClick={() => changeZoom(zoom * 1.2)} aria-label="확대">+</button><button className="fit-button" onClick={fitToScreen}>맞춤</button></div>
     </div>
   );
 }

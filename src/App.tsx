@@ -5,7 +5,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, ModelStatus, OutputFormat, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 import SettingsModal from "./SettingsModal";
-import PreviewEditor from "./PreviewEditor";
+import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 
@@ -32,6 +32,11 @@ const DEFAULT_SETTINGS: OutputSettings = {
 };
 
 const DEFAULT_MASK_RECIPE: ManualMaskRecipe = { mode: "automatic", strokes: [] };
+
+interface MaskPreviewBundle {
+  resultPreviewUrl: string;
+  maskPreviewUrl: string;
+}
 
 const DEFAULT_PREFERENCES: AppPreferences = {
   defaultSettings: DEFAULT_SETTINGS,
@@ -101,9 +106,12 @@ function App() {
   const [batchCompleted, setBatchCompleted] = useState(0);
   const [batchTotal, setBatchTotal] = useState(0);
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
-  const [viewMode, setViewMode] = useState<"original" | "result" | "compare">("original");
+  const [viewMode, setViewMode] = useState<PreviewViewMode>("original");
+  const [previewBackground, setPreviewBackground] = useState<PreviewBackground>("checker");
   const [isMaskEditing, setIsMaskEditing] = useState(false);
-  const [maskPreviewBusy, setMaskPreviewBusy] = useState(false);
+  const [maskDraft, setMaskDraft] = useState<ManualMaskRecipe | null>(null);
+  const [pendingMaskEditId, setPendingMaskEditId] = useState<string | null>(null);
+  const [maskPreviewStatus, setMaskPreviewStatus] = useState<PreviewStatus>("idle");
   const [maskPreviewError, setMaskPreviewError] = useState<string | null>(null);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
@@ -122,11 +130,44 @@ function App() {
   const workspaceSaveTimer = useRef<number | null>(null);
   const workspaceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const maskPreviewRevision = useRef(0);
+  const maskPreviewSnapshot = useRef<{ editBasePreviewUrl?: string; maskPreviewUrl?: string } | null>(null);
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
   const totalBytes = useMemo(() => assets.reduce((sum, asset) => sum + asset.sizeBytes, 0), [assets]);
-  const hasResultView = Boolean(selected?.resultPreviewUrl || (isMaskEditing && selected?.editBasePreviewUrl));
-  const effectiveViewMode = hasResultView ? viewMode : "original";
+  const previewRecipe = isMaskEditing ? maskDraft ?? selected?.maskRecipe : selected?.maskRecipe;
+  const previewRecipeReady = !previewRecipe || !((previewRecipe.mode === "manual" || previewRecipe.mode === "sam")
+    && !previewRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length > 0));
+  const hasResultView = previewRecipeReady && Boolean(selected?.resultPreviewUrl || selected?.editBasePreviewUrl);
+  const hasMaskView = previewRecipeReady && Boolean(selected?.maskPreviewUrl);
+  const effectiveViewMode: PreviewViewMode = viewMode === "mask" && !hasMaskView
+    ? hasResultView ? "result" : "original"
+    : (viewMode === "result" || viewMode === "compare") && !hasResultView
+      ? "original"
+      : viewMode;
+  const previewAsset = selected && previewRecipe ? { ...selected, maskRecipe: previewRecipe } : selected;
+  const previewRenderKey = useMemo(() => JSON.stringify({
+    processingMode: settings.processingMode,
+    resizeMode: settings.resizeMode,
+    resizeValue: settings.resizeValue,
+    preventUpscale: settings.preventUpscale,
+    edgeSmoothing: settings.edgeSmoothing,
+    edgeFeather: settings.edgeFeather,
+    edgeShift: settings.edgeShift,
+    alphaThreshold: settings.alphaThreshold,
+    maskContrast: settings.maskContrast,
+    preserveOriginalAlpha: settings.preserveOriginalAlpha,
+  }), [
+    settings.processingMode,
+    settings.resizeMode,
+    settings.resizeValue,
+    settings.preventUpscale,
+    settings.edgeSmoothing,
+    settings.edgeFeather,
+    settings.edgeShift,
+    settings.alphaThreshold,
+    settings.maskContrast,
+    settings.preserveOriginalAlpha,
+  ]);
   const retryableAssets = useMemo(
     () => assets.filter((asset) => asset.status === "failed" || asset.status === "cancelled" || asset.status === "interrupted"),
     [assets],
@@ -275,7 +316,7 @@ function App() {
         if (payload.status === "processing") return { ...asset, status: "processing", error: undefined };
         if (payload.status === "retryingWorker") return { ...asset, status: "retrying", error: payload.error ?? undefined };
         if (payload.status === "completed") {
-          return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, error: undefined };
+          return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, error: undefined };
         }
         if (payload.status === "failed") return { ...asset, status: "failed", error: payload.error ?? "처리에 실패했습니다." };
         if (payload.status === "cancelled") return { ...asset, status: "cancelled", error: payload.error ?? "사용자가 취소했습니다." };
@@ -342,41 +383,42 @@ function App() {
 
   useEffect(() => {
     const revision = ++maskPreviewRevision.current;
-    if (!isTauri() || !isMaskEditing || !selected || settings.processingMode !== "removeBackground" || selected.maskRecipe.mode === "automatic") {
-      setMaskPreviewBusy(false);
+    const previewRequested = isMaskEditing || isAdvancedOpen;
+    if (!isTauri() || !previewRequested || !selected || !previewRecipe || settings.processingMode !== "removeBackground") {
+      setMaskPreviewStatus("idle");
       setMaskPreviewError(null);
       return;
     }
-    const hasKeep = selected.maskRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length > 0);
-    if ((selected.maskRecipe.mode === "manual" || selected.maskRecipe.mode === "sam") && !hasKeep) {
-      setMaskPreviewBusy(false);
+    const hasKeep = previewRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length > 0);
+    if ((previewRecipe.mode === "manual" || previewRecipe.mode === "sam") && !hasKeep) {
+      setMaskPreviewStatus("idle");
       setMaskPreviewError(null);
       return;
     }
     const timer = window.setTimeout(() => {
-      setMaskPreviewBusy(true);
+      setMaskPreviewStatus("updating");
       setMaskPreviewError(null);
-      const command = selected.maskRecipe.mode === "sam" ? "generate_sam_preview" : "generate_mask_preview";
-      void invoke<string>(command, {
+      const command = previewRecipe.mode === "sam" ? "generate_sam_preview" : "generate_mask_preview";
+      void invoke<MaskPreviewBundle>(command, {
         path: selected.path,
         rotation: selected.rotation,
-        maskRecipe: selected.maskRecipe,
+        maskRecipe: previewRecipe,
         settings,
-      }).then((editBasePreviewUrl) => {
+      }).then(({ resultPreviewUrl: editBasePreviewUrl, maskPreviewUrl }) => {
         if (maskPreviewRevision.current !== revision) return;
-        setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, editBasePreviewUrl } : asset));
+        setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, editBasePreviewUrl, maskPreviewUrl } : asset));
+        setMaskPreviewStatus("current");
         setViewMode("result");
       }).catch((error) => {
         if (maskPreviewRevision.current !== revision) return;
         const message = String(error);
+        setMaskPreviewStatus("error");
         setMaskPreviewError(message);
         setNotice(`마스크 미리보기를 갱신하지 못했습니다: ${message}`);
-      }).finally(() => {
-        if (maskPreviewRevision.current === revision) setMaskPreviewBusy(false);
       });
-    }, 260);
+    }, 180);
     return () => window.clearTimeout(timer);
-  }, [isMaskEditing, selected?.id, selected?.path, selected?.rotation, selected?.maskRecipe, settings]);
+  }, [isMaskEditing, isAdvancedOpen, selected?.id, selected?.path, selected?.rotation, previewRecipe, previewRenderKey]);
 
   useEffect(() => {
     if (!selected?.outputPath || selected.resultPreviewUrl || !isTauri()) return;
@@ -470,6 +512,7 @@ function App() {
         outputBytes: undefined,
         resultPreviewUrl: undefined,
         editBasePreviewUrl: undefined,
+        maskPreviewUrl: undefined,
       };
     }));
   };
@@ -493,13 +536,29 @@ function App() {
         error: invalidatesResult ? undefined : asset.error,
       };
     }));
-    if (maskRecipe.mode === "automatic") setViewMode("original");
-    else if (isMaskEditing) setViewMode("result");
+    if (isMaskEditing) setViewMode("result");
   }, [isMaskEditing, selectedId]);
 
   useEffect(() => {
     setIsMaskEditing(false);
+    setMaskDraft(null);
+    maskPreviewSnapshot.current = null;
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!pendingMaskEditId || selected?.id !== pendingMaskEditId || !selected.previewUrl) return;
+    maskPreviewSnapshot.current = {
+      editBasePreviewUrl: selected.editBasePreviewUrl,
+      maskPreviewUrl: selected.maskPreviewUrl,
+    };
+    setMaskDraft({
+      ...selected.maskRecipe,
+      strokes: selected.maskRecipe.strokes.map((stroke) => ({ ...stroke, points: [...stroke.points] })),
+    });
+    setViewMode("original");
+    setIsMaskEditing(true);
+    setPendingMaskEditId(null);
+  }, [pendingMaskEditId, selected]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -546,6 +605,7 @@ function App() {
       setBatchCompleted(0);
       setBatchTotal(0);
       setViewMode("original");
+      setMaskDraft(null);
       setNotice("작업 공간을 비웠습니다. 원본과 결과 파일은 그대로 유지됩니다.");
     } catch (error) {
       setNotice(`작업 공간을 비우지 못했습니다: ${String(error)}`);
@@ -563,9 +623,8 @@ function App() {
     const incompleteManual = settings.processingMode === "removeBackground" && targets.find((asset) => (asset.maskRecipe.mode === "manual" || asset.maskRecipe.mode === "sam")
       && !asset.maskRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length));
     if (incompleteManual) {
+      setPendingMaskEditId(incompleteManual.id);
       setSelectedId(incompleteManual.id);
-      setViewMode("original");
-      setIsMaskEditing(true);
       setNotice(`'${incompleteManual.name}'에서 유지할 객체를 초록색 브러시로 먼저 표시해주세요.`);
       return;
     }
@@ -582,7 +641,7 @@ function App() {
     setBatchCompleted(0);
     setBatchTotal(targets.length);
     setAssets((current) => current.map((asset) => targetIds.has(asset.id)
-      ? { ...asset, status: "queued", outputPath: undefined, outputBytes: undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, error: undefined }
+      ? { ...asset, status: "queued", outputPath: undefined, outputBytes: undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, error: undefined }
       : asset));
     try {
       const result = await invoke<BatchResult>("process_batch", {
@@ -756,15 +815,49 @@ function App() {
     }));
     if (processingMode === "convert") {
       setIsMaskEditing(false);
+      setMaskDraft(null);
       setViewMode("original");
     }
   };
 
   const openMaskEditor = () => {
     if (!selected || settings.processingMode === "convert") return;
-    if (selected.maskRecipe.mode === "automatic") updateSelectedMask({ ...selected.maskRecipe, mode: "refine" });
-    setViewMode(selected.resultPreviewUrl || selected.editBasePreviewUrl ? "result" : "original");
+    setPendingMaskEditId(null);
+    maskPreviewSnapshot.current = {
+      editBasePreviewUrl: selected.editBasePreviewUrl,
+      maskPreviewUrl: selected.maskPreviewUrl,
+    };
+    setMaskDraft({
+      ...selected.maskRecipe,
+      strokes: selected.maskRecipe.strokes.map((stroke) => ({ ...stroke, points: [...stroke.points] })),
+    });
+    setViewMode("result");
     setIsMaskEditing(true);
+  };
+
+  const applyMaskEditor = () => {
+    if (maskDraft) updateSelectedMask(maskDraft);
+    maskPreviewSnapshot.current = null;
+    setMaskDraft(null);
+    setIsMaskEditing(false);
+    setViewMode("result");
+  };
+
+  const cancelMaskEditor = () => {
+    const snapshot = maskPreviewSnapshot.current;
+    if (snapshot && selectedId) {
+      setAssets((current) => current.map((asset) => asset.id === selectedId ? {
+        ...asset,
+        editBasePreviewUrl: snapshot.editBasePreviewUrl,
+        maskPreviewUrl: snapshot.maskPreviewUrl,
+      } : asset));
+    }
+    maskPreviewSnapshot.current = null;
+    setMaskDraft(null);
+    setIsMaskEditing(false);
+    setMaskPreviewError(null);
+    setMaskPreviewStatus("idle");
+    setViewMode(selected?.resultPreviewUrl ? "result" : "original");
   };
 
   const openAppContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -865,10 +958,17 @@ function App() {
             <div className="view-tabs" role="tablist" aria-label="미리보기 모드">
               <button className={effectiveViewMode === "original" ? "active" : ""} onClick={() => setViewMode("original")} role="tab" aria-selected={effectiveViewMode === "original"}>원본</button>
               <button className={effectiveViewMode === "result" ? "active" : ""} onClick={() => setViewMode("result")} role="tab" disabled={!hasResultView}>결과</button>
-              <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => setViewMode("compare")} role="tab" disabled={!hasResultView || isMaskEditing}>비교</button>
+              <button className={effectiveViewMode === "mask" ? "active" : ""} onClick={() => setViewMode("mask")} role="tab" disabled={!hasMaskView}>마스크</button>
+              <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => setViewMode("compare")} role="tab" disabled={!hasResultView}>비교</button>
             </div>
             <div className="canvas-actions">
-              <button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? () => setIsMaskEditing(false) : openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={16} />{isMaskEditing ? "편집 완료" : "브러시 편집"}</button>
+              <div className="preview-backgrounds" aria-label="미리보기 배경">
+                <button className={`background-swatch checker ${previewBackground === "checker" ? "active" : ""}`} onClick={() => setPreviewBackground("checker")} title="체크무늬 배경" aria-label="체크무늬 배경" />
+                <button className={`background-swatch light ${previewBackground === "light" ? "active" : ""}`} onClick={() => setPreviewBackground("light")} title="흰색 배경" aria-label="흰색 배경" />
+                <button className={`background-swatch dark ${previewBackground === "dark" ? "active" : ""}`} onClick={() => setPreviewBackground("dark")} title="검은색 배경" aria-label="검은색 배경" />
+              </div>
+              <span className="divider" />
+              <button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={16} />{isMaskEditing ? "편집 중" : "객체 편집"}</button>
               <span className="divider" />
               <button className="icon-button" aria-label="왼쪽으로 회전" onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
               <button className="icon-button" aria-label="오른쪽으로 회전" onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /></button>
@@ -881,12 +981,14 @@ function App() {
             {selected ? (
               selected.previewUrl ? (
                 <PreviewEditor
-                  asset={selected}
+                  asset={previewAsset ?? selected}
                   viewMode={effectiveViewMode}
+                  background={previewBackground}
                   editing={isMaskEditing}
-                  onEditingChange={setIsMaskEditing}
-                  onMaskChange={updateSelectedMask}
-                  previewBusy={maskPreviewBusy}
+                  onMaskChange={(recipe) => { setMaskDraft(recipe); setMaskPreviewStatus("updating"); }}
+                  onApply={applyMaskEditor}
+                  onCancel={cancelMaskEditor}
+                  previewStatus={maskPreviewStatus}
                   previewError={maskPreviewError}
                 />
               ) : <div className="preview-stage"><div className="preview-loading"><span className="spinner" />미리보기 만드는 중</div></div>
@@ -1010,22 +1112,23 @@ function App() {
           </section>
 
           {settings.processingMode === "removeBackground" && <section className="setting-section mask-summary-section">
-            <div className="label-row"><span className="setting-label">객체 마스크</span><span className="live-badge">파일별</span></div>
+            <div className="label-row"><span className="setting-label">객체 마스크</span><span className="live-badge">파일별 · 미리보기</span></div>
             <p className="setting-help flush">{!selected
               ? "이미지를 선택하면 브러시로 유지할 객체와 제거할 영역을 지정할 수 있습니다."
               : selected.maskRecipe.mode === "manual"
-                ? `칠한 영역만 유지 · 브러시 ${selected.maskRecipe.strokes.length}개`
+                ? `직접 선택 · 보정 ${selected.maskRecipe.strokes.length}개`
                 : selected.maskRecipe.mode === "sam"
-                  ? `AI 객체 선택 · 프롬프트 ${selected.maskRecipe.strokes.length}개`
-                : selected.maskRecipe.mode === "refine"
-                  ? `AI 결과 보정 · 브러시 ${selected.maskRecipe.strokes.length}개`
-                  : "AI 자동 배경 제거"}</p>
+                  ? `AI 객체 선택 · 포함/제외 ${selected.maskRecipe.strokes.length}개`
+                  : selected.maskRecipe.mode === "refine"
+                    ? `자동 감지 + 보정 · 브러시 ${selected.maskRecipe.strokes.length}개`
+                    : "자동 감지"}</p>
             <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={15} />브러시로 객체 편집</button>
           </section>}
 
           {settings.processingMode === "removeBackground" && <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings"><span>가장자리 및 고급 옵션</span><Icon name="chevron" size={15} /></button>}
           {settings.processingMode === "removeBackground" && isAdvancedOpen && (
-            <section id="advanced-settings" className="setting-section advanced-settings">
+            <section id="advanced-settings" className="setting-section advanced-settings" onInputCapture={() => setMaskPreviewStatus("updating")}>
+              <div className="advanced-preview-heading"><span>{maskPreviewStatus === "updating" ? "미리보기 갱신 중…" : maskPreviewStatus === "current" ? "선택 이미지에 실시간 반영됨" : "선택 이미지를 기준으로 미리보기"}</span>{maskPreviewStatus === "updating" && <span className="spinner" />}</div>
               <div className="sub-setting first">
                 <div className="label-row"><label htmlFor="edge-smoothing">가장자리 매끄럽게</label><output>{settings.edgeSmoothing}</output></div>
                 <input id="edge-smoothing" type="range" min="0" max="10" value={settings.edgeSmoothing} onChange={(event) => setSettings({ ...settings, edgeSmoothing: Number(event.target.value) })} />
