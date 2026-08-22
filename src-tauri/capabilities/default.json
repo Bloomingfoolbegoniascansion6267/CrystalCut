@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Clearcut main window with only the dialog and core event permissions it needs.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open"
+  ]
+}
