@@ -82,6 +82,24 @@ impl InferenceEngine {
         Ok(encoded.len() as u64)
     }
 
+    pub fn render_preview(
+        &mut self,
+        input_path: &Path,
+        rotation: u16,
+        recipe: &ManualMaskRecipe,
+        settings: &OutputSettings,
+    ) -> Result<DynamicImage, String> {
+        let mut source = image::open(input_path)
+            .map_err(|error| format!("입력 이미지를 열지 못했습니다: {error}"))?;
+        let exif = metadata::read_exif_summary(input_path);
+        metadata::apply_orientation(&mut source, exif.orientation);
+        let mask = self.infer_mask(&source)?;
+        let source = rotate(source, rotation)?;
+        let mask = rotate_mask(mask, rotation)?;
+        let mask = apply_manual_mask(mask, recipe);
+        Ok(compose_with_mask(source, mask, settings))
+    }
+
     fn infer_mask(&mut self, source: &DynamicImage) -> Result<GrayImage, String> {
         let plane = (INPUT_WIDTH * INPUT_HEIGHT) as usize;
         let input = prepare_input(source);
@@ -123,6 +141,57 @@ impl InferenceEngine {
             ResizeFilter::Lanczos3,
         ))
     }
+}
+
+pub(crate) fn process_conversion(request: &WorkerRequest) -> Result<u64, String> {
+    let input_path = Path::new(&request.input_path);
+    let output_path = Path::new(&request.output_path);
+    validate_output_extension(output_path, request.settings.format)?;
+    if output_path.exists() {
+        return Err("안전을 위해 기존 출력 파일을 덮어쓰지 않았습니다.".to_owned());
+    }
+    let source = load_oriented_rotated(input_path, request.rotation)?;
+    let converted = resize(source, &request.settings);
+    let encoded = encode(&converted, &request.settings)?;
+    atomic_write(output_path, &encoded)?;
+    Ok(encoded.len() as u64)
+}
+
+pub(crate) fn load_oriented_rotated(
+    input_path: &Path,
+    rotation: u16,
+) -> Result<DynamicImage, String> {
+    let mut source = image::open(input_path)
+        .map_err(|error| format!("입력 이미지를 열지 못했습니다: {error}"))?;
+    let exif = metadata::read_exif_summary(input_path);
+    metadata::apply_orientation(&mut source, exif.orientation);
+    rotate(source, rotation)
+}
+
+pub(crate) fn compose_with_mask(
+    source: DynamicImage,
+    mask: GrayImage,
+    settings: &OutputSettings,
+) -> DynamicImage {
+    let mask = refine_mask(mask, settings);
+    let composed = apply_alpha(source, &mask, settings.preserve_original_alpha);
+    resize(composed, settings)
+}
+
+pub(crate) fn write_masked_output(
+    source: DynamicImage,
+    mask: GrayImage,
+    output_path: &Path,
+    settings: &OutputSettings,
+) -> Result<u64, String> {
+    validate_output_extension(output_path, settings.format)?;
+    if output_path.exists() {
+        return Err("안전을 위해 기존 출력 파일을 덮어쓰지 않았습니다.".to_owned());
+    }
+    let composed = compose_with_mask(source, mask, settings);
+    let encoded = encode(&composed, settings)?;
+    atomic_write(output_path, &encoded)?;
+    Ok(encoded.len() as u64)
 }
 
 fn validate_output_extension(path: &Path, format: OutputFormat) -> Result<(), String> {
@@ -601,5 +670,40 @@ mod tests {
     fn output_extension_must_match_the_selected_encoder() {
         assert!(validate_output_extension(Path::new("result.webp"), OutputFormat::Webp).is_ok());
         assert!(validate_output_extension(Path::new("result.png"), OutputFormat::Webp).is_err());
+    }
+
+    #[test]
+    fn conversion_path_resizes_and_encodes_without_any_ai_model() {
+        let directory =
+            std::env::temp_dir().join(format!("clearcut-convert-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create conversion fixture directory");
+        let input = directory.join("source.png");
+        let output = directory.join("converted.webp");
+        DynamicImage::new_rgba8(80, 40)
+            .save(&input)
+            .expect("save conversion fixture");
+        let mut output_settings = settings(ResizeMode::LongEdge, 40, true);
+        output_settings.processing_mode = crate::protocol::ProcessingMode::Convert;
+        output_settings.format = OutputFormat::Webp;
+        let request = WorkerRequest {
+            protocol_version: crate::protocol::WORKER_PROTOCOL_VERSION,
+            job_id: "convert-test".to_owned(),
+            input_path: input.to_string_lossy().into_owned(),
+            output_path: output.to_string_lossy().into_owned(),
+            model_path: None,
+            sam_encoder_path: None,
+            sam_decoder_path: None,
+            rotation: 0,
+            settings: output_settings,
+            mask_recipe: ManualMaskRecipe::default(),
+        };
+        assert!(process_conversion(&request).expect("run conversion") > 0);
+        assert_eq!(
+            image::open(&output)
+                .expect("open converted output")
+                .dimensions(),
+            (40, 20)
+        );
+        std::fs::remove_dir_all(directory).expect("remove conversion fixture directory");
     }
 }

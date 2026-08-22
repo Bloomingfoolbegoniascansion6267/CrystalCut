@@ -12,6 +12,7 @@ export interface ImageAsset {
   status: AssetStatus;
   previewUrl?: string;
   resultPreviewUrl?: string;
+  editBasePreviewUrl?: string;
   outputPath?: string;
   outputBytes?: number;
   error?: string;
@@ -19,7 +20,7 @@ export interface ImageAsset {
   maskRecipe: ManualMaskRecipe;
 }
 
-export type MaskMode = "automatic" | "refine" | "manual";
+export type MaskMode = "automatic" | "refine" | "manual" | "sam";
 export type BrushMode = "keep" | "remove";
 
 export interface MaskPoint {
@@ -48,8 +49,10 @@ export interface ExifSummary {
 export type OutputFormat = "png" | "webp";
 export type ResizeMode = "original" | "percent" | "longEdge";
 export type OutputLocation = "subfolder" | "sameFolder" | "custom";
+export type ProcessingMode = "removeBackground" | "convert";
 
 export interface OutputSettings {
+  processingMode: ProcessingMode;
   format: OutputFormat;
   webpQuality: number;
   webpLossless: boolean;
@@ -70,7 +73,7 @@ export interface OutputSettings {
   preserveOriginalAlpha: boolean;
 }
 
-export type PersistedAsset = Omit<ImageAsset, "previewUrl" | "resultPreviewUrl">;
+export type PersistedAsset = Omit<ImageAsset, "previewUrl" | "resultPreviewUrl" | "editBasePreviewUrl">;
 
 export interface WorkspaceSnapshot {
   items: PersistedAsset[];

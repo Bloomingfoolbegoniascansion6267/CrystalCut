@@ -1,16 +1,29 @@
 # Clearcut SAM 계열 객체 선택 통합 계획
 
 - 기준일: 2026-08-22
-- 결론: 첫 제품 후보는 MobileSAM, SAM 2.1 tiny는 후속 품질 비교 후보
+- 구현 결과: ONNX graph와 해시가 공개된 SlimSAM 77 Uniform을 첫 제품 모델로 연결
+- 후속 후보: MobileSAM 및 SAM 2.1 tiny 품질 비교
+
+## 0. 1차 구현 완료 범위
+
+- 양자화된 SlimSAM vision encoder와 prompt encoder/mask decoder를 revision·크기·SHA-256으로 고정
+- 최초 `AI 객체 선택` 사용 시 앱 데이터 폴더에 두 graph를 내려받고 Native TLS와 SHA-256으로 검증
+- 초록색 획을 positive point, 빨간색 획을 negative point로 sampling해 최대 64개 prompt로 전달
+- 세 후보 마스크 중 예측 IoU가 가장 높은 후보를 선택하고 원본 크기로 복원
+- 같은 파일·회전·수정 시각에서는 image embedding을 재사용하고 decoder만 다시 실행
+- 편집 미리보기와 최종 batch 저장이 동일한 Rust ONNX Runtime 구현을 사용
+- 모델이 필요 없는 `이미지만 변환` 처리에서는 SAM과 U2NetP를 설치하거나 실행하지 않음
+
+모델 출처와 고정한 binary manifest는 `THIRD_PARTY_MODELS.ko.md`에 기록한다.
 
 ## 1. 역할 분리
 
 기존 U2NetP는 파일을 넣고 한 번 눌러 전체 batch의 배경을 자동 제거하는 기본 engine으로 유지한다. SAM 계열은 자동 제거 model을 바로 대체하지 않고, 사용자가 브러시나 click으로 가리킨 물체 전체를 선택하는 interactive engine으로 추가한다.
 
-- `자동`: U2NetP가 foreground mask 생성
-- `자동 + 보정`: U2NetP mask에 현재 유지·제거 brush를 직접 합성
+- `AI 자동 제거`: U2NetP가 foreground mask 생성
+- `AI 결과 보정`: U2NetP mask에 현재 유지·제거 brush를 직접 합성
 - `객체 선택`: MobileSAM이 유지·제외 prompt로 물체 단위 mask 생성
-- `직접 칠하기`: AI와 무관하게 사용자가 칠한 영역만 foreground로 사용
+- `칠한 영역만 유지`: AI와 무관하게 사용자가 칠한 영역만 foreground로 사용
 
 SAM 결과 뒤에도 현재 deterministic brush correction과 가장자리 option을 마지막 단계로 적용한다. 따라서 prompt model이 잘못 선택한 작은 영역은 기존 도구로 확실하게 고칠 수 있다.
 
@@ -91,7 +104,7 @@ PromptMaskRecipeV1
 - 한 번의 keep stroke로 사람·상품 등 연결된 주 객체 전체가 선택된다.
 - 추가 remove stroke가 200ms 목표 안에서 최신 mask를 갱신한다. 실제 보장값은 benchmark 후 확정한다.
 - preview와 export가 같은 recipe revision에서 pixel 단위로 일치한다.
-- model이 없거나 실행에 실패해도 기존 자동 제거와 직접 칠하기는 계속 동작한다.
+- model이 없거나 실행에 실패해도 기존 AI 자동 제거와 칠한 영역만 유지는 계속 동작한다.
 - Windows/macOS installer에 Python, Conda, WSL을 요구하지 않는다.
 
 ## 공식 참고 자료

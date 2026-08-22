@@ -17,6 +17,8 @@ interface PreviewEditorProps {
   editing: boolean;
   onEditingChange: (editing: boolean) => void;
   onMaskChange: (recipe: ManualMaskRecipe) => void;
+  previewBusy?: boolean;
+  previewError?: string | null;
 }
 
 interface Size {
@@ -41,7 +43,7 @@ function StrokeShape({ stroke, width, height, color, opacity = 1 }: {
   return <polyline points={points} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" opacity={opacity} />;
 }
 
-export default function PreviewEditor({ asset, viewMode, editing, onEditingChange, onMaskChange }: PreviewEditorProps) {
+export default function PreviewEditor({ asset, viewMode, editing, onEditingChange, onMaskChange, previewBusy = false, previewError = null }: PreviewEditorProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const imageGroupRef = useRef<HTMLDivElement>(null);
   const [stageSize, setStageSize] = useState<Size>({ width: 0, height: 0 });
@@ -102,6 +104,9 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
   const currentRadius = clamp(brushSize / 2 / sourceMinimumEdge, 0.0001, 0.5);
   const visibleStrokes = activeStroke ? [...asset.maskRecipe.strokes, activeStroke] : asset.maskRecipe.strokes;
   const maskId = `manual-mask-${asset.id.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const editingBaseUrl = asset.maskRecipe.mode === "automatic"
+    ? null
+    : asset.editBasePreviewUrl ?? asset.resultPreviewUrl ?? null;
 
   const normalizedPoint = useCallback((clientX: number, clientY: number): MaskPoint | null => {
     const bounds = imageGroupRef.current?.getBoundingClientRect();
@@ -247,8 +252,11 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
         }}
       >
-        {(viewMode === "original" || viewMode === "compare" || editing) && asset.previewUrl && (
+        {(viewMode === "original" || viewMode === "compare" || (editing && !editingBaseUrl)) && asset.previewUrl && (
           <img className="editor-source-image" src={asset.previewUrl} alt={`${asset.name} 원본`} style={imageStyle} onLoad={(event) => setSourceSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} draggable={false} />
+        )}
+        {editing && editingBaseUrl && (
+          <img className="editor-result-image" src={editingBaseUrl} alt={`${asset.name} 편집 기준 결과`} draggable={false} />
         )}
         {viewMode === "result" && !editing && asset.resultPreviewUrl && (
           <img className="editor-result-image" src={asset.resultPreviewUrl} alt={`${asset.name} 배경 제거 결과`} draggable={false} />
@@ -260,7 +268,7 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
         )}
         {editing && (
           <svg className="mask-overlay" viewBox={`0 0 ${displaySize.width} ${displaySize.height}`} aria-hidden="true">
-            {asset.maskRecipe.mode === "manual" && (
+            {asset.maskRecipe.mode === "manual" && !editingBaseUrl && (
               <>
                 <defs>
                   <mask id={maskId}>
@@ -302,16 +310,20 @@ export default function PreviewEditor({ asset, viewMode, editing, onEditingChang
 
       {viewMode === "compare" && !editing && <><span className="compare-label left">원본</span><span className="compare-label right">수정본</span></>}
 
+      {editing && previewBusy && <div className="mask-preview-status"><span className="spinner" />AI 마스크 갱신 중</div>}
+      {editing && previewError && <div className="mask-preview-status error" title={previewError}>미리보기 오류</div>}
+
       {editing && (
         <div className="mask-editor-toolbar" onPointerDown={(event) => event.stopPropagation()}>
           <div className="mask-mode-buttons" aria-label="마스크 방식">
-            <button className={asset.maskRecipe.mode === "automatic" ? "active" : ""} onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "automatic" })}>자동</button>
-            <button className={asset.maskRecipe.mode === "refine" ? "active" : ""} onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "refine" })}>자동 + 보정</button>
-            <button className={asset.maskRecipe.mode === "manual" ? "active" : ""} onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "manual" })}>직접 칠하기</button>
+            <button className={asset.maskRecipe.mode === "automatic" ? "active" : ""} onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "automatic" })}>AI 자동 제거</button>
+            <button className={asset.maskRecipe.mode === "refine" ? "active" : ""} onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "refine" })}>AI 결과 보정</button>
+            <button className={asset.maskRecipe.mode === "manual" ? "active" : ""} onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "manual" })}>칠한 영역만 유지</button>
+            <button className={asset.maskRecipe.mode === "sam" ? "active" : ""} onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "sam" })}>AI 객체 선택</button>
           </div>
           <span className="toolbar-separator" />
-          <button className={`brush-tool keep ${brushMode === "keep" ? "active" : ""}`} onClick={() => setBrushMode("keep")} disabled={asset.maskRecipe.mode === "automatic"}>+ 유지</button>
-          <button className={`brush-tool remove ${brushMode === "remove" ? "active" : ""}`} onClick={() => setBrushMode("remove")} disabled={asset.maskRecipe.mode === "automatic"}>− 제거</button>
+          <button className={`brush-tool keep ${brushMode === "keep" ? "active" : ""}`} onClick={() => setBrushMode("keep")} disabled={asset.maskRecipe.mode === "automatic"}>{asset.maskRecipe.mode === "sam" ? "+ 객체" : "+ 유지"}</button>
+          <button className={`brush-tool remove ${brushMode === "remove" ? "active" : ""}`} onClick={() => setBrushMode("remove")} disabled={asset.maskRecipe.mode === "automatic"}>{asset.maskRecipe.mode === "sam" ? "− 제외" : "− 제거"}</button>
           <label className="brush-size-control">크기 <input type="range" min="4" max="240" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} disabled={asset.maskRecipe.mode === "automatic"} /><output>{brushSize}px</output></label>
           <button className="toolbar-icon" onClick={undo} disabled={!asset.maskRecipe.strokes.length} title="실행 취소 (Ctrl/Cmd+Z)">↶</button>
           <button className="toolbar-icon" onClick={redo} disabled={!redoStack.length} title="다시 실행">↷</button>

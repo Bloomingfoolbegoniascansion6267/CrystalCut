@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const WORKER_PROTOCOL_VERSION: u16 = 2;
+pub const WORKER_PROTOCOL_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,6 +30,7 @@ pub enum MaskMode {
     Automatic,
     Refine,
     Manual,
+    Sam,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +57,7 @@ pub struct MaskPoint {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct OutputSettings {
+    pub processing_mode: ProcessingMode,
     pub format: OutputFormat,
     pub webp_quality: u8,
     pub webp_lossless: bool,
@@ -80,6 +82,7 @@ pub struct OutputSettings {
 impl Default for OutputSettings {
     fn default() -> Self {
         Self {
+            processing_mode: ProcessingMode::RemoveBackground,
             format: OutputFormat::Png,
             webp_quality: 82,
             webp_lossless: false,
@@ -100,6 +103,14 @@ impl Default for OutputSettings {
             preserve_original_alpha: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProcessingMode {
+    #[default]
+    RemoveBackground,
+    Convert,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,7 +152,9 @@ pub struct WorkerRequest {
     pub job_id: String,
     pub input_path: String,
     pub output_path: String,
-    pub model_path: String,
+    pub model_path: Option<String>,
+    pub sam_encoder_path: Option<String>,
+    pub sam_decoder_path: Option<String>,
     pub rotation: u16,
     pub settings: OutputSettings,
     pub mask_recipe: ManualMaskRecipe,

@@ -3,6 +3,7 @@ mod metadata;
 mod model;
 mod naming;
 mod protocol;
+mod sam;
 pub mod worker;
 mod workspace;
 
@@ -14,16 +15,16 @@ use std::{
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::{GenericImageView, ImageFormat, ImageReader};
 use protocol::{
-    BatchItemStatus, BatchProgress, BatchResult, ExportPlan, OutputLocation, OutputSettings,
-    PlannedOutput, ProcessItem, ProcessedItemResult, ResizeMode, WorkerRequest, WorkerResponse,
-    WORKER_PROTOCOL_VERSION,
+    BatchItemStatus, BatchProgress, BatchResult, ExportPlan, MaskMode, OutputLocation,
+    OutputSettings, PlannedOutput, ProcessItem, ProcessedItemResult, ProcessingMode, ResizeMode,
+    WorkerRequest, WorkerResponse, WORKER_PROTOCOL_VERSION,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -36,6 +37,16 @@ const MAX_PREVIEW_EDGE: u32 = 1600;
 struct BatchController {
     running: Arc<AtomicBool>,
     cancelled: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Default)]
+struct SamPreviewController {
+    engine: Arc<Mutex<Option<sam::SamEngine>>>,
+}
+
+#[derive(Clone, Default)]
+struct MaskPreviewController {
+    engine: Arc<Mutex<Option<engine::InferenceEngine>>>,
 }
 
 impl BatchController {
@@ -280,6 +291,89 @@ fn load_preview_blocking(path: &Path) -> Result<String, String> {
     ))
 }
 
+fn encode_preview_data_url(image: image::DynamicImage) -> Result<String, String> {
+    let (width, height) = image.dimensions();
+    let preview = if width > MAX_PREVIEW_EDGE || height > MAX_PREVIEW_EDGE {
+        image.thumbnail(MAX_PREVIEW_EDGE, MAX_PREVIEW_EDGE)
+    } else {
+        image
+    };
+    let mut encoded = Cursor::new(Vec::new());
+    preview
+        .write_to(&mut encoded, ImageFormat::Png)
+        .map_err(|error| format!("결과 미리보기를 인코딩할 수 없습니다: {error}"))?;
+    Ok(format!(
+        "data:image/png;base64,{}",
+        STANDARD.encode(encoded.into_inner())
+    ))
+}
+
+#[tauri::command]
+async fn generate_mask_preview(
+    app: AppHandle,
+    controller: State<'_, MaskPreviewController>,
+    path: String,
+    rotation: u16,
+    mask_recipe: protocol::ManualMaskRecipe,
+    settings: OutputSettings,
+) -> Result<String, String> {
+    validate_mask_recipe(&mask_recipe)?;
+    let controller = controller.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let model_path = model::ensure_default_model(&app)?;
+        let mut slot = controller
+            .engine
+            .lock()
+            .map_err(|_| "자동 미리보기 상태 잠금이 손상되었습니다.".to_owned())?;
+        if slot
+            .as_ref()
+            .is_none_or(|engine| !engine.uses_model(&model_path))
+        {
+            *slot = Some(engine::InferenceEngine::new(&model_path)?);
+        }
+        let preview = slot
+            .as_mut()
+            .ok_or_else(|| "자동 미리보기 엔진을 준비하지 못했습니다.".to_owned())?
+            .render_preview(Path::new(&path), rotation, &mask_recipe, &settings)?;
+        encode_preview_data_url(preview)
+    })
+    .await
+    .map_err(|error| format!("자동 결과 미리보기를 실행하지 못했습니다: {error}"))?
+}
+
+#[tauri::command]
+async fn generate_sam_preview(
+    app: AppHandle,
+    controller: State<'_, SamPreviewController>,
+    path: String,
+    rotation: u16,
+    mask_recipe: protocol::ManualMaskRecipe,
+    settings: OutputSettings,
+) -> Result<String, String> {
+    validate_mask_recipe(&mask_recipe)?;
+    let controller = controller.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = sam::ensure_models(&app)?;
+        let mut slot = controller
+            .engine
+            .lock()
+            .map_err(|_| "SAM 미리보기 상태 잠금이 손상되었습니다.".to_owned())?;
+        if slot
+            .as_ref()
+            .is_none_or(|engine| !engine.uses_models(&paths.encoder, &paths.decoder))
+        {
+            *slot = Some(sam::SamEngine::new(&paths)?);
+        }
+        let preview = slot
+            .as_mut()
+            .ok_or_else(|| "SAM 미리보기 엔진을 준비하지 못했습니다.".to_owned())?
+            .render_preview(Path::new(&path), rotation, &mask_recipe, &settings)?;
+        encode_preview_data_url(preview)
+    })
+    .await
+    .map_err(|error| format!("AI 객체 선택 미리보기를 실행하지 못했습니다: {error}"))?
+}
+
 #[tauri::command]
 fn get_model_status(app: AppHandle) -> Result<model::ModelStatus, String> {
     model::status(&app)
@@ -494,23 +588,45 @@ fn process_batch_blocking(
     settings: OutputSettings,
     controller: BatchController,
 ) -> Result<BatchResult, String> {
-    for item in &items {
-        validate_mask_recipe(&item.mask_recipe)?;
+    if matches!(settings.processing_mode, ProcessingMode::RemoveBackground) {
+        for item in &items {
+            validate_mask_recipe(&item.mask_recipe)?;
+        }
     }
     let total = items.len();
-    emit_progress(
-        &app,
-        BatchProgress {
-            asset_id: String::new(),
-            completed: 0,
-            total,
-            status: BatchItemStatus::ModelDownloading,
-            output_path: None,
-            error: None,
-        },
-    );
-    let model_path = model::ensure_default_model(&app)?;
-    let model_path_string = model_path.to_string_lossy().into_owned();
+    let remove_background = matches!(settings.processing_mode, ProcessingMode::RemoveBackground);
+    let needs_u2net = remove_background
+        && items
+            .iter()
+            .any(|item| !matches!(item.mask_recipe.mode, MaskMode::Sam));
+    let needs_sam = remove_background
+        && items
+            .iter()
+            .any(|item| matches!(item.mask_recipe.mode, MaskMode::Sam));
+    if needs_u2net || needs_sam {
+        emit_progress(
+            &app,
+            BatchProgress {
+                asset_id: String::new(),
+                completed: 0,
+                total,
+                status: BatchItemStatus::ModelDownloading,
+                output_path: None,
+                error: None,
+            },
+        );
+    }
+    let model_path_string = needs_u2net
+        .then(|| model::ensure_default_model(&app))
+        .transpose()?
+        .map(|path| path.to_string_lossy().into_owned());
+    let sam_paths = needs_sam.then(|| sam::ensure_models(&app)).transpose()?;
+    let sam_encoder_path = sam_paths
+        .as_ref()
+        .map(|paths| paths.encoder.to_string_lossy().into_owned());
+    let sam_decoder_path = sam_paths
+        .as_ref()
+        .map(|paths| paths.decoder.to_string_lossy().into_owned());
 
     let mut reserved = HashSet::new();
     let mut requests = Vec::with_capacity(total);
@@ -528,6 +644,8 @@ fn process_batch_blocking(
             input_path: item.path.clone(),
             output_path: output_path.to_string_lossy().into_owned(),
             model_path: model_path_string.clone(),
+            sam_encoder_path: sam_encoder_path.clone(),
+            sam_decoder_path: sam_decoder_path.clone(),
             rotation: item.rotation,
             settings: settings.clone(),
             mask_recipe: item.mask_recipe.clone(),
@@ -772,7 +890,10 @@ fn plan_output_path(
     )?;
     let parent = source.parent().unwrap_or_else(|| Path::new("."));
     let output_dir = match settings.output_location {
-        OutputLocation::Subfolder => parent.join("Removed Background"),
+        OutputLocation::Subfolder => parent.join(match settings.processing_mode {
+            ProcessingMode::RemoveBackground => "Removed Background",
+            ProcessingMode::Convert => "Converted Images",
+        }),
         OutputLocation::SameFolder => parent.to_owned(),
         OutputLocation::Custom => PathBuf::from(&settings.output_directory),
     };
@@ -912,8 +1033,17 @@ fn validate_mask_recipe(recipe: &protocol::ManualMaskRecipe) -> Result<(), Strin
             "파일 하나에는 브러시 좌표를 최대 100,000개까지 저장할 수 있습니다.".to_owned(),
         );
     }
-    if matches!(recipe.mode, protocol::MaskMode::Manual) && !has_keep {
-        return Err("직접 칠하기 모드에서는 유지할 객체를 먼저 칠해주세요.".to_owned());
+    if matches!(
+        recipe.mode,
+        protocol::MaskMode::Manual | protocol::MaskMode::Sam
+    ) && !has_keep
+    {
+        return Err(match recipe.mode {
+            protocol::MaskMode::Sam => {
+                "AI 객체 선택에서는 유지할 객체를 먼저 표시해주세요.".to_owned()
+            }
+            _ => "칠한 영역만 유지 모드에서는 유지할 객체를 먼저 칠해주세요.".to_owned(),
+        });
     }
     Ok(())
 }
@@ -922,10 +1052,14 @@ fn validate_mask_recipe(recipe: &protocol::ManualMaskRecipe) -> Result<(), Strin
 pub fn run() {
     tauri::Builder::default()
         .manage(BatchController::default())
+        .manage(MaskPreviewController::default())
+        .manage(SamPreviewController::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             inspect_paths,
             load_preview,
+            generate_mask_preview,
+            generate_sam_preview,
             get_model_status,
             get_app_diagnostics,
             install_model,

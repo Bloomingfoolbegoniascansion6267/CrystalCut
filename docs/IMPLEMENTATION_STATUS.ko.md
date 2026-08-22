@@ -70,29 +70,31 @@ SQLite schema v3는 작업 snapshot과 분리된 `app_preferences` table 및 파
 
 미리보기 canvas는 휠과 버튼 확대·축소, pointer drag 이동, 화면 맞춤을 지원한다. 비교 모드는 원본과 수정본을 같은 좌표계에 겹치고 수직 분할 바를 좌우로 움직여 경계를 확인한다. 브러시 편집 좌표는 zoom·pan과 무관한 회전 후 이미지의 정규화 좌표로 저장한다.
 
-마스크는 `automatic`, `refine`, `manual` 세 방식이다. `refine`은 U2NetP 결과 위에 초록 유지·빨강 제거 stroke를 합성하고, `manual`은 빈 마스크에서 유지 stroke로 객체를 직접 칠한다. 회전 시 stroke 좌표도 함께 변환하며 Undo/Redo와 전체 지우기를 제공한다. worker는 AI 추론 후 회전된 mask에 stroke를 적용한 다음 가장자리 smoothing, feather, 확장·축소, alpha threshold와 mask contrast를 순서대로 처리한다.
+마스크는 `automatic`, `refine`, `manual`, `sam` 네 방식이다. `refine`은 U2NetP 결과 화면을 편집 기준으로 삼아 초록 유지·빨강 제거 stroke를 합성하고, `manual`은 빈 마스크에서 유지 stroke로 객체를 직접 칠한다. `sam`은 SlimSAM 77 Uniform의 양자화 ONNX image encoder와 prompt/mask decoder를 실행해 초록·빨강 stroke가 가리키는 물체 전체를 선택한다. 같은 파일의 image embedding은 재사용한다. 회전 시 stroke 좌표도 함께 변환하며 Undo/Redo와 전체 지우기를 제공한다. worker는 선택된 mask를 만든 다음 가장자리 smoothing, feather, 확장·축소, alpha threshold와 mask contrast를 순서대로 처리한다.
+
+출력 설정에는 `배경 제거`와 `이미지만 변환` 처리 방식이 있다. 변환 mode는 AI 모델과 마스크를 완전히 건너뛰고 EXIF 방향 보정, 사용자 회전, resize, PNG/WebP 압축과 안전한 atomic 저장만 수행한다. 기본 하위 폴더도 `Removed Background`와 `Converted Images`로 구분한다.
 
 브라우저 기본 context menu는 텍스트 편집 명령과 Clearcut의 브러시·미리보기·파일 추가·환경설정 명령을 제공하는 앱 메뉴로 교체했다. Windows release는 GUI subsystem으로 빌드해 console 창을 숨기고 debug build에서는 console을 유지한다.
 
 ## 5. 검증 범위
 
-- Rust 단위 테스트 33개: resize 비율, 확대 방지, 기존 alpha 결합·교체, 수동 유지·제거 마스크와 입력 검증, 가장자리 확장, 모델 입력 layout·정규화, 모델 hash·TLS provider, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌, SQLite v1→v3 migration·브러시 recipe·환경설정 fallback·snapshot round trip·중단/완료 결과 복구
+- Rust 단위 테스트 36개: resize 비율, 확대 방지, AI 없는 변환 저장, 기존 alpha 결합·교체, 수동 유지·제거 마스크와 입력 검증, 가장자리 확장, U2NetP 입력 layout·정규화, U2NetP/SlimSAM model hash·TLS provider, 실제 SlimSAM prompt 추론, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌, SQLite v1→v3 migration·브러시 recipe·환경설정 fallback·snapshot round trip·중단/완료 결과 복구
 - TypeScript production build
 - 공식 U-2-Net 테스트 사진을 사용한 worker 스모크 테스트
   - 400×267 PNG 입력
   - 추론·PNG 저장 약 0.55초(개발 빌드, 현재 Windows 개발 장비)
   - 좌·우 하늘과 하단 잔디 alpha 0, 말 몸통과 인물 몸통 alpha 255 확인
-  - `manual` 유지 브러시를 중앙에 적용한 실제 protocol v2 요청에서 중앙 alpha 255, 모서리와 외부 alpha 0 확인
+  - `manual` 유지 브러시를 중앙에 적용한 실제 protocol 요청에서 중앙 alpha 255, 모서리와 외부 alpha 0 확인
 - Tauri release `--no-bundle` 빌드로 frontend와 native binary 결합 확인
 
 위 시간은 제품 성능 보장이 아니라 단일 개발 장비의 구조 검증값이다.
 
 ## 6. 다음 우선순위
 
-1. promptable segmentation 및 자동 배경 제거 모델의 품질·속도·메모리 benchmark와 stroke로 물체 전체를 확장 선택하는 기능
+1. SlimSAM, MobileSAM, SAM 2.1 tiny와 자동 배경 제거 모델의 품질·속도·메모리 benchmark
 2. Windows DirectML/Windows ML과 macOS CoreML provider packaging
-3. 브러시 overlay와 최종 export mask의 pixel 일치 golden test
-4. 선택 파일의 AI 결과를 저장 전에 계산하는 고품질 실시간 미리보기
+3. 브러시 overlay·SlimSAM 미리보기와 최종 export mask의 pixel 일치 golden test
+4. 여러 파일의 image embedding LRU cache와 preview worker 분리
 5. 현재 추론까지 즉시 중단하는 강제 취소 option과 `.partial` 정리 검증
 6. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
 7. 대규모 목록 virtual scroll과 SQLite delta 저장 최적화

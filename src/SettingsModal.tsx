@@ -184,7 +184,7 @@ export default function SettingsModal({
         <div className="model-status-large">
           <span className={`model-orb ${modelStatus?.installed ? "ready" : ""}`} />
           <div>
-            <strong>{modelStatus?.installed ? "로컬 AI 모델 준비됨" : "로컬 AI 모델 설치 필요"}</strong>
+            <strong>{modelStatus?.installed ? "자동 배경 제거 모델 준비됨" : "자동 배경 제거 모델 설치 필요"}</strong>
             <span>U2NetP · {formatBytes(modelStatus?.expectedBytes ?? 0)}</span>
           </div>
           {modelStatus?.installed ? <span className="state-badge success">설치됨</span> : <span className="state-badge">미설치</span>}
@@ -195,13 +195,14 @@ export default function SettingsModal({
           {modelStatus?.installed && modelStatus.canDelete && <button className="button danger compact" type="button" disabled={busyAction !== null || processing} onClick={() => void onDeleteModel()}>{busyAction === "model" ? "처리 중…" : "모델 삭제"}</button>}
         </div>
         {modelStatus?.path && <code className="path-code" title={modelStatus.path}>{modelStatus.path}</code>}
+        <p className="preferences-note">AI 객체 선택용 SlimSAM은 해당 기능을 처음 사용할 때 별도로 설치되며, revision과 SHA-256을 확인한 뒤 로컬에서 실행합니다.</p>
       </section>
 
       <section className="preferences-card">
         <div className="preferences-card-heading"><div><strong>저장 공간</strong><span>작업 DB와 모델은 앱 데이터 폴더에 저장됩니다.</span></div></div>
         <dl className="metric-list">
           <div><dt>작업 데이터베이스</dt><dd>{formatBytes(diagnostics?.databaseBytes ?? 0)}</dd></div>
-          <div><dt>설치된 모델</dt><dd>{formatBytes(modelStatus?.installedBytes ?? 0)}</dd></div>
+          <div><dt>자동 제거 모델</dt><dd>{formatBytes(modelStatus?.installedBytes ?? 0)}</dd></div>
           <div><dt>현재 처리 장치</dt><dd>CPU · 자동 fallback</dd></div>
         </dl>
         <p className="preferences-note">{processing ? "현재 batch 처리 중이므로 모델 변경은 잠겨 있습니다." : "GPU provider 선택은 실제 DirectML/CoreML 검증을 마친 뒤 활성화합니다."}</p>

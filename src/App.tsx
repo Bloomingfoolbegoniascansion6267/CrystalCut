@@ -10,6 +10,7 @@ import PreviewEditor from "./PreviewEditor";
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 
 const DEFAULT_SETTINGS: OutputSettings = {
+  processingMode: "removeBackground",
   format: "png",
   webpQuality: 82,
   webpLossless: false,
@@ -102,6 +103,8 @@ function App() {
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [viewMode, setViewMode] = useState<"original" | "result" | "compare">("original");
   const [isMaskEditing, setIsMaskEditing] = useState(false);
+  const [maskPreviewBusy, setMaskPreviewBusy] = useState(false);
+  const [maskPreviewError, setMaskPreviewError] = useState<string | null>(null);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
   const [exportPlan, setExportPlan] = useState<ExportPlan | null>(null);
@@ -118,10 +121,12 @@ function App() {
   const skipNextWorkspaceSave = useRef(false);
   const workspaceSaveTimer = useRef<number | null>(null);
   const workspaceSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const maskPreviewRevision = useRef(0);
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
   const totalBytes = useMemo(() => assets.reduce((sum, asset) => sum + asset.sizeBytes, 0), [assets]);
-  const effectiveViewMode = selected?.resultPreviewUrl ? viewMode : "original";
+  const hasResultView = Boolean(selected?.resultPreviewUrl || (isMaskEditing && selected?.editBasePreviewUrl));
+  const effectiveViewMode = hasResultView ? viewMode : "original";
   const retryableAssets = useMemo(
     () => assets.filter((asset) => asset.status === "failed" || asset.status === "cancelled" || asset.status === "interrupted"),
     [assets],
@@ -260,7 +265,7 @@ function App() {
     void listen<BatchProgress>("batch-progress", ({ payload }) => {
       if (payload.status === "modelDownloading") {
         setBatchTotal(payload.total);
-        setNotice("로컬 AI 모델을 준비하고 있습니다. 최초 한 번만 다운로드합니다.");
+        setNotice("필요한 로컬 AI 모델을 준비하고 있습니다. 모델별로 최초 한 번만 다운로드합니다.");
         return;
       }
       setBatchCompleted(payload.completed);
@@ -270,7 +275,7 @@ function App() {
         if (payload.status === "processing") return { ...asset, status: "processing", error: undefined };
         if (payload.status === "retryingWorker") return { ...asset, status: "retrying", error: payload.error ?? undefined };
         if (payload.status === "completed") {
-          return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, resultPreviewUrl: undefined, error: undefined };
+          return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, error: undefined };
         }
         if (payload.status === "failed") return { ...asset, status: "failed", error: payload.error ?? "처리에 실패했습니다." };
         if (payload.status === "cancelled") return { ...asset, status: "cancelled", error: payload.error ?? "사용자가 취소했습니다." };
@@ -334,6 +339,44 @@ function App() {
       .catch((error) => !cancelled && setNotice(`미리보기를 만들지 못했습니다: ${String(error)}`));
     return () => { cancelled = true; };
   }, [selected]);
+
+  useEffect(() => {
+    const revision = ++maskPreviewRevision.current;
+    if (!isTauri() || !isMaskEditing || !selected || settings.processingMode !== "removeBackground" || selected.maskRecipe.mode === "automatic") {
+      setMaskPreviewBusy(false);
+      setMaskPreviewError(null);
+      return;
+    }
+    const hasKeep = selected.maskRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length > 0);
+    if ((selected.maskRecipe.mode === "manual" || selected.maskRecipe.mode === "sam") && !hasKeep) {
+      setMaskPreviewBusy(false);
+      setMaskPreviewError(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setMaskPreviewBusy(true);
+      setMaskPreviewError(null);
+      const command = selected.maskRecipe.mode === "sam" ? "generate_sam_preview" : "generate_mask_preview";
+      void invoke<string>(command, {
+        path: selected.path,
+        rotation: selected.rotation,
+        maskRecipe: selected.maskRecipe,
+        settings,
+      }).then((editBasePreviewUrl) => {
+        if (maskPreviewRevision.current !== revision) return;
+        setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, editBasePreviewUrl } : asset));
+        setViewMode("result");
+      }).catch((error) => {
+        if (maskPreviewRevision.current !== revision) return;
+        const message = String(error);
+        setMaskPreviewError(message);
+        setNotice(`마스크 미리보기를 갱신하지 못했습니다: ${message}`);
+      }).finally(() => {
+        if (maskPreviewRevision.current === revision) setMaskPreviewBusy(false);
+      });
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [isMaskEditing, selected?.id, selected?.path, selected?.rotation, selected?.maskRecipe, settings]);
 
   useEffect(() => {
     if (!selected?.outputPath || selected.resultPreviewUrl || !isTauri()) return;
@@ -426,6 +469,7 @@ function App() {
         outputPath: undefined,
         outputBytes: undefined,
         resultPreviewUrl: undefined,
+        editBasePreviewUrl: undefined,
       };
     }));
   };
@@ -444,12 +488,14 @@ function App() {
         status: invalidatesResult ? "ready" : asset.status,
         outputPath: invalidatesResult ? undefined : asset.outputPath,
         outputBytes: invalidatesResult ? undefined : asset.outputBytes,
+        editBasePreviewUrl: invalidatesResult ? asset.editBasePreviewUrl ?? asset.resultPreviewUrl : asset.editBasePreviewUrl,
         resultPreviewUrl: invalidatesResult ? undefined : asset.resultPreviewUrl,
         error: invalidatesResult ? undefined : asset.error,
       };
     }));
-    if (maskRecipe.mode !== "automatic" && maskRecipe.strokes.length > 0) setViewMode("original");
-  }, [selectedId]);
+    if (maskRecipe.mode === "automatic") setViewMode("original");
+    else if (isMaskEditing) setViewMode("result");
+  }, [isMaskEditing, selectedId]);
 
   useEffect(() => {
     setIsMaskEditing(false);
@@ -514,17 +560,17 @@ function App() {
 
   const processAssets = async (targets: ImageAsset[]) => {
     if (!targets.length) return;
-    const incompleteManual = targets.find((asset) => asset.maskRecipe.mode === "manual"
+    const incompleteManual = settings.processingMode === "removeBackground" && targets.find((asset) => (asset.maskRecipe.mode === "manual" || asset.maskRecipe.mode === "sam")
       && !asset.maskRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length));
     if (incompleteManual) {
       setSelectedId(incompleteManual.id);
       setViewMode("original");
       setIsMaskEditing(true);
-      setNotice(`'${incompleteManual.name}'에서 유지할 객체를 초록색 브러시로 먼저 칠해주세요.`);
+      setNotice(`'${incompleteManual.name}'에서 유지할 객체를 초록색 브러시로 먼저 표시해주세요.`);
       return;
     }
     if (!isTauri()) {
-      setNotice("화면 검증 모드입니다. 실제 배경 제거는 Tauri 데스크톱 앱에서 실행됩니다.");
+      setNotice(`화면 검증 모드입니다. 실제 ${settings.processingMode === "convert" ? "이미지 변환" : "배경 제거"}은 Tauri 데스크톱 앱에서 실행됩니다.`);
       return;
     }
     const targetIds = new Set(targets.map((asset) => asset.id));
@@ -536,7 +582,7 @@ function App() {
     setBatchCompleted(0);
     setBatchTotal(targets.length);
     setAssets((current) => current.map((asset) => targetIds.has(asset.id)
-      ? { ...asset, status: "queued", outputPath: undefined, outputBytes: undefined, resultPreviewUrl: undefined, error: undefined }
+      ? { ...asset, status: "queued", outputPath: undefined, outputBytes: undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, error: undefined }
       : asset));
     try {
       const result = await invoke<BatchResult>("process_batch", {
@@ -568,7 +614,7 @@ function App() {
     } catch (error) {
       const message = String(error);
       setAssets((current) => current.map((asset) => asset.status === "queued" || asset.status === "processing" || asset.status === "retrying" ? { ...asset, status: "failed", error: message } : asset));
-      setNotice(`배경 제거를 완료하지 못했습니다: ${message}`);
+      setNotice(`${settings.processingMode === "convert" ? "이미지 변환" : "배경 제거"}을 완료하지 못했습니다: ${message}`);
     } finally {
       setIsProcessing(false);
       setIsCancelling(false);
@@ -700,12 +746,24 @@ function App() {
 
   const setFormat = (format: OutputFormat) => setSettings((current) => ({ ...current, format }));
 
-  const openMaskEditor = () => {
-    if (!selected) return;
-    if (selected.maskRecipe.mode === "automatic") {
-      updateSelectedMask({ ...selected.maskRecipe, mode: "refine" });
+  const setProcessingMode = (processingMode: OutputSettings["processingMode"]) => {
+    setSettings((current) => ({
+      ...current,
+      processingMode,
+      suffix: current.suffix === (processingMode === "convert" ? "_bg" : "_converted")
+        ? (processingMode === "convert" ? "_converted" : "_bg")
+        : current.suffix,
+    }));
+    if (processingMode === "convert") {
+      setIsMaskEditing(false);
+      setViewMode("original");
     }
-    setViewMode("original");
+  };
+
+  const openMaskEditor = () => {
+    if (!selected || settings.processingMode === "convert") return;
+    if (selected.maskRecipe.mode === "automatic") updateSelectedMask({ ...selected.maskRecipe, mode: "refine" });
+    setViewMode(selected.resultPreviewUrl || selected.editBasePreviewUrl ? "result" : "original");
     setIsMaskEditing(true);
   };
 
@@ -765,7 +823,7 @@ function App() {
         </div>
         <div className="topbar-actions">
           <span className={`model-pill ${modelStatus?.installed ? "ready" : ""}`} title={modelStatus?.purpose}>
-            <span />로컬 AI {modelStatus?.installed ? "준비됨" : "필요 시 설치"}
+            <span />자동 제거 AI {modelStatus?.installed ? "준비됨" : "필요 시 설치"}
           </span>
           <button className="button secondary" onClick={addFilesFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="add" />파일 추가</button>
           <button className="button secondary desktop-only" onClick={addFolderFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="folder" />폴더 추가</button>
@@ -806,11 +864,11 @@ function App() {
           <div className="canvas-toolbar">
             <div className="view-tabs" role="tablist" aria-label="미리보기 모드">
               <button className={effectiveViewMode === "original" ? "active" : ""} onClick={() => setViewMode("original")} role="tab" aria-selected={effectiveViewMode === "original"}>원본</button>
-              <button className={effectiveViewMode === "result" ? "active" : ""} onClick={() => setViewMode("result")} role="tab" disabled={!selected?.outputPath}>결과</button>
-              <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => setViewMode("compare")} role="tab" disabled={!selected?.outputPath}>비교</button>
+              <button className={effectiveViewMode === "result" ? "active" : ""} onClick={() => setViewMode("result")} role="tab" disabled={!hasResultView}>결과</button>
+              <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => setViewMode("compare")} role="tab" disabled={!hasResultView || isMaskEditing}>비교</button>
             </div>
             <div className="canvas-actions">
-              <button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? () => setIsMaskEditing(false) : openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={16} />{isMaskEditing ? "편집 완료" : "브러시 편집"}</button>
+              <button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? () => setIsMaskEditing(false) : openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={16} />{isMaskEditing ? "편집 완료" : "브러시 편집"}</button>
               <span className="divider" />
               <button className="icon-button" aria-label="왼쪽으로 회전" onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
               <button className="icon-button" aria-label="오른쪽으로 회전" onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /></button>
@@ -828,13 +886,15 @@ function App() {
                   editing={isMaskEditing}
                   onEditingChange={setIsMaskEditing}
                   onMaskChange={updateSelectedMask}
+                  previewBusy={maskPreviewBusy}
+                  previewError={maskPreviewError}
                 />
               ) : <div className="preview-stage"><div className="preview-loading"><span className="spinner" />미리보기 만드는 중</div></div>
             ) : (
               <div className="drop-card">
                 <span className="drop-icon"><Icon name="image" size={28} /></span>
-                <h1>배경을 지울 이미지를 놓으세요</h1>
-                <p>파일이나 폴더를 드래그하거나 직접 선택하세요.</p>
+                <h1>처리할 이미지를 놓으세요</h1>
+                <p>배경 제거 또는 형식·크기 변환할 파일을 선택하세요.</p>
                 <div className="drop-actions">
                   <button className="button primary compact" onClick={addFilesFromDialog}>이미지 선택</button>
                   <button className="button ghost compact desktop-only" onClick={addFolderFromDialog}>폴더 선택</button>
@@ -864,12 +924,25 @@ function App() {
           </div>
 
           <section className="setting-section">
+            <label className="setting-label">처리 방식</label>
+            <div className="segmented processing-mode">
+              <button className={settings.processingMode === "removeBackground" ? "active" : ""} onClick={() => setProcessingMode("removeBackground")}>배경 제거</button>
+              <button className={settings.processingMode === "convert" ? "active" : ""} onClick={() => setProcessingMode("convert")}>이미지만 변환</button>
+            </div>
+            <p className="setting-help">{settings.processingMode === "removeBackground"
+              ? "AI 마스크와 브러시 보정을 적용한 뒤 저장합니다."
+              : "배경은 건드리지 않고 회전·크기·형식·압축 설정만 적용합니다."}</p>
+          </section>
+
+          <section className="setting-section">
             <label className="setting-label">파일 형식</label>
             <div className="segmented">
               <button className={settings.format === "png" ? "active" : ""} onClick={() => setFormat("png")}>PNG</button>
               <button className={settings.format === "webp" ? "active" : ""} onClick={() => setFormat("webp")}>WebP</button>
             </div>
-            <p className="setting-help">{settings.format === "png" ? "무손실 · 투명 배경에 가장 안전" : "더 작은 파일 · 투명도 지원"}</p>
+            <p className="setting-help">{settings.format === "png"
+              ? settings.processingMode === "removeBackground" ? "무손실 · 투명 배경에 가장 안전" : "무손실 변환 · 원본 투명도 유지"
+              : settings.processingMode === "removeBackground" ? "더 작은 파일 · 투명도 지원" : "더 작은 파일 · 화질과 압축률 조절"}</p>
 
             {settings.format === "webp" ? (
               <div className="sub-setting">
@@ -920,7 +993,7 @@ function App() {
             <div className="label-row"><label className="setting-label" htmlFor="name-template">파일 이름</label><span className="live-badge">동적 규칙</span></div>
             <div className="name-grid">
               <label><span>앞에 붙이기</span><input type="text" value={settings.prefix} placeholder="예: cut_" onChange={(e) => setSettings({ ...settings, prefix: e.target.value })} /></label>
-              <label><span>뒤에 붙이기</span><input type="text" value={settings.suffix} placeholder="예: _bg" onChange={(e) => setSettings({ ...settings, suffix: e.target.value })} /></label>
+              <label><span>뒤에 붙이기</span><input type="text" value={settings.suffix} placeholder={settings.processingMode === "convert" ? "예: _converted" : "예: _bg"} onChange={(e) => setSettings({ ...settings, suffix: e.target.value })} /></label>
             </div>
             <label className="template-field" htmlFor="name-template">
               <span>템플릿</span>
@@ -936,20 +1009,22 @@ function App() {
             {exportPlan?.warnings[0] && <p className="setting-warning">{exportPlan.warnings[0]}</p>}
           </section>
 
-          <section className="setting-section mask-summary-section">
+          {settings.processingMode === "removeBackground" && <section className="setting-section mask-summary-section">
             <div className="label-row"><span className="setting-label">객체 마스크</span><span className="live-badge">파일별</span></div>
             <p className="setting-help flush">{!selected
               ? "이미지를 선택하면 브러시로 유지할 객체와 제거할 영역을 지정할 수 있습니다."
               : selected.maskRecipe.mode === "manual"
-                ? `직접 칠하기 · 브러시 ${selected.maskRecipe.strokes.length}개`
+                ? `칠한 영역만 유지 · 브러시 ${selected.maskRecipe.strokes.length}개`
+                : selected.maskRecipe.mode === "sam"
+                  ? `AI 객체 선택 · 프롬프트 ${selected.maskRecipe.strokes.length}개`
                 : selected.maskRecipe.mode === "refine"
-                  ? `자동 결과 보정 · 브러시 ${selected.maskRecipe.strokes.length}개`
+                  ? `AI 결과 보정 · 브러시 ${selected.maskRecipe.strokes.length}개`
                   : "AI 자동 배경 제거"}</p>
             <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={15} />브러시로 객체 편집</button>
-          </section>
+          </section>}
 
-          <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings"><span>가장자리 및 고급 옵션</span><Icon name="chevron" size={15} /></button>
-          {isAdvancedOpen && (
+          {settings.processingMode === "removeBackground" && <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings"><span>가장자리 및 고급 옵션</span><Icon name="chevron" size={15} /></button>}
+          {settings.processingMode === "removeBackground" && isAdvancedOpen && (
             <section id="advanced-settings" className="setting-section advanced-settings">
               <div className="sub-setting first">
                 <div className="label-row"><label htmlFor="edge-smoothing">가장자리 매끄럽게</label><output>{settings.edgeSmoothing}</output></div>
@@ -1005,7 +1080,11 @@ function App() {
             onClick={() => isProcessing ? void cancelProcessing() : void processAssets(assets)}
           >
             <span className="run-icon"><Icon name={isProcessing ? "stop" : "sparkle"} /></span>
-            <span>{isProcessing ? isCancelling ? "취소 요청됨…" : `${batchCompleted} / ${batchTotal} 처리 중 · 취소` : `${assets.length || ""}개 배경 지우고 저장`}</span>
+            <span>{isProcessing
+              ? isCancelling ? "취소 요청됨…" : `${batchCompleted} / ${batchTotal} 처리 중 · 취소`
+              : assets.length
+                ? `${assets.length}개 ${settings.processingMode === "convert" ? "변환해서 저장" : "배경 지우고 저장"}`
+                : "이미지를 추가해주세요"}</span>
             {!isProcessing && <Icon name="chevron" size={16} />}
           </button>
         </div>
@@ -1031,7 +1110,7 @@ function App() {
             </>
           ) : (
             <>
-              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!selected?.previewUrl}><span>브러시로 객체 편집</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!selected?.previewUrl || settings.processingMode === "convert"}><span>브러시로 객체 편집</span></button>
               <span className="context-separator" />
               <button role="menuitem" onClick={() => { setViewMode("original"); setContextMenu(null); }} disabled={!selected}><span>원본 보기</span></button>
               <button role="menuitem" onClick={() => { setViewMode("result"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>결과 보기</span></button>
