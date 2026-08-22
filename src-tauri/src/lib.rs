@@ -32,6 +32,7 @@ use walkdir::WalkDir;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const MAX_PREVIEW_EDGE: u32 = 1600;
+const MAX_THUMBNAIL_EDGE: u32 = 160;
 
 #[derive(Clone, Default)]
 struct BatchController {
@@ -263,6 +264,19 @@ async fn load_preview(path: String) -> Result<String, String> {
 }
 
 fn load_preview_blocking(path: &Path) -> Result<String, String> {
+    load_image_data_url_blocking(path, MAX_PREVIEW_EDGE)
+}
+
+#[tauri::command]
+async fn load_thumbnail(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        load_image_data_url_blocking(Path::new(&path), MAX_THUMBNAIL_EDGE)
+    })
+    .await
+    .map_err(|error| format!("썸네일 작업에 실패했습니다: {error}"))?
+}
+
+fn load_image_data_url_blocking(path: &Path, max_edge: u32) -> Result<String, String> {
     if !path.is_file() {
         return Err("파일을 찾을 수 없습니다.".to_owned());
     }
@@ -274,8 +288,8 @@ fn load_preview_blocking(path: &Path) -> Result<String, String> {
     let exif = metadata::read_exif_summary(path);
     metadata::apply_orientation(&mut source, exif.orientation);
     let (width, height) = source.dimensions();
-    let preview = if width > MAX_PREVIEW_EDGE || height > MAX_PREVIEW_EDGE {
-        source.thumbnail(MAX_PREVIEW_EDGE, MAX_PREVIEW_EDGE)
+    let preview = if width > max_edge || height > max_edge {
+        source.thumbnail(max_edge, max_edge)
     } else {
         source
     };
@@ -1132,6 +1146,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             inspect_paths,
             load_preview,
+            load_thumbnail,
             generate_mask_preview,
             generate_sam_preview,
             get_model_status,
@@ -1232,6 +1247,30 @@ mod tests {
         let mut invalid = settings();
         invalid.name_template = "{unknown}".to_owned();
         assert!(validate_settings(&invalid).is_err());
+    }
+
+    #[test]
+    fn list_thumbnail_is_bounded_without_waiting_for_full_preview() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("clearcut-thumbnail-{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).expect("create thumbnail directory");
+        let source = temp_dir.join("wide.png");
+        image::RgbaImage::from_pixel(640, 320, image::Rgba([90, 120, 180, 255]))
+            .save(&source)
+            .expect("save thumbnail fixture");
+
+        let data_url = load_image_data_url_blocking(&source, MAX_THUMBNAIL_EDGE)
+            .expect("create list thumbnail");
+        let payload = data_url
+            .split_once(',')
+            .map(|(_, payload)| payload)
+            .expect("thumbnail data URL payload");
+        let decoded = STANDARD.decode(payload).expect("decode thumbnail payload");
+        let thumbnail = image::load_from_memory(&decoded).expect("open thumbnail payload");
+        assert_eq!(thumbnail.dimensions(), (160, 80));
+
+        std::fs::remove_file(source).expect("remove thumbnail fixture");
+        std::fs::remove_dir(temp_dir).expect("remove thumbnail directory");
     }
 
     #[test]

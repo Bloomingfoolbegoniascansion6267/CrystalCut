@@ -10,6 +10,7 @@ export interface ImageAsset {
   height: number | null;
   exif: ExifSummary;
   status: AssetStatus;
+  thumbnailUrl?: string;
   previewUrl?: string;
   resultPreviewUrl?: string;
   editBasePreviewUrl?: string;
@@ -79,7 +80,7 @@ export interface OutputSettings {
   preserveMetadata: boolean;
 }
 
-export type PersistedAsset = Omit<ImageAsset, "previewUrl" | "resultPreviewUrl" | "editBasePreviewUrl" | "maskPreviewUrl">;
+export type PersistedAsset = Omit<ImageAsset, "thumbnailUrl" | "previewUrl" | "resultPreviewUrl" | "editBasePreviewUrl" | "maskPreviewUrl">;
 
 export interface WorkspaceSnapshot {
   items: PersistedAsset[];

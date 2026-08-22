@@ -5,7 +5,7 @@ Windows와 macOS에서 이미지 배경을 로컬로 제거하고 일괄 변환�
 ## 현재 구현
 
 - React/TypeScript 기반 3단 작업 화면과 확대·축소·이동 가능한 원본·결과 미리보기, 드래그 분할 비교
-- 파일·폴더 drag-and-drop 및 native picker, Rust 기반 이미지 유효성·크기 검사
+- 파일·폴더 drag-and-drop 및 native picker, Rust 기반 이미지 유효성·크기 검사와 목록 썸네일 즉시 선로딩
 - UI와 분리된 동일 실행 파일의 `--worker` 모드 및 버전이 명시된 JSONL protocol
 - 최초 처리 시 U2NetP 모델 다운로드, 파일 크기·SHA-256 검증, 안전한 임시 파일 교체
 - 로컬 ONNX Runtime 추론, 파일별 유지·제거 브러시 마스크, 기존 알파 보존, 회전 및 비율/긴 변 기준 크기 변경
@@ -60,6 +60,7 @@ npm run build:desktop
 
 - [제품·아키텍처 계획](docs/PRODUCT_ARCHITECTURE_PLAN.ko.md)
 - [현재 구현 구조와 검증 결과](docs/IMPLEMENTATION_STATUS.ko.md)
+- [전체 UI/UX 감사 및 개선 계획](docs/UI_UX_AUDIT_PLAN.ko.md)
 - [수동 객체 선택·마스크 보정·환경설정 구현 계획](docs/MANUAL_MASK_AND_SETTINGS_PLAN.ko.md)
 - [SAM 계열 객체 선택 통합 계획](docs/SAM_INTEGRATION_PLAN.ko.md)
 - [제3자 AI 모델 고지](docs/THIRD_PARTY_MODELS.ko.md)

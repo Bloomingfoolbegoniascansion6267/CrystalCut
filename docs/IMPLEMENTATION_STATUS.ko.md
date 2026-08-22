@@ -80,7 +80,7 @@ SQLite schema v4는 작업 snapshot과 분리된 `app_preferences` table, 파일
 
 ## 5. 검증 범위
 
-- Rust 단위 테스트 39개(네트워크 모델 다운로드 1개 기본 제외): resize 비율, 확대 방지, AI 없는 변환 저장, 기존 alpha 결합·교체, 수동 유지·제거 마스크와 입력 검증, 가장자리 확장, U2NetP 입력 layout·정규화, U2NetP/SlimSAM model hash·TLS provider, 실제 SlimSAM prompt 추론, EXIF 추출·안전한 PNG/WebP 출력 EXIF, 동적 이름 template, 파일명 및 경로 충돌, SQLite v1→v4 migration·파일별 마스크/가장자리 recipe·출력 프리셋·환경설정 fallback·snapshot round trip·중단/완료 결과 복구
+- Rust 단위 테스트 40개(네트워크 모델 다운로드 1개 기본 제외): resize 비율, 확대 방지, 목록 전용 thumbnail 크기 제한, AI 없는 변환 저장, 기존 alpha 결합·교체, 수동 유지·제거 마스크와 입력 검증, 가장자리 확장, U2NetP 입력 layout·정규화, U2NetP/SlimSAM model hash·TLS provider, 실제 SlimSAM prompt 추론, EXIF 추출·안전한 PNG/WebP 출력 EXIF, 동적 이름 template, 파일명 및 경로 충돌, SQLite v1→v4 migration·파일별 마스크/가장자리 recipe·출력 프리셋·환경설정 fallback·snapshot round trip·중단/완료 결과 복구
 - TypeScript production build
 - 공식 U-2-Net 테스트 사진을 사용한 worker 스모크 테스트
   - 400×267 PNG 입력

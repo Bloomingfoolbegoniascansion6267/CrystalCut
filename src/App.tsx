@@ -147,6 +147,7 @@ function App() {
   const workspaceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const maskPreviewRevision = useRef(0);
   const maskPreviewSnapshot = useRef<{ editBasePreviewUrl?: string; maskPreviewUrl?: string } | null>(null);
+  const thumbnailLoads = useRef(new Set<string>());
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
   const contextAsset = contextMenu?.assetId ? assets.find((asset) => asset.id === contextMenu.assetId) ?? null : null;
@@ -203,15 +204,41 @@ function App() {
     setNotice(`${incoming.length}개 이미지를 불러왔습니다.`);
   }, []);
 
+  const preloadThumbnails = useCallback((incoming: ImageAsset[]) => {
+    if (!isTauri()) return;
+    const queue = incoming.filter((asset) => !asset.thumbnailUrl && !thumbnailLoads.current.has(asset.id));
+    if (!queue.length) return;
+    for (const asset of queue) thumbnailLoads.current.add(asset.id);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < queue.length) {
+        const asset = queue[cursor++];
+        try {
+          const thumbnailUrl = await invoke<string>("load_thumbnail", { path: asset.path });
+          setAssets((current) => current.map((candidate) => candidate.id === asset.id && !candidate.thumbnailUrl
+            ? { ...candidate, thumbnailUrl }
+            : candidate));
+        } catch {
+          // A failed list thumbnail must not block the full preview or batch processing.
+        } finally {
+          thumbnailLoads.current.delete(asset.id);
+        }
+      }
+    };
+    void Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+  }, []);
+
   const inspectPaths = useCallback(async (paths: string[]) => {
     if (!paths.length) return;
     try {
       const inspected = await invoke<Omit<ImageAsset, "status" | "rotation">[]>("inspect_paths", { paths });
-      addAssets(inspected.map((asset) => ({ ...asset, status: "ready", rotation: 0, maskRecipe: DEFAULT_MASK_RECIPE, edgeSettings: { ...DEFAULT_EDGE_SETTINGS } })));
+      const incoming: ImageAsset[] = inspected.map((asset) => ({ ...asset, status: "ready", rotation: 0, maskRecipe: DEFAULT_MASK_RECIPE, edgeSettings: { ...DEFAULT_EDGE_SETTINGS } }));
+      addAssets(incoming);
+      preloadThumbnails(incoming);
     } catch (error) {
       setNotice(`파일을 불러오지 못했습니다: ${String(error)}`);
     }
-  }, [addAssets]);
+  }, [addAssets, preloadThumbnails]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -240,6 +267,7 @@ function App() {
         }
         setSettings(restored.settings);
         setAssets(restored.items);
+        preloadThumbnails(restored.items);
         setSelectedId(restored.items[0]?.id ?? null);
         if (restored.items.some((asset) => asset.status === "done")) setViewMode("result");
         if (restored.items.length || restored.missingFiles || restored.interrupted) {
@@ -255,7 +283,7 @@ function App() {
     })().finally(() => !disposed && setIsWorkspaceLoaded(true));
 
     return () => { disposed = true; };
-  }, []);
+  }, [preloadThumbnails]);
 
   useEffect(() => {
     if (!isTauri() || !isWorkspaceLoaded || !preferences.restoreWorkspace) return;
@@ -387,7 +415,7 @@ function App() {
       })
       .catch((error) => !cancelled && setNotice(`미리보기를 만들지 못했습니다: ${String(error)}`));
     return () => { cancelled = true; };
-  }, [selected]);
+  }, [selected?.id, selected?.path, selected?.previewUrl]);
 
   useEffect(() => {
     const revision = ++maskPreviewRevision.current;
@@ -440,7 +468,7 @@ function App() {
       })
       .catch((error) => !cancelled && setNotice(`결과 미리보기를 만들지 못했습니다: ${String(error)}`));
     return () => { cancelled = true; };
-  }, [selected]);
+  }, [selected?.id, selected?.outputPath, selected?.resultPreviewUrl]);
 
   const addFilesFromDialog = async () => {
     if (!isTauri()) {
@@ -550,18 +578,20 @@ function App() {
   }, [isMaskEditing, selectedId]);
 
   const updateSelectedEdgeSettings = useCallback((patch: Partial<EdgeSettings>) => {
-    if (!selectedId) return;
+    if (!selectedId || !selected) return;
+    const edgeSettings = { ...selected.edgeSettings, ...patch };
+    if (JSON.stringify(edgeSettings) === JSON.stringify(selected.edgeSettings)) return;
     setMaskPreviewStatus("updating");
     setAssets((current) => current.map((asset) => asset.id === selectedId ? {
       ...asset,
-      edgeSettings: { ...asset.edgeSettings, ...patch },
+      edgeSettings,
       status: "ready",
       outputPath: undefined,
       outputBytes: undefined,
       resultPreviewUrl: undefined,
       error: undefined,
     } : asset));
-  }, [selectedId]);
+  }, [selected, selectedId]);
 
   useEffect(() => {
     setIsMaskEditing(false);
@@ -1008,7 +1038,6 @@ function App() {
         <div className="brand" aria-label="Clearcut">
           <span className="brand-mark"><Icon name="sparkle" size={16} /></span>
           <span>Clearcut</span>
-          <span className="beta">BETA</span>
         </div>
         <div className="topbar-actions">
           <span className={`model-pill ${modelStatus?.installed ? "ready" : ""}`} title={modelStatus?.purpose}>
@@ -1032,7 +1061,7 @@ function App() {
             ) : assets.map((asset, index) => (
               <button key={asset.id} className={`asset-row ${asset.id === selectedId ? "selected" : ""}`} onClick={() => setSelectedId(asset.id)} onContextMenu={(event) => openAssetContextMenu(event, asset.id)}>
                 <span className="asset-index">{String(index + 1).padStart(2, "0")}</span>
-                <span className="asset-thumb">{asset.previewUrl ? <img src={asset.previewUrl} alt="" /> : <Icon name="image" size={16} />}</span>
+                <span className="asset-thumb">{asset.thumbnailUrl || asset.previewUrl ? <img src={asset.thumbnailUrl ?? asset.previewUrl} alt="" /> : <Icon name="image" size={16} />}</span>
                 <span className="asset-copy">
                   <strong title={asset.name}>{asset.name}</strong>
                   <small>{formatDimensions(asset.width, asset.height)} · {formatBytes(asset.sizeBytes)}</small>
@@ -1239,7 +1268,7 @@ function App() {
 
           {settings.processingMode === "removeBackground" && <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings"><span>가장자리 및 고급 옵션</span><Icon name="chevron" size={15} /></button>}
           {settings.processingMode === "removeBackground" && isAdvancedOpen && (
-            <section id="advanced-settings" className="setting-section advanced-settings" onInputCapture={() => setMaskPreviewStatus("updating")}>
+            <section id="advanced-settings" className="setting-section advanced-settings">
               <div className="advanced-section-title"><div><strong>파일별 가장자리</strong><span>{selected?.name ?? "이미지를 선택하세요"}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected}>가장자리만 기본값</button></div>
               <div className="advanced-preview-heading"><span>{maskPreviewStatus === "updating" ? "미리보기 갱신 중…" : maskPreviewStatus === "current" ? "선택 이미지에 실시간 반영됨" : "선택 이미지를 기준으로 미리보기"}</span>{maskPreviewStatus === "updating" && <span className="spinner" />}</div>
               <div className="sub-setting first">
