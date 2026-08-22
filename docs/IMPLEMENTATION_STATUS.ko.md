@@ -44,6 +44,8 @@ Tauri Core (Rust)
 
 모델 파일은 저장소에 포함하지 않는다. manifest만 version control에 두며, 다운로드 중에는 `.partial`을 사용하고 검증에 실패하면 확정 경로로 이동하지 않는다.
 
+Windows/macOS system TLS를 쓰도록 ureq Native TLS Agent를 명시적으로 구성한다. `native-tls` feature만 활성화한 상태에서 Rustls가 기본인 crate 편의 함수를 호출하면 HTTPS 요청이 panic하는 조합이 되므로, 모델 다운로드는 항상 provider가 고정된 Agent를 거친다.
+
 ## 4. UI 상태 흐름
 
 각 항목은 `ready → queued → processing → done/failed` 상태를 갖는다. Rust core가 `batch-progress` event를 보내면 UI가 진행률과 현재 파일을 갱신한다. 완료 항목을 선택하면 결과 파일에서 새 미리보기를 만들고 원본·결과·비교 탭을 즉시 사용할 수 있다.
@@ -64,7 +66,7 @@ worker 표준 입출력이 끊기거나 protocol 응답이 손상되면 해당 �
 
 ## 5. 검증 범위
 
-- Rust 단위 테스트 25개: resize 비율, 확대 방지, 기존 alpha 결합, 모델 입력 layout·정규화, 모델 hash, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌, SQLite migration·snapshot round trip·중단/완료 결과 복구
+- Rust 단위 테스트 26개: resize 비율, 확대 방지, 기존 alpha 결합, 모델 입력 layout·정규화, 모델 hash·TLS provider, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌, SQLite migration·snapshot round trip·중단/완료 결과 복구
 - TypeScript production build
 - 공식 U-2-Net 테스트 사진을 사용한 worker 스모크 테스트
   - 400×267 PNG 입력
@@ -76,12 +78,15 @@ worker 표준 입출력이 끊기거나 protocol 응답이 손상되면 해당 �
 
 ## 6. 다음 우선순위
 
-1. 대표 이미지 golden set으로 U2Net, BiRefNet 계열의 품질·속도·메모리 benchmark
-2. Windows DirectML/Windows ML과 macOS CoreML provider packaging
-3. 현재 추론까지 즉시 중단하는 강제 취소 option과 `.partial` 정리 검증
-4. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
-5. 대규모 목록 virtual scroll과 SQLite delta 저장 최적화
-6. 서명된 Windows/macOS installer와 updater 검증
+1. 동작하는 환경설정 shell과 전역 `AppPreferences` 저장 계약
+2. Canvas 유지/지우기 brush, Undo/Redo와 correction mask 저장
+3. promptable segmentation 및 자동 배경 제거 모델의 품질·속도·메모리 benchmark와 물체 단위 대상 선택
+4. Windows DirectML/Windows ML과 macOS CoreML provider packaging
+5. 선택 파일 자동 미리보기와 최종 export 결과 일치 검증
+6. 현재 추론까지 즉시 중단하는 강제 취소 option과 `.partial` 정리 검증
+7. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
+8. 대규모 목록 virtual scroll과 SQLite delta 저장 최적화
+9. 서명된 Windows/macOS installer와 updater 검증
 
 ## 참고 구현
 

@@ -52,4 +52,5 @@ npm run tauri -- build --no-bundle
 
 - [제품·아키텍처 계획](docs/PRODUCT_ARCHITECTURE_PLAN.ko.md)
 - [현재 구현 구조와 검증 결과](docs/IMPLEMENTATION_STATUS.ko.md)
+- [수동 객체 선택·마스크 보정·환경설정 구현 계획](docs/MANUAL_MASK_AND_SETTINGS_PLAN.ko.md)
 - [ADR 0001: Electron 대신 Tauri 2 사용](docs/adr/0001-tauri-over-electron.ko.md)

@@ -7,6 +7,11 @@ use std::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
+use ureq::{
+    config::Config,
+    tls::{TlsConfig, TlsProvider},
+    Agent,
+};
 
 pub const MODEL_ID: &str = "u2netp";
 pub const MODEL_URL: &str =
@@ -48,7 +53,9 @@ pub fn ensure_default_model(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|error| format!("모델 저장 폴더를 만들지 못했습니다: {error}"))?;
 
     let partial_path = model_path.with_extension("onnx.partial");
-    let mut response = ureq::get(MODEL_URL)
+    let download_agent = model_download_agent();
+    let mut response = download_agent
+        .get(MODEL_URL)
         .call()
         .map_err(|error| format!("모델을 다운로드하지 못했습니다: {error}"))?;
     let mut reader = response.body_mut().as_reader();
@@ -69,6 +76,17 @@ pub fn ensure_default_model(app: &AppHandle) -> Result<PathBuf, String> {
     fs::rename(&partial_path, &model_path)
         .map_err(|error| format!("검증한 모델을 설치하지 못했습니다: {error}"))?;
     Ok(model_path)
+}
+
+fn model_download_agent() -> Agent {
+    Config::builder()
+        .tls_config(
+            TlsConfig::builder()
+                .provider(TlsProvider::NativeTls)
+                .build(),
+        )
+        .build()
+        .new_agent()
 }
 
 fn find_verified_model(app: &AppHandle) -> Result<Option<PathBuf>, String> {
@@ -145,5 +163,23 @@ mod tests {
         if workspace_model.is_file() {
             verify_model(&workspace_model).expect("cached smoke-test model must match manifest");
         }
+    }
+
+    #[test]
+    fn model_download_agent_explicitly_uses_enabled_native_tls() {
+        let agent = model_download_agent();
+        assert_eq!(
+            agent.config().tls_config().provider(),
+            TlsProvider::NativeTls
+        );
+    }
+
+    #[test]
+    #[ignore = "requires access to the model download endpoint"]
+    fn model_download_endpoint_works_over_https() {
+        model_download_agent()
+            .get(MODEL_URL)
+            .call()
+            .expect("model endpoint must be reachable over Native TLS");
     }
 }
