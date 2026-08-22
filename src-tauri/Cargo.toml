@@ -1,6 +1,6 @@
 [package]
 name = "clearcut"
-version = "0.1.0"
+version = "1.0.0"
 description = "Fast local-first background removal for Windows and macOS"
 authors = ["Clearcut contributors"]
 edition = "2021"

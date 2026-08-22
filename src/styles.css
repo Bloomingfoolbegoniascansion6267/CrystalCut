@@ -387,6 +387,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .text-button { min-height: 30px; padding: 4px 6px; color: var(--accent); background: transparent; font-size: 11px; font-weight: 650; }
 .setting-section { padding: 16px; border-bottom: 1px solid var(--line); }
 .setting-label { display: block; margin-bottom: 10px; font-size: 12px; font-weight: 700; }
+.setting-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.setting-title-row .setting-label { margin: 0; }
+.setting-title-row button { min-height: 28px; padding: 4px 8px; color: var(--accent-dark); border: 1px solid #d9d1fa; border-radius: 8px; background: white; font-size: 10.5px; font-weight: 700; cursor: pointer; }
+.setting-title-row button:hover { border-color: #bfb2f7; background: var(--accent-soft); }
 .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border-radius: 9px; background: var(--surface-muted); }
 .segmented button { height: 30px; border: 0; border-radius: 7px; color: var(--ink-soft); background: transparent; font-size: 11px; font-weight: 600; cursor: pointer; }
 .segmented button.active { color: var(--ink); background: white; box-shadow: var(--shadow-sm); }
@@ -524,8 +528,13 @@ select:disabled { color: var(--ink-faint); background-color: var(--surface-muted
 .drag-overlay > div > span { display: grid; width: 58px; height: 58px; place-items: center; color: white; border-radius: 18px; background: var(--accent); box-shadow: 0 12px 30px rgba(92,64,205,.25); }
 .drag-overlay strong { margin-top: 5px; font-size: 18px; }
 .drag-overlay small { color: #746b9c; }
-.toast { position: fixed; z-index: 60; left: 50%; bottom: 88px; display: flex; align-items: center; gap: 18px; max-width: 620px; padding: 12px 13px 12px 16px; color: white; border: 0; border-radius: 10px; background: #26272c; box-shadow: var(--shadow-lg); font-size: 11.5px; transform: translateX(-50%); cursor: pointer; }
-.toast span { color: #b8a8ff; font-weight: 700; }
+.toast { position: fixed; z-index: 60; left: 50%; bottom: 88px; display: flex; align-items: center; min-width: min(340px, calc(100vw - 32px)); max-width: min(620px, calc(100vw - 32px)); gap: 18px; overflow: hidden; padding: 12px 13px 13px 16px; color: white; border-radius: 10px; background: #26272c; box-shadow: var(--shadow-lg); font-size: 11.5px; transform: translateX(-50%); animation: toast-in 160ms ease-out; }
+.toast-message { flex: 1; line-height: 1.45; }
+.toast-close { flex: 0 0 auto; min-height: 28px; padding: 3px 4px; color: #b8a8ff; border: 0; border-radius: 6px; background: transparent; font-size: 11px; font-weight: 700; cursor: pointer; }
+.toast-close:hover { color: #d7ceff; background: rgba(255,255,255,.08); }
+.toast-progress { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: linear-gradient(90deg, #9d87ff, #c6b9ff); transform-origin: left center; animation: toast-progress 5s linear forwards; }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px) scale(.98); } }
+@keyframes toast-progress { to { transform: scaleX(0); } }
 
 .app-context-menu { position: fixed; z-index: 80; display: grid; min-width: 184px; padding: 5px; border: 1px solid rgba(31,34,43,.16); border-radius: 10px; background: rgba(255,255,255,.98); box-shadow: 0 14px 42px rgba(22,25,34,.22); backdrop-filter: blur(14px); animation: context-menu-in 90ms ease-out; }
 .app-context-menu button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 34px; gap: 18px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; text-align: left; font-size: 11px; cursor: pointer; }

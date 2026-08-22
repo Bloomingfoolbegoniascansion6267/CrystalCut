@@ -68,6 +68,8 @@ SQLite schema v4는 작업 snapshot과 분리된 `app_preferences` table, 파일
 
 환경설정 modal은 focus trap, Esc 닫기와 호출 버튼 focus 복귀를 지원한다. 일반, AI 모델·저장 공간, 개인정보, 진단 영역을 제공하며 모델 설치·삭제는 batch와 같은 실행 잠금을 사용한다. 앱 version, worker protocol, OS/architecture, DB 크기와 앱 데이터 경로는 실제 Tauri command에서 읽는다. 새 작업 기본값과 현재 출력 설정에서 촬영 메타데이터 보존을 선택할 수 있다. ICC 보존과 아직 검증하지 않은 GPU provider는 활성 control로 노출하지 않는다.
 
+출력 검사기에서 비율 변경은 100%, 긴 변 기준은 선택한 원본의 실제 긴 변 픽셀을 시작값으로 사용한다. 파일 형식의 `기본값`은 형식과 PNG/WebP 압축 관련 값을 함께 복원한다. 알림 toast는 5초 진행 표시 후 자동으로 닫히며 사용자가 즉시 닫을 수도 있다. 배포 및 진단에 표시되는 앱 버전은 프런트엔드 package, Rust crate와 Tauri bundle에서 모두 `1.0.0`으로 통일한다.
+
 미리보기 canvas는 휠과 버튼 확대·축소, pointer drag 이동, 화면 맞춤을 지원한다. 비교 모드는 원본과 수정본을 같은 좌표계에 겹치고 수직 분할 바를 좌우로 움직여 경계를 확인한다. `미리보기` 화면은 저장 전 편집 상태와 저장된 결과를 별도 badge로 구분한다. 브러시 편집 좌표는 zoom·pan과 무관한 회전 후 이미지의 정규화 좌표로 저장한다.
 
 마스크는 `automatic`, `refine`, `manual`, `sam` 네 방식이다. `refine`은 U2NetP 결과 화면을 편집 기준으로 삼아 초록 유지·빨강 제거 stroke를 합성하고, `manual`은 빈 마스크에서 유지 stroke로 객체를 직접 칠한다. `sam`은 SlimSAM 77 Uniform의 양자화 ONNX image encoder와 prompt/mask decoder를 실행해 초록·빨강 stroke가 가리키는 물체 전체를 선택한다. 같은 파일의 image embedding은 재사용한다. 회전 시 stroke 좌표도 함께 변환하며 Undo/Redo와 전체 지우기를 제공한다. worker는 선택된 mask를 만든 다음 파일별 smoothing, feather, 확장·축소, alpha threshold와 mask contrast를 순서대로 처리한다. 각 값은 선택한 파일의 실시간 미리보기에 반영되며 해당 항목만 권장 기본값으로 되돌릴 수 있다.

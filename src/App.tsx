@@ -8,6 +8,7 @@ import SettingsModal, { type SettingsTab } from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
+const TOAST_DURATION_MS = 5000;
 
 const DEFAULT_SETTINGS: OutputSettings = {
   processingMode: "removeBackground",
@@ -162,6 +163,12 @@ function App() {
   const maskPreviewRevision = useRef(0);
   const maskPreviewSnapshot = useRef<{ editBasePreviewUrl?: string; maskPreviewUrl?: string } | null>(null);
   const thumbnailLoads = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), TOAST_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
   const contextAsset = contextMenu?.assetId ? assets.find((asset) => asset.id === contextMenu.assetId) ?? null : null;
@@ -923,6 +930,32 @@ function App() {
 
   const setFormat = (format: OutputFormat) => setSettings((current) => ({ ...current, format }));
 
+  const resetFormatSettings = () => {
+    setSettings((current) => ({
+      ...current,
+      format: DEFAULT_SETTINGS.format,
+      webpQuality: DEFAULT_SETTINGS.webpQuality,
+      webpLossless: DEFAULT_SETTINGS.webpLossless,
+      pngEffort: DEFAULT_SETTINGS.pngEffort,
+    }));
+    setNotice("파일 형식과 압축 설정을 기본값으로 되돌렸습니다.");
+  };
+
+  const setResizeMode = (resizeMode: OutputSettings["resizeMode"]) => {
+    const selectedLongEdge = selected?.width && selected?.height
+      ? Math.max(selected.width, selected.height)
+      : null;
+    setSettings((current) => ({
+      ...current,
+      resizeMode,
+      resizeValue: resizeMode === "percent"
+        ? 100
+        : resizeMode === "longEdge"
+          ? selectedLongEdge ?? DEFAULT_SETTINGS.resizeValue
+          : current.resizeValue,
+    }));
+  };
+
   const resetOutputSettings = () => {
     setSettings({ ...preferences.defaultSettings });
     setNotice("출력 설정을 새 작업 기본값으로 되돌렸습니다. 파일별 객체·가장자리 편집은 유지됩니다.");
@@ -1214,7 +1247,7 @@ function App() {
           </section>
 
           <section className="setting-section">
-            <label className="setting-label">파일 형식</label>
+            <div className="setting-title-row"><span className="setting-label">파일 형식</span><button type="button" onClick={resetFormatSettings}>기본값</button></div>
             <div className="segmented">
               <button className={settings.format === "png" ? "active" : ""} onClick={() => setFormat("png")}>PNG</button>
               <button className={settings.format === "webp" ? "active" : ""} onClick={() => setFormat("webp")}>WebP</button>
@@ -1242,7 +1275,7 @@ function App() {
 
           <section className="setting-section">
             <label className="setting-label" htmlFor="resize-mode">크기 변경</label>
-            <select id="resize-mode" value={settings.resizeMode} onChange={(e) => setSettings({ ...settings, resizeMode: e.target.value as OutputSettings["resizeMode"] })}>
+            <select id="resize-mode" value={settings.resizeMode} onChange={(e) => setResizeMode(e.target.value as OutputSettings["resizeMode"])}>
               <option value="original">원본 크기 유지</option>
               <option value="percent">비율로 변경</option>
               <option value="longEdge">긴 변 기준</option>
@@ -1290,7 +1323,7 @@ function App() {
             {exportPlan?.warnings[0] && <p className="setting-warning">{exportPlan.warnings[0]}</p>}
           </section>
 
-          {settings.processingMode === "removeBackground" && <div className="inspector-group-heading edit"><span>현재 파일</span><strong>객체와 가장자리 편집</strong></div>}
+          {settings.processingMode === "removeBackground" && <div className="inspector-group-heading edit"><span>현재 파일</span><strong>객체 선택과 가장자리 감지</strong></div>}
 
           {settings.processingMode === "removeBackground" && <section className="setting-section mask-summary-section">
             <div className="label-row"><span className="setting-label">객체 선택</span><span className="state-badge-small">실시간 미리보기</span></div>
@@ -1306,10 +1339,10 @@ function App() {
             <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={15} />브러시로 객체 편집</button>
           </section>}
 
-          {settings.processingMode === "removeBackground" && <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings"><span>가장자리 및 고급 옵션</span><Icon name="chevron" size={15} /></button>}
+          {settings.processingMode === "removeBackground" && <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings"><span>가장자리 감지</span><Icon name="chevron" size={15} /></button>}
           {settings.processingMode === "removeBackground" && isAdvancedOpen && (
             <section id="advanced-settings" className="setting-section advanced-settings">
-              <div className="advanced-section-title"><div><strong>파일별 가장자리</strong><span>{selected?.name ?? "이미지를 선택하세요"}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected}>가장자리만 기본값</button></div>
+              <div className="advanced-section-title"><div><strong>파일별 가장자리 감지</strong><span>{selected?.name ?? "이미지를 선택하세요"}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected}>기본값</button></div>
               <div className="advanced-preview-heading"><span>{maskPreviewStatus === "updating" ? "미리보기 갱신 중…" : maskPreviewStatus === "current" ? "선택 이미지에 실시간 반영됨" : "선택 이미지를 기준으로 미리보기"}</span>{maskPreviewStatus === "updating" && <span className="spinner" />}</div>
               <div className="sub-setting first">
                 <div className="label-row"><label htmlFor="edge-smoothing">가장자리 매끄럽게</label><output>{selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing}</output></div>
@@ -1441,7 +1474,13 @@ function App() {
         onRefreshDiagnostics={refreshSettingsData}
       />
 
-      {notice && <button className="toast" role="alert" aria-live="assertive" onClick={() => setNotice(null)}>{notice}<span>닫기</span></button>}
+      {notice && (
+        <div className="toast" role="alert" aria-live="assertive">
+          <span className="toast-message">{notice}</span>
+          <button type="button" className="toast-close" onClick={() => setNotice(null)} aria-label="알림 닫기">닫기</button>
+          <span className="toast-progress" aria-hidden="true" />
+        </div>
+      )}
     </div>
   );
 }
