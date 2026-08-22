@@ -1,0 +1,77 @@
+# Clearcut 핵심 처리 구현 현황
+
+- 기준일: 2026-08-22
+- 범위: Tauri UI에서 로컬 ONNX 배경 제거 후 PNG/WebP 파일을 안전하게 저장하는 첫 end-to-end 구현
+
+## 1. 실행 구조
+
+```text
+React UI
+  ├─ 파일 목록·설정·미리보기
+  └─ Tauri command / batch-progress event
+             │
+Tauri Core (Rust)
+  ├─ 파일 검사와 출력 경로 계획
+  ├─ 모델 다운로드·SHA-256 검증
+  └─ worker 수명·진행 상태 관리
+             │ JSONL protocol v1 / stdin·stdout
+동일 실행 파일 --worker
+  ├─ ONNX Runtime session 재사용
+  ├─ U2NetP mask 추론
+  ├─ 기존 alpha × 예측 alpha
+  └─ 회전 → resize → PNG/WebP → atomic rename
+```
+
+추론을 WebView와 Tauri event loop에서 분리했다. 현재 worker는 batch 한 번에 하나 생성되고 모델 session을 항목 간 재사용한다. worker가 비정상 종료해도 UI process와 입력 원본은 영향을 받지 않는다.
+
+## 2. 처리 계약
+
+`protocolVersion: 1`인 JSON 객체를 한 줄에 하나씩 worker 표준 입력으로 전달하고, worker는 같은 `jobId`를 포함한 응답을 한 줄씩 돌려준다. 요청에는 입력·출력·모델 경로, 회전, resize 및 encoder 설정이 포함된다. 응답에는 성공 여부, 실제 출력 크기, 소요 시간과 오류가 포함된다.
+
+경로 충돌은 처리 전에 계획한다. 기존 파일과 같은 batch 안에서 예약된 이름을 모두 고려해 `파일명 (2).확장자`로 변경하며, worker도 최종 경로가 이미 존재하면 저장을 거부한다. 인코딩 결과는 `.partial`에 기록하고 `sync_all` 후 최종 이름으로 rename한다.
+
+## 3. 모델 관리와 전처리
+
+현재 모델은 U2NetP이며 최초 처리 시 HTTPS로 다운로드한다. 저장 전에 다음 조건을 모두 확인한다.
+
+- 크기: 4,574,861 bytes
+- SHA-256: `309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8`
+- 입력: RGB, NCHW, `1 × 3 × 320 × 320`
+- 출력: foreground alpha, `1 × 1 × 320 × 320`
+
+전처리는 공식 rembg 구현과 맞춰 Lanczos로 320×320 변환하고, 이미지 전체의 최대 채널값으로 0–1 정규화한 다음 ImageNet mean/std를 채널별로 적용한다. 출력은 min-max 정규화하고 원본 크기로 Lanczos 확대한다.
+
+모델 파일은 저장소에 포함하지 않는다. manifest만 version control에 두며, 다운로드 중에는 `.partial`을 사용하고 검증에 실패하면 확정 경로로 이동하지 않는다.
+
+## 4. UI 상태 흐름
+
+각 항목은 `ready → queued → processing → done/failed` 상태를 갖는다. Rust core가 `batch-progress` event를 보내면 UI가 진행률과 현재 파일을 갱신한다. 완료 항목을 선택하면 결과 파일에서 새 미리보기를 만들고 원본·결과·비교 탭을 즉시 사용할 수 있다.
+
+현재 batch는 순차 처리한다. 이는 session 재사용과 메모리 상한을 우선 확인하기 위한 선택이며, 병렬도는 모델·provider별 benchmark 후 bounded concurrency로 확장한다.
+
+## 5. 검증 범위
+
+- Rust 단위 테스트: resize 비율, 확대 방지, 기존 alpha 결합, 모델 입력 layout·정규화, 모델 hash, 파일명 및 경로 충돌
+- TypeScript production build
+- 공식 U-2-Net 테스트 사진을 사용한 worker 스모크 테스트
+  - 400×267 PNG 입력
+  - 추론·PNG 저장 약 0.55초(개발 빌드, 현재 Windows 개발 장비)
+  - 좌·우 하늘과 하단 잔디 alpha 0, 말 몸통과 인물 몸통 alpha 255 확인
+- Tauri release `--no-bundle` 빌드로 frontend와 native binary 결합 확인
+
+위 시간은 제품 성능 보장이 아니라 단일 개발 장비의 구조 검증값이다.
+
+## 6. 다음 우선순위
+
+1. 대표 이미지 golden set으로 U2Net, BiRefNet 계열의 품질·속도·메모리 benchmark
+2. Windows DirectML/Windows ML과 macOS CoreML provider packaging
+3. EXIF 촬영일·camera field를 지원하는 파일명 template parser
+4. 실제 encoder sample 기반 예상 용량과 절감률 표시
+5. 취소·재시도, worker crash 복구, SQLite queue 영속화
+6. 서명된 Windows/macOS installer와 updater 검증
+
+## 참고 구현
+
+- U-2-Net: https://github.com/xuebinqin/U-2-Net
+- rembg U2NetP session: https://github.com/danielgatis/rembg/blob/main/rembg/sessions/u2netp.py
+- ort: https://github.com/pykeio/ort

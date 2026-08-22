@@ -1,0 +1,19 @@
+{
+  "id": "u2netp",
+  "displayName": "U²-Net Portable",
+  "purpose": "end-to-end pipeline validation and fast local preview",
+  "source": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx",
+  "sourceRepository": "https://github.com/xuebinqin/U-2-Net",
+  "license": "Apache-2.0",
+  "expectedBytes": 4574861,
+  "md5FromUpstream": "8e83ca70e441ab06c318d82300c84806",
+  "sha256": "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8",
+  "input": {
+    "layout": "NCHW",
+    "width": 320,
+    "height": 320,
+    "mean": [0.485, 0.456, 0.406],
+    "std": [0.229, 0.224, 0.225]
+  },
+  "shippingPolicy": "download-on-demand; never commit weights"
+}

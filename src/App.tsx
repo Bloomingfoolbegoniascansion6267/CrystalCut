@@ -1,7 +1,8 @@
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { ExportPlan, ImageAsset, OutputFormat, OutputSettings } from "./types";
+import type { BatchProgress, BatchResult, ImageAsset, ModelStatus, OutputFormat, OutputSettings } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
@@ -21,6 +22,14 @@ const DEFAULT_SETTINGS: OutputSettings = {
 };
 
 const isTauri = () => Boolean(window.__TAURI_INTERNALS__);
+
+const STATUS_LABEL: Record<ImageAsset["status"], string> = {
+  ready: "준비됨",
+  queued: "대기 중",
+  processing: "처리 중",
+  done: "완료",
+  failed: "실패",
+};
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
   const paths: Record<string, React.ReactNode> = {
@@ -48,12 +57,17 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [settings, setSettings] = useState<OutputSettings>(DEFAULT_SETTINGS);
   const [isDragging, setIsDragging] = useState(false);
-  const [isPlanning, setIsPlanning] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [batchCompleted, setBatchCompleted] = useState(0);
+  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
+  const [viewMode, setViewMode] = useState<"original" | "result" | "compare">("original");
+  const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
   const totalBytes = useMemo(() => assets.reduce((sum, asset) => sum + asset.sizeBytes, 0), [assets]);
+  const effectiveViewMode = selected?.resultPreviewUrl ? viewMode : "original";
 
   const addAssets = useCallback((incoming: ImageAsset[]) => {
     if (!incoming.length) return;
@@ -101,6 +115,41 @@ function App() {
   }, [inspectPaths]);
 
   useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+
+    void invoke<ModelStatus>("get_model_status")
+      .then((status) => !disposed && setModelStatus(status))
+      .catch(() => undefined);
+    void listen<BatchProgress>("batch-progress", ({ payload }) => {
+      if (payload.status === "modelDownloading") {
+        setNotice("로컬 AI 모델을 준비하고 있습니다. 최초 한 번만 다운로드합니다.");
+        return;
+      }
+      setBatchCompleted(payload.completed);
+      setAssets((current) => current.map((asset) => {
+        if (asset.id !== payload.assetId) return asset;
+        if (payload.status === "queued") return { ...asset, status: "queued", error: undefined };
+        if (payload.status === "processing") return { ...asset, status: "processing", error: undefined };
+        if (payload.status === "completed") {
+          return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, resultPreviewUrl: undefined, error: undefined };
+        }
+        if (payload.status === "failed") return { ...asset, status: "failed", error: payload.error ?? "처리에 실패했습니다." };
+        return asset;
+      }));
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    });
+
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!selected || selected.previewUrl || !isTauri()) return;
     let cancelled = false;
     invoke<string>("load_preview", { path: selected.path })
@@ -110,6 +159,19 @@ function App() {
         }
       })
       .catch((error) => !cancelled && setNotice(`미리보기를 만들지 못했습니다: ${String(error)}`));
+    return () => { cancelled = true; };
+  }, [selected]);
+
+  useEffect(() => {
+    if (!selected?.outputPath || selected.resultPreviewUrl || !isTauri()) return;
+    let cancelled = false;
+    invoke<string>("load_preview", { path: selected.outputPath })
+      .then((resultPreviewUrl) => {
+        if (!cancelled) {
+          setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, resultPreviewUrl } : asset));
+        }
+      })
+      .catch((error) => !cancelled && setNotice(`결과 미리보기를 만들지 못했습니다: ${String(error)}`));
     return () => { cancelled = true; };
   }, [selected]);
 
@@ -172,7 +234,13 @@ function App() {
     if (!selectedId) return;
     setAssets((current) => current.map((asset) => {
       if (asset.id !== selectedId) return asset;
-      return { ...asset, rotation: ((asset.rotation + direction * 90 + 360) % 360) as ImageAsset["rotation"] };
+      return {
+        ...asset,
+        rotation: ((asset.rotation + direction * 90 + 360) % 360) as ImageAsset["rotation"],
+        status: "ready",
+        outputPath: undefined,
+        resultPreviewUrl: undefined,
+      };
     }));
   };
 
@@ -191,23 +259,30 @@ function App() {
     if (selection) setSettings((current) => ({ ...current, outputDirectory: selection }));
   };
 
-  const preparePlan = async () => {
+  const processAssets = async () => {
     if (!assets.length) return;
-    setIsPlanning(true);
+    if (!isTauri()) {
+      setNotice("화면 검증 모드입니다. 실제 배경 제거는 Tauri 데스크톱 앱에서 실행됩니다.");
+      return;
+    }
+    setIsProcessing(true);
+    setBatchCompleted(0);
+    setAssets((current) => current.map((asset) => ({ ...asset, status: "queued", outputPath: undefined, resultPreviewUrl: undefined, error: undefined })));
     try {
-      if (isTauri()) {
-        const plan = await invoke<ExportPlan>("prepare_export_plan", {
-          paths: assets.map((asset) => asset.path),
-          settings,
-        });
-        setNotice(`${plan.itemCount}개 출력 계획을 준비했습니다. AI worker 연결이 다음 구현 단계입니다.`);
-      } else {
-        setNotice("화면 검증 모드입니다. 데스크톱 앱에서 Rust 처리 엔진과 연결됩니다.");
-      }
+      const result = await invoke<BatchResult>("process_batch", {
+        items: assets.map((asset) => ({ id: asset.id, path: asset.path, rotation: asset.rotation })),
+        settings,
+      });
+      setModelStatus((current) => current ? { ...current, installed: true } : current);
+      setLastOutputBytes(result.outputBytes);
+      if (result.completed > 0) setViewMode("result");
+      setNotice(`${result.completed}개 저장 완료${result.failed ? ` · ${result.failed}개 실패` : ""} · 결과 ${formatBytes(result.outputBytes)}`);
     } catch (error) {
-      setNotice(`출력 설정을 확인해주세요: ${String(error)}`);
+      const message = String(error);
+      setAssets((current) => current.map((asset) => asset.status === "queued" || asset.status === "processing" ? { ...asset, status: "failed", error: message } : asset));
+      setNotice(`배경 제거를 완료하지 못했습니다: ${message}`);
     } finally {
-      setIsPlanning(false);
+      setIsProcessing(false);
     }
   };
 
@@ -230,8 +305,11 @@ function App() {
           <span className="beta">BETA</span>
         </div>
         <div className="topbar-actions">
-          <button className="button secondary" onClick={addFilesFromDialog}><Icon name="add" />파일 추가</button>
-          <button className="button secondary desktop-only" onClick={addFolderFromDialog}><Icon name="folder" />폴더 추가</button>
+          <span className={`model-pill ${modelStatus?.installed ? "ready" : ""}`} title={modelStatus?.purpose}>
+            <span />로컬 AI {modelStatus?.installed ? "준비됨" : "필요 시 설치"}
+          </span>
+          <button className="button secondary" onClick={addFilesFromDialog} disabled={isProcessing}><Icon name="add" />파일 추가</button>
+          <button className="button secondary desktop-only" onClick={addFolderFromDialog} disabled={isProcessing}><Icon name="folder" />폴더 추가</button>
           <button className="icon-button" aria-label="환경 설정"><Icon name="settings" /></button>
         </div>
       </header>
@@ -253,7 +331,7 @@ function App() {
                   <strong title={asset.name}>{asset.name}</strong>
                   <small>{formatDimensions(asset.width, asset.height)} · {formatBytes(asset.sizeBytes)}</small>
                 </span>
-                <span className="status-dot" title="준비됨" />
+                <span className={`status-dot ${asset.status}`} title={asset.error || STATUS_LABEL[asset.status]} />
               </button>
             ))}
           </div>
@@ -265,9 +343,9 @@ function App() {
         <section className="canvas-panel">
           <div className="canvas-toolbar">
             <div className="view-tabs" role="tablist" aria-label="미리보기 모드">
-              <button className="active" role="tab" aria-selected="true">원본</button>
-              <button role="tab" disabled title="AI 엔진 연결 후 활성화">결과</button>
-              <button role="tab" disabled title="AI 엔진 연결 후 활성화">비교</button>
+              <button className={effectiveViewMode === "original" ? "active" : ""} onClick={() => setViewMode("original")} role="tab" aria-selected={effectiveViewMode === "original"}>원본</button>
+              <button className={effectiveViewMode === "result" ? "active" : ""} onClick={() => setViewMode("result")} role="tab" disabled={!selected?.outputPath}>결과</button>
+              <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => setViewMode("compare")} role="tab" disabled={!selected?.outputPath}>비교</button>
             </div>
             <div className="canvas-actions">
               <button className="icon-button" aria-label="왼쪽으로 회전" onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
@@ -280,7 +358,14 @@ function App() {
           <div className={`canvas ${selected ? "has-image" : ""}`}>
             {selected ? (
               <div className="preview-stage">
-                {selected.previewUrl ? (
+                {effectiveViewMode === "compare" && selected.previewUrl && selected.resultPreviewUrl ? (
+                  <div className="compare-grid">
+                    <figure><img src={selected.previewUrl} alt={`${selected.name} 원본`} style={{ transform: `rotate(${selected.rotation}deg)` }} /><figcaption>원본</figcaption></figure>
+                    <figure><img src={selected.resultPreviewUrl} alt={`${selected.name} 결과`} /><figcaption>결과</figcaption></figure>
+                  </div>
+                ) : effectiveViewMode === "result" && selected.resultPreviewUrl ? (
+                  <img className="preview-image" src={selected.resultPreviewUrl} alt={`${selected.name} 배경 제거 결과`} />
+                ) : selected.previewUrl ? (
                   <img
                     className="preview-image"
                     src={selected.previewUrl}
@@ -309,6 +394,7 @@ function App() {
               <span>{formatDimensions(selected.width, selected.height)}</span>
               <span>{selected.extension.toUpperCase()}</span>
               {selected.rotation !== 0 && <span>{selected.rotation}° 회전</span>}
+              <span className={`file-status ${selected.status}`}>{STATUS_LABEL[selected.status]}</span>
             </div>
           )}
         </section>
@@ -387,13 +473,13 @@ function App() {
 
       <footer className="actionbar">
         <div className="estimate">
-          <span className="estimate-label">예상 결과</span>
-          <strong>{assets.length ? `${assets.length}개 · 계산 대기` : "이미지를 추가해주세요"}</strong>
-          {assets.length > 0 && <span className="muted">실제 인코딩 기반 예상은 AI 연결 후 활성화됩니다.</span>}
+          <span className="estimate-label">{isProcessing ? "처리 중" : "결과"}</span>
+          <strong>{assets.length ? `${isProcessing ? batchCompleted : assets.filter((asset) => asset.status === "done").length} / ${assets.length}개` : "이미지를 추가해주세요"}</strong>
+          {assets.length > 0 && <span className="muted">{lastOutputBytes === null ? `${formatBytes(totalBytes)} 원본 · 로컬에서만 처리` : `${formatBytes(totalBytes)} → ${formatBytes(lastOutputBytes)} 저장`}</span>}
         </div>
-        <button className="run-button" disabled={!assets.length || isPlanning} onClick={preparePlan}>
+        <button className="run-button" disabled={!assets.length || isProcessing} onClick={processAssets}>
           <span className="run-icon"><Icon name="sparkle" /></span>
-          <span>{isPlanning ? "출력 계획 확인 중…" : `${assets.length || ""}개 배경 지우고 저장`}</span>
+          <span>{isProcessing ? `${batchCompleted} / ${assets.length} 처리 중…` : `${assets.length || ""}개 배경 지우고 저장`}</span>
           <Icon name="chevron" size={16} />
         </button>
       </footer>

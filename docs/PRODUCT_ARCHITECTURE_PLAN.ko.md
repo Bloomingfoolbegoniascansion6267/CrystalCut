@@ -445,7 +445,7 @@ SAD/MAE/IoU 같은 mask metric과 함께 육안 검수 score를 유지한다. �
 1. 15–20장 대표 이미지로 모델/속도 spike
 2. 메인 화면, processing, 완료/오류 상태를 포함한 Figma 수준 wireframe
 3. `Job`, `TransformRecipe`, `OutputRecipe`, `NamingTemplate` schema
-4. Tauri + React 저장소 skeleton과 가짜 worker를 사용한 vertical slice
+4. Tauri + React 저장소 skeleton과 실제 ONNX worker를 사용한 vertical slice (2026-08-22 완료)
 5. Windows/macOS CI 및 서명 전 unsigned 개발 installer
 
 이 순서를 지키면 모델 선택이 바뀌어도 UI와 batch 엔진을 다시 만들지 않고, 디자인 검증과 성능 검증을 병행할 수 있다.

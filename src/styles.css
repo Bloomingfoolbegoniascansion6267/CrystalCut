@@ -68,6 +68,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .beta { padding: 3px 6px; color: var(--accent); border-radius: 5px; background: var(--accent-soft); font-size: 9px; font-weight: 700; letter-spacing: .08em; }
 .topbar-actions { gap: 8px; }
+.model-pill { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; color: var(--ink-faint); border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); font-size: 9.5px; font-weight: 600; }
+.model-pill > span { width: 6px; height: 6px; border-radius: 50%; background: #c3a35c; box-shadow: 0 0 0 3px rgba(195, 163, 92, .12); }
+.model-pill.ready { color: #427854; }
+.model-pill.ready > span { background: #65ad7b; box-shadow: 0 0 0 3px rgba(101, 173, 123, .13); }
 
 .button, .icon-button, .text-button, .run-button, .path-picker, .advanced-row, .add-more {
   border: 0;
@@ -181,6 +185,11 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .asset-copy strong { margin-bottom: 4px; font-size: 11.5px; font-weight: 600; }
 .asset-copy small { color: var(--ink-faint); font-size: 9.5px; }
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: #75b889; box-shadow: 0 0 0 3px rgba(117, 184, 137, .12); }
+.status-dot.queued { background: #b9a15e; box-shadow: 0 0 0 3px rgba(185, 161, 94, .12); }
+.status-dot.processing { background: var(--accent); box-shadow: 0 0 0 3px rgba(113, 87, 232, .14); animation: status-pulse 1.1s ease-in-out infinite; }
+.status-dot.done { background: #4ca66b; box-shadow: 0 0 0 3px rgba(76, 166, 107, .13); }
+.status-dot.failed { background: var(--danger); box-shadow: 0 0 0 3px rgba(218, 62, 82, .12); }
+@keyframes status-pulse { 50% { opacity: .35; transform: scale(.8); } }
 .add-more {
   display: flex;
   align-items: center;
@@ -264,11 +273,19 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   box-shadow: 0 16px 50px rgba(38, 42, 52, .1);
 }
 .preview-image { display: block; max-width: 92%; max-height: 90%; object-fit: contain; transition: transform 160ms ease; filter: drop-shadow(0 10px 24px rgba(26, 29, 38, .12)); }
+.compare-grid { display: grid; grid-template-columns: 1fr 1fr; width: 100%; height: 100%; gap: 1px; background: rgba(35, 39, 50, .12); }
+.compare-grid figure { position: relative; display: grid; min-width: 0; min-height: 0; margin: 0; overflow: hidden; place-items: center; background-color: white; background-image: linear-gradient(45deg, #edf0f3 25%, transparent 25%), linear-gradient(-45deg, #edf0f3 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #edf0f3 75%), linear-gradient(-45deg, transparent 75%, #edf0f3 75%); background-size: 22px 22px; background-position: 0 0, 0 11px, 11px -11px, -11px 0; }
+.compare-grid img { max-width: 90%; max-height: 86%; object-fit: contain; filter: drop-shadow(0 8px 18px rgba(26, 29, 38, .1)); }
+.compare-grid figcaption { position: absolute; top: 10px; left: 10px; padding: 4px 8px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.88); font-size: 9px; font-weight: 700; backdrop-filter: blur(8px); }
 .preview-loading { display: flex; align-items: center; gap: 10px; color: var(--ink-soft); font-size: 12px; }
 .spinner { width: 16px; height: 16px; border: 2px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .file-info-bar { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 0 14px; overflow: hidden; color: var(--ink-faint); border-top: 1px solid var(--line); background: #f9fafb; font-size: 9.5px; white-space: nowrap; }
 .file-info-bar strong { display: block; max-width: 240px; overflow: hidden; color: var(--ink-soft); font-weight: 600; text-overflow: ellipsis; }
+.file-status { padding: 2px 6px; border-radius: 5px; background: var(--surface-muted); }
+.file-status.processing { color: var(--accent); background: var(--accent-soft); }
+.file-status.done { color: #3c8153; background: #e9f6ed; }
+.file-status.failed { color: var(--danger); background: #fff0f2; }
 
 .inspector-header { position: sticky; top: 0; z-index: 2; background: rgba(255,255,255,.96); }
 .text-button { padding: 3px; color: var(--accent); background: transparent; font-size: 10.5px; font-weight: 600; }

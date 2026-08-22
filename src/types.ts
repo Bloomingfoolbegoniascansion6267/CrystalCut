@@ -10,6 +10,9 @@ export interface ImageAsset {
   height: number | null;
   status: AssetStatus;
   previewUrl?: string;
+  resultPreviewUrl?: string;
+  outputPath?: string;
+  error?: string;
   rotation: 0 | 90 | 180 | 270;
 }
 
@@ -34,4 +37,45 @@ export interface OutputSettings {
 export interface ExportPlan {
   itemCount: number;
   sampleOutputs: string[];
+}
+
+export interface ProcessItem {
+  id: string;
+  path: string;
+  rotation: number;
+}
+
+export type BatchProgressStatus = "modelDownloading" | "queued" | "processing" | "completed" | "failed";
+
+export interface BatchProgress {
+  assetId: string;
+  completed: number;
+  total: number;
+  status: BatchProgressStatus;
+  outputPath: string | null;
+  error: string | null;
+}
+
+export interface ProcessedItemResult {
+  assetId: string;
+  success: boolean;
+  outputPath: string | null;
+  outputBytes: number | null;
+  durationMs: number;
+  error: string | null;
+}
+
+export interface BatchResult {
+  completed: number;
+  failed: number;
+  outputBytes: number;
+  items: ProcessedItemResult[];
+}
+
+export interface ModelStatus {
+  id: string;
+  installed: boolean;
+  expectedBytes: number;
+  path: string | null;
+  purpose: string;
 }
