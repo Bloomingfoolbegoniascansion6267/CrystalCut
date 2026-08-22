@@ -117,7 +117,9 @@ fn model_download_agent() -> Agent {
 }
 
 fn find_verified_model(app: &AppHandle) -> Result<Option<PathBuf>, String> {
-    if let Ok(explicit) = std::env::var("CLEARCUT_MODEL_PATH") {
+    if let Ok(explicit) =
+        std::env::var("CRYSTALCUT_MODEL_PATH").or_else(|_| std::env::var("CLEARCUT_MODEL_PATH"))
+    {
         let path = PathBuf::from(explicit);
         verify_model(&path)?;
         return Ok(Some(path));

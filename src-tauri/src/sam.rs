@@ -72,8 +72,10 @@ pub fn ensure_models(app: &AppHandle) -> Result<SamModelPaths, String> {
 
 fn find_verified_models(app: &AppHandle) -> Result<Option<SamModelPaths>, String> {
     if let (Ok(encoder), Ok(decoder)) = (
-        std::env::var("CLEARCUT_SAM_ENCODER_PATH"),
-        std::env::var("CLEARCUT_SAM_DECODER_PATH"),
+        std::env::var("CRYSTALCUT_SAM_ENCODER_PATH")
+            .or_else(|_| std::env::var("CLEARCUT_SAM_ENCODER_PATH")),
+        std::env::var("CRYSTALCUT_SAM_DECODER_PATH")
+            .or_else(|_| std::env::var("CLEARCUT_SAM_DECODER_PATH")),
     ) {
         let paths = SamModelPaths {
             encoder: PathBuf::from(encoder),
@@ -239,7 +241,7 @@ struct CachedPromptMask {
 
 impl SamEngine {
     pub fn new(paths: &SamModelPaths) -> Result<Self, String> {
-        let _ = ort::init().with_name("Clearcut SAM Worker").commit();
+        let _ = ort::init().with_name("CrystalCut SAM Worker").commit();
         let threads = std::thread::available_parallelism()
             .map(|value| value.get().clamp(1, 8))
             .unwrap_or(2);

@@ -1,4 +1,4 @@
-# Clearcut 전체 UI/UX 감사 및 개선 계획
+# CrystalCut 전체 UI/UX 감사 및 개선 계획
 
 ## 구현 상태 · 2026-08-23
 

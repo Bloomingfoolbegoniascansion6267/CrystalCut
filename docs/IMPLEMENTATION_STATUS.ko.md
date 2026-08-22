@@ -1,4 +1,4 @@
-# Clearcut 핵심 처리 구현 현황
+# CrystalCut 핵심 처리 구현 현황
 
 - 기준일: 2026-08-22
 - 범위: Tauri UI에서 로컬 ONNX 배경 제거 후 PNG/WebP 파일을 안전하게 저장하는 첫 end-to-end 구현
@@ -78,7 +78,7 @@ SQLite schema v4는 작업 snapshot과 분리된 `app_preferences` table, 파일
 
 `촬영 메타데이터 보존`을 켜면 원본에서 이미 안전하게 추출한 촬영일·카메라·렌즈만 새 EXIF profile로 만들고 orientation은 픽셀 회전이 반영된 `1`로 정규화한다. PNG에는 `eXIf` chunk, WebP에는 extended RIFF의 `EXIF` chunk로 기록한다. GPS와 원본 전체 EXIF는 복사하지 않으며 ICC profile은 현재 보존하지 않는다.
 
-브라우저 기본 context menu는 텍스트 편집 명령과 Clearcut의 브러시·미리보기·파일 추가·환경설정 명령을 제공하는 앱 메뉴로 교체했다. 작업 목록의 파일을 우클릭하면 해당 파일의 원본 미리보기, 객체 편집, 회전, Explorer/Finder에서 원본·결과 위치 열기와 작업 목록 제거를 제공한다. 목록 제거는 원본·결과 파일을 삭제하지 않는다. Windows release는 GUI subsystem으로 빌드해 console 창을 숨기고 debug build에서는 console을 유지한다.
+브라우저 기본 context menu는 텍스트 편집 명령과 CrystalCut의 브러시·미리보기·파일 추가·환경설정 명령을 제공하는 앱 메뉴로 교체했다. 작업 목록의 파일을 우클릭하면 해당 파일의 원본 미리보기, 객체 편집, 회전, Explorer/Finder에서 원본·결과 위치 열기와 작업 목록 제거를 제공한다. 목록 제거는 원본·결과 파일을 삭제하지 않는다. Windows release는 GUI subsystem으로 빌드해 console 창을 숨기고 debug build에서는 console을 유지한다.
 
 전체 UI는 `모든 파일` 출력 설정과 `현재 파일` 편집 설정을 시각적으로 분리하고, 파일 상태를 색과 한글 badge로 함께 표시한다. 좌우 panel은 각각 접을 수 있으며 940px 이하에서는 canvas toolbar를 compact mode로 전환한다. checkbox의 실제 input은 custom check 영역 안에 고정해 focus scroll에 의한 layout jump를 막고, preview 상태와 batch 진행은 live region으로 전달한다.
 

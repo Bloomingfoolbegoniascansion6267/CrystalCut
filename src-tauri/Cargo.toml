@@ -1,12 +1,12 @@
 [package]
-name = "clearcut"
+name = "crystalcut"
 version = "1.0.0"
 description = "Fast local-first background removal for Windows and macOS"
-authors = ["Clearcut contributors"]
+authors = ["CrystalCut contributors"]
 edition = "2021"
 
 [lib]
-name = "clearcut_lib"
+name = "crystalcut_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

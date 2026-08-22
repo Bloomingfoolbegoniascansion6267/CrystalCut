@@ -2,11 +2,11 @@
 
 fn main() {
     if std::env::args().any(|argument| argument == "--worker") {
-        if let Err(error) = clearcut_lib::worker::run_stdio() {
+        if let Err(error) = crystalcut_lib::worker::run_stdio() {
             eprintln!("{error}");
             std::process::exit(1);
         }
     } else {
-        clearcut_lib::run();
+        crystalcut_lib::run();
     }
 }

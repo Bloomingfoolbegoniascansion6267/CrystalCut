@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Clearcut",
+  "productName": "CrystalCut",
   "version": "1.0.0",
   "identifier": "app.clearcut.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Clearcut",
+        "title": "CrystalCut",
         "width": 1320,
         "height": 820,
         "minWidth": 900,

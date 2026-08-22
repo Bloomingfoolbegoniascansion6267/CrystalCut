@@ -1,6 +1,10 @@
-# Clearcut
+# CrystalCut
+
+<img src="assets/app-icon.svg" alt="CrystalCut 로고" width="96" />
 
 Windows와 macOS에서 이미지 배경을 로컬로 제거하고 일괄 변환하는 Tauri 2 데스크톱 앱입니다. 현재는 실제 파일을 선택해 ONNX 추론부터 PNG/WebP 저장까지 완료할 수 있는 핵심 end-to-end vertical slice가 구현되어 있습니다.
+
+브랜드 원본은 `assets/app-icon.svg`이며 수정 형태와 정밀한 절단면을 결합한 심볼입니다. 플랫폼 아이콘은 `npx tauri icon assets/app-icon.svg`로 동일 원본에서 생성합니다.
 
 ## 현재 구현
 

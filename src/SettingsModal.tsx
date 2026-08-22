@@ -240,7 +240,7 @@ export default function SettingsModal({
           <button className="small-action" type="button" onClick={() => void onRefreshDiagnostics()}>새로 고침</button>
         </div>
         <dl className="metric-list diagnostics-list">
-          <div><dt>Clearcut</dt><dd>v{diagnostics?.appVersion ?? "-"}</dd></div>
+          <div><dt>CrystalCut</dt><dd>v{diagnostics?.appVersion ?? "-"}</dd></div>
           <div><dt>처리 엔진 버전</dt><dd>v{diagnostics?.workerProtocolVersion ?? "-"}</dd></div>
           <div><dt>운영체제</dt><dd>{diagnostics ? `${diagnostics.operatingSystem} · ${diagnostics.architecture}` : "-"}</dd></div>
           <div><dt>모델</dt><dd>{modelStatus ? `${modelStatus.id} · ${modelStatus.installed ? "ready" : "not installed"}` : "-"}</dd></div>
@@ -257,7 +257,7 @@ export default function SettingsModal({
     <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busyAction) onClose(); }}>
       <div id="preferences-dialog" ref={dialogRef} className="preferences-dialog" role="dialog" aria-modal="true" aria-labelledby="preferences-title" onKeyDown={handleDialogKeyDown}>
         <header className="preferences-header">
-          <div><h2 id="preferences-title" ref={headingRef} tabIndex={-1}>환경 설정</h2><p>Clearcut의 기본 동작과 로컬 데이터를 관리합니다.</p></div>
+          <div><h2 id="preferences-title" ref={headingRef} tabIndex={-1}>환경 설정</h2><p>CrystalCut의 기본 동작과 로컬 데이터를 관리합니다.</p></div>
           <button className="modal-close" type="button" aria-label="환경 설정 닫기" onClick={onClose} disabled={busyAction !== null}>×</button>
         </header>
         <div className="preferences-layout">

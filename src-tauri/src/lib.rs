@@ -1165,7 +1165,7 @@ pub fn run() {
             reveal_in_file_manager
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Clearcut");
+        .expect("error while running CrystalCut");
 }
 
 #[cfg(test)]
@@ -1207,7 +1207,7 @@ mod tests {
 
     #[test]
     fn output_planning_never_overwrites_an_existing_file() {
-        let temp_dir = std::env::temp_dir().join(format!("clearcut-plan-{}", std::process::id()));
+        let temp_dir = std::env::temp_dir().join(format!("crystalcut-plan-{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir).expect("create test directory");
         let source = temp_dir.join("portrait.jpg");
         let existing = temp_dir.join("portrait_bg.png");
@@ -1252,7 +1252,7 @@ mod tests {
     #[test]
     fn list_thumbnail_is_bounded_without_waiting_for_full_preview() {
         let temp_dir =
-            std::env::temp_dir().join(format!("clearcut-thumbnail-{}", std::process::id()));
+            std::env::temp_dir().join(format!("crystalcut-thumbnail-{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir).expect("create thumbnail directory");
         let source = temp_dir.join("wide.png");
         image::RgbaImage::from_pixel(640, 320, image::Rgba([90, 120, 180, 255]))
@@ -1289,7 +1289,7 @@ mod tests {
     #[test]
     fn export_plan_estimates_bytes_without_creating_output_files() {
         let temp_dir =
-            std::env::temp_dir().join(format!("clearcut-estimate-{}", std::process::id()));
+            std::env::temp_dir().join(format!("crystalcut-estimate-{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir).expect("create estimate directory");
         let source = temp_dir.join("sample.png");
         image::RgbaImage::from_pixel(64, 32, image::Rgba([120, 80, 40, 255]))

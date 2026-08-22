@@ -659,7 +659,7 @@ mod tests {
             .expect("read schema version");
         assert_eq!(schema_version, SCHEMA_VERSION);
         let directory =
-            std::env::temp_dir().join(format!("clearcut-workspace-{}", std::process::id()));
+            std::env::temp_dir().join(format!("crystalcut-workspace-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("create fixture directory");
         let first = directory.join("first.jpg");
         let second = directory.join("second.jpg");
@@ -703,7 +703,7 @@ mod tests {
     #[test]
     fn in_flight_and_changed_items_are_restored_as_interrupted() {
         let directory =
-            std::env::temp_dir().join(format!("clearcut-interrupted-{}", std::process::id()));
+            std::env::temp_dir().join(format!("crystalcut-interrupted-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("create fixture directory");
         let source = directory.join("photo.jpg");
         std::fs::write(&source, b"before").expect("write fixture");
@@ -729,7 +729,7 @@ mod tests {
     #[test]
     fn completed_item_is_preserved_only_while_its_output_exists() {
         let directory =
-            std::env::temp_dir().join(format!("clearcut-completed-{}", std::process::id()));
+            std::env::temp_dir().join(format!("crystalcut-completed-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("create fixture directory");
         let source = directory.join("photo.jpg");
         let output = directory.join("photo_bg.png");

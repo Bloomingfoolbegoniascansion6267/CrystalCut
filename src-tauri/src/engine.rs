@@ -46,7 +46,7 @@ struct CachedPreviewMask {
 
 impl InferenceEngine {
     pub fn new(model_path: &Path) -> Result<Self, String> {
-        let _ = ort::init().with_name("Clearcut AI Worker").commit();
+        let _ = ort::init().with_name("CrystalCut AI Worker").commit();
         let threads = std::thread::available_parallelism()
             .map(|value| value.get().clamp(1, 8))
             .unwrap_or(2);
@@ -871,7 +871,7 @@ mod tests {
     #[test]
     fn png_and_webp_outputs_embed_only_safe_metadata_when_enabled() {
         let directory =
-            std::env::temp_dir().join(format!("clearcut-output-exif-{}", std::process::id()));
+            std::env::temp_dir().join(format!("crystalcut-output-exif-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("create metadata fixture directory");
         let source = DynamicImage::ImageRgba8(RgbaImage::from_pixel(
             8,
@@ -880,7 +880,7 @@ mod tests {
         ));
         let summary = metadata::ExifSummary {
             taken_at: Some("2026-08-22 15:04:09".to_owned()),
-            camera: Some("Clearcut Camera One".to_owned()),
+            camera: Some("CrystalCut Camera One".to_owned()),
             lens: Some("Prime 35mm".to_owned()),
             orientation: 6,
         };
@@ -908,7 +908,7 @@ mod tests {
     #[test]
     fn conversion_path_resizes_and_encodes_without_any_ai_model() {
         let directory =
-            std::env::temp_dir().join(format!("clearcut-convert-{}", std::process::id()));
+            std::env::temp_dir().join(format!("crystalcut-convert-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("create conversion fixture directory");
         let input = directory.join("source.png");
         let output = directory.join("converted.webp");

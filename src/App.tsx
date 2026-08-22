@@ -6,6 +6,7 @@ import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSe
 import { formatBytes, formatDimensions } from "./lib/format";
 import SettingsModal, { type SettingsTab } from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
+import appIconUrl from "../assets/app-icon.svg";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const TOAST_DURATION_MS = 5000;
@@ -1103,9 +1104,9 @@ function App() {
       <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={addBrowserFiles} />
 
       <header className="topbar">
-        <div className="brand" aria-label="Clearcut">
-          <span className="brand-mark"><Icon name="sparkle" size={16} /></span>
-          <span>Clearcut</span>
+        <div className="brand" aria-label="CrystalCut">
+          <span className="brand-mark"><img src={appIconUrl} alt="" /></span>
+          <span>CrystalCut</span>
         </div>
         <div className="topbar-actions">
           <button className={`model-pill ${modelStatus?.installed ? "ready" : ""}`} title="AI 모델 설정 열기" onClick={() => openSettings("model")}>

@@ -1,4 +1,4 @@
-# Clearcut SAM 계열 객체 선택 통합 계획
+# CrystalCut SAM 계열 객체 선택 통합 계획
 
 - 기준일: 2026-08-22
 - 구현 결과: ONNX graph와 해시가 공개된 SlimSAM 77 Uniform을 첫 제품 모델로 연결
@@ -31,16 +31,16 @@ SAM 결과 뒤에도 현재 deterministic brush correction과 가장자리 optio
 
 Meta SAM v1은 point와 box prompt 및 ONNX mask decoder export를 공식 지원하고 Apache 2.0으로 배포된다. MobileSAM도 Apache 2.0이며 SAM의 prompt decoder 계약을 유지하면서 image encoder를 TinyViT로 줄였다. 공식 저장소 설명 기준 encoder는 5M parameter이고 전체 pipeline은 9.66M parameter다.
 
-주의할 점은 MobileSAM의 공식 `export_onnx_model.py`가 설명 그대로 prompt encoder와 mask decoder만 ONNX로 만든다는 것이다. Clearcut처럼 Python을 포함하지 않는 Rust desktop app에는 다음 두 graph가 모두 필요하다.
+주의할 점은 MobileSAM의 공식 `export_onnx_model.py`가 설명 그대로 prompt encoder와 mask decoder만 ONNX로 만든다는 것이다. CrystalCut처럼 Python을 포함하지 않는 Rust desktop app에는 다음 두 graph가 모두 필요하다.
 
 1. `mobile_sam_image_encoder.onnx`: RGB 1024 입력에서 image embedding 생성
 2. `mobile_sam_mask_decoder.onnx`: embedding과 keep/remove point·box에서 mask·score 생성
 
-따라서 encoder 변환 script, 입력 정규화, tensor 이름·shape, opset과 수치 오차를 Clearcut repository의 model manifest와 golden test로 고정해야 한다. 출처가 불명확한 임의 변환 model을 그대로 내려받아 제품에 넣지 않는다.
+따라서 encoder 변환 script, 입력 정규화, tensor 이름·shape, opset과 수치 오차를 CrystalCut repository의 model manifest와 golden test로 고정해야 한다. 출처가 불명확한 임의 변환 model을 그대로 내려받아 제품에 넣지 않는다.
 
 SAM 2.1 tiny는 공식 checkpoint가 38.9M parameter이고 image prompt 품질 후보로 유망하다. 그러나 공식 설치가 PyTorch 2.5.1 이상과 Windows WSL을 권장하며, 공식 repository가 제공하는 완전한 cross-platform ONNX desktop 배포 경로가 MobileSAM보다 명확하지 않다. 첫 단계에서는 제외하고 MobileSAM 결과와 품질·속도·memory를 비교한 뒤 승격한다.
 
-## 3. Clearcut runtime 구조
+## 3. CrystalCut runtime 구조
 
 ```text
 편집 화면 진입

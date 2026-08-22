@@ -158,7 +158,7 @@ mod tests {
     fn safe_output_profile_keeps_summary_and_normalizes_orientation() {
         let summary = ExifSummary {
             taken_at: Some("2026-08-22 15:04:09".to_owned()),
-            camera: Some("Clearcut Camera One".to_owned()),
+            camera: Some("CrystalCut Camera One".to_owned()),
             lens: Some("Prime 35mm".to_owned()),
             orientation: 6,
         };
@@ -172,7 +172,7 @@ mod tests {
         );
         assert_eq!(
             ascii_field(&exif, Tag::Model).as_deref(),
-            Some("Clearcut Camera One")
+            Some("CrystalCut Camera One")
         );
         assert_eq!(
             exif.get_field(Tag::Orientation, In::PRIMARY)
@@ -193,7 +193,7 @@ mod tests {
             Field {
                 tag: Tag::Make,
                 ifd_num: In::PRIMARY,
-                value: Value::Ascii(vec![b"Clearcut".to_vec()]),
+                value: Value::Ascii(vec![b"CrystalCut".to_vec()]),
             },
             Field {
                 tag: Tag::Model,
@@ -219,13 +219,15 @@ mod tests {
         writer
             .write(&mut encoded, false)
             .expect("write EXIF fixture");
-        let path =
-            std::env::temp_dir().join(format!("clearcut-exif-summary-{}.tiff", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "crystalcut-exif-summary-{}.tiff",
+            std::process::id()
+        ));
         std::fs::write(&path, encoded.into_inner()).expect("save EXIF fixture");
 
         let summary = read_exif_summary(&path);
         assert_eq!(summary.taken_at.as_deref(), Some("2026-08-22 15:04:09"));
-        assert_eq!(summary.camera.as_deref(), Some("Clearcut Camera One"));
+        assert_eq!(summary.camera.as_deref(), Some("CrystalCut Camera One"));
         assert_eq!(summary.lens.as_deref(), Some("Prime 35mm"));
         assert_eq!(summary.orientation, 6);
 
