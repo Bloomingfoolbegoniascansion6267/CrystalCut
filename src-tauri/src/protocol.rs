@@ -244,7 +244,14 @@ pub struct ExportPlan {
     pub estimated_output_bytes: Option<u64>,
     pub estimated_savings_percent: Option<f64>,
     pub estimate_sample_count: usize,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<ExportWarning>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportWarning {
+    pub code: &'static str,
+    pub count: usize,
 }
 
 #[derive(Debug, Serialize)]

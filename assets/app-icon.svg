@@ -1,29 +1,49 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="background" x1="84" y1="58" x2="428" y2="454" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#927BF5"/>
-      <stop offset=".52" stop-color="#7457E3"/>
-      <stop offset="1" stop-color="#4D2DB9"/>
+    <linearGradient id="background" x1="74" y1="54" x2="446" y2="468" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A18CFF"/>
+      <stop offset=".46" stop-color="#7256E4"/>
+      <stop offset="1" stop-color="#43229F"/>
     </linearGradient>
-    <linearGradient id="facet" x1="183" y1="130" x2="326" y2="370" gradientUnits="userSpaceOnUse">
+    <linearGradient id="crystal" x1="170" y1="112" x2="342" y2="412" gradientUnits="userSpaceOnUse">
       <stop stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#DED5FF"/>
+      <stop offset=".5" stop-color="#EEE9FF"/>
+      <stop offset="1" stop-color="#C9BBFF"/>
     </linearGradient>
-    <filter id="shadow" x="-25%" y="-20%" width="150%" height="150%">
-      <feDropShadow dx="0" dy="17" stdDeviation="17" flood-color="#2A146D" flood-opacity=".34"/>
+    <linearGradient id="leftFacet" x1="128" y1="175" x2="260" y2="390" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DDD4FF"/>
+    </linearGradient>
+    <linearGradient id="rightFacet" x1="366" y1="168" x2="254" y2="405" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#DCD1FF"/>
+      <stop offset="1" stop-color="#A995F5"/>
+    </linearGradient>
+    <filter id="shadow" x="-28%" y="-22%" width="156%" height="164%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#281160" flood-opacity=".4"/>
     </filter>
+    <clipPath id="crystalClip">
+      <path d="M164 145 218 104h76l54 41 42 82-48 116-86 79-86-79-48-116 42-82Z"/>
+    </clipPath>
   </defs>
   <rect x="36" y="36" width="440" height="440" rx="116" fill="url(#background)"/>
-  <path d="M85 170C111 102 168 70 240 63" fill="none" stroke="white" stroke-width="15" stroke-linecap="round" opacity=".11"/>
+  <path d="M82 177C104 111 160 72 232 62" fill="none" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round" opacity=".12"/>
+  <path d="M399 342c-14 35-39 64-73 84" fill="none" stroke="#D9D0FF" stroke-width="11" stroke-linecap="round" opacity=".11"/>
   <g filter="url(#shadow)">
-    <path d="M145 194 205 122h102l60 72-111 202L145 194Z" fill="url(#facet)"/>
-    <path d="m145 194 60-72 28 72h-88Z" fill="#F7F4FF"/>
-    <path d="m205 122 51 72 51-72H205Z" fill="white"/>
-    <path d="m307 122 60 72h-88l28-72Z" fill="#E7E0FF"/>
-    <path d="m145 194 88 0 23 202-111-202Z" fill="#F2EEFF"/>
-    <path d="m233 194 46 0-23 202-23-202Z" fill="white"/>
-    <path d="m279 194 88 0-111 202 23-202Z" fill="#D7CCFF"/>
-    <path d="M337 142 381 185 203 354" fill="none" stroke="#6748D2" stroke-width="18" stroke-linecap="round"/>
-    <path d="M342 135 384 176" fill="none" stroke="white" stroke-width="12" stroke-linecap="round"/>
+    <path d="M164 145 218 104h76l54 41 42 82-48 116-86 79-86-79-48-116 42-82Z" fill="url(#crystal)"/>
+    <g clip-path="url(#crystalClip)">
+      <path d="m122 227 73-26 61 221-86-79-48-116Z" fill="url(#leftFacet)"/>
+      <path d="m390 227-73-26-61 221 86-79 48-116Z" fill="url(#rightFacet)"/>
+      <path d="m195 201 61 221 61-221-61-51-61 51Z" fill="#FBFAFF"/>
+      <path d="m164 145 31 56 61-51-38-46-54 41Z" fill="#F0EBFF"/>
+      <path d="m348 145-31 56-61-51 38-46 54 41Z" fill="#D2C6FF"/>
+      <path d="m218 104 38 46 38-46h-76Z" fill="#FFFFFF"/>
+      <path d="m122 227 73-26 61-51 61 51 73 26" fill="none" stroke="#FFFFFF" stroke-width="5" opacity=".62"/>
+      <path d="m195 201 61 221 61-221M256 150v272" fill="none" stroke="#8871DC" stroke-width="4" opacity=".22"/>
+      <path d="M146 183c29-39 64-57 106-55" fill="none" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round" opacity=".48"/>
+      <path d="M181 161c16-15 32-23 49-27" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" opacity=".72"/>
+    </g>
+    <path d="M164 145 218 104h76l54 41 42 82-48 116-86 79-86-79-48-116 42-82Z" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linejoin="round" opacity=".82"/>
   </g>
+  <path d="m386 104 7 19 19 7-19 7-7 19-7-19-19-7 19-7 7-19Z" fill="#FFFFFF" opacity=".9"/>
+  <circle cx="414" cy="177" r="6" fill="#E8E1FF" opacity=".72"/>
 </svg>

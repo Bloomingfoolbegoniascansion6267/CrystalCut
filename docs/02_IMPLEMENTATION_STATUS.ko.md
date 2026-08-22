@@ -80,11 +80,13 @@ SQLite schema v4는 작업 snapshot과 분리된 `app_preferences` table, 파일
 
 브라우저 기본 context menu는 텍스트 편집 명령과 CrystalCut의 브러시·미리보기·파일 추가·환경설정 명령을 제공하는 앱 메뉴로 교체했다. 작업 목록의 파일을 우클릭하면 해당 파일의 원본 미리보기, 객체 편집, 회전, Explorer/Finder에서 원본·결과 위치 열기와 작업 목록 제거를 제공한다. 목록 제거는 원본·결과 파일을 삭제하지 않는다. Windows release는 GUI subsystem으로 빌드해 console 창을 숨기고 debug build에서는 console을 유지한다.
 
-전체 UI는 `모든 파일` 출력 설정과 `현재 파일` 편집 설정을 시각적으로 분리하고, 파일 상태를 색과 한글 badge로 함께 표시한다. 좌우 panel은 각각 접을 수 있으며 940px 이하에서는 canvas toolbar를 compact mode로 전환한다. checkbox의 실제 input은 custom check 영역 안에 고정해 focus scroll에 의한 layout jump를 막고, preview 상태와 batch 진행은 live region으로 전달한다.
+전체 UI는 `모든 파일` 출력 설정과 `현재 파일` 편집 설정을 시각적으로 분리하고, 파일 상태를 색과 현재 언어의 badge로 함께 표시한다. 좌우 panel은 각각 접을 수 있으며 940px 이하에서는 canvas toolbar를 compact mode로 전환한다. checkbox의 실제 input은 custom check 영역 안에 고정해 focus scroll에 의한 layout jump를 막고, preview 상태와 batch 진행은 live region으로 전달한다.
+
+다국어 기반은 React Intl 메시지 카탈로그와 Tauri OS locale 감지로 구현한다. 최초 화면을 그리기 전에 저장된 언어 선택과 BCP-47 시스템 locale을 함께 읽어 언어 전환 깜박임을 줄인다. `system`, 한국어, 영어, 일본어, 중국어 간체·번체, 스페인어, 독일어, 프랑스어와 포르투갈어(브라질)를 선택할 수 있으며 설정 창에서 즉시 미리보기하고 저장 또는 취소할 수 있다. 숫자·파일 크기·이미지 크기는 지역 형식으로 표시한다. Rust command 오류와 출력 이름 경고는 번역된 완성 문장이 아니라 안정적인 code와 parameter로 전달한다. `check:i18n`은 영어 기준 메시지 누락과 카탈로그 밖 한글 UI literal을 production build 전에 검사한다.
 
 ## 5. 검증 범위
 
-- Rust 단위 테스트 40개(네트워크 모델 다운로드 1개 기본 제외): resize 비율, 확대 방지, 목록 전용 thumbnail 크기 제한, AI 없는 변환 저장, 기존 alpha 결합·교체, 수동 유지·제거 마스크와 입력 검증, 가장자리 확장, U2NetP 입력 layout·정규화, U2NetP/SlimSAM model hash·TLS provider, 실제 SlimSAM prompt 추론, EXIF 추출·안전한 PNG/WebP 출력 EXIF, 동적 이름 template, 파일명 및 경로 충돌, SQLite v1→v4 migration·파일별 마스크/가장자리 recipe·출력 프리셋·환경설정 fallback·snapshot round trip·중단/완료 결과 복구
+- Rust 단위 테스트 41개(네트워크 모델 다운로드 1개 기본 제외): resize 비율, 확대 방지, 목록 전용 thumbnail 크기 제한, AI 없는 변환 저장, 기존 alpha 결합·교체, 수동 유지·제거 마스크와 입력 검증, 가장자리 확장, U2NetP 입력 layout·정규화, U2NetP/SlimSAM model hash·TLS provider, 실제 SlimSAM prompt 추론, EXIF 추출·안전한 PNG/WebP 출력 EXIF, 동적 이름 template, 파일명 및 경로 충돌, SQLite v1→v4 migration·파일별 마스크/가장자리 recipe·출력 프리셋·환경설정 fallback·언어 필드 없는 기존 JSON의 system 기본값·snapshot round trip·중단/완료 결과 복구
 - TypeScript production build
 - 공식 U-2-Net 테스트 사진을 사용한 worker 스모크 테스트
   - 400×267 PNG 입력

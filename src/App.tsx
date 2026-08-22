@@ -7,6 +7,9 @@ import { formatBytes, formatDimensions } from "./lib/format";
 import SettingsModal, { type SettingsTab } from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
 import appIconUrl from "../assets/app-icon.svg";
+import { useI18n } from "./i18n/I18nProvider";
+import type { LanguagePreference } from "./i18n/locale";
+import { localizeCommandError } from "./i18n/errors";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const TOAST_DURATION_MS = 5000;
@@ -56,31 +59,10 @@ const DEFAULT_PREFERENCES: AppPreferences = {
   defaultSettings: DEFAULT_SETTINGS,
   restoreWorkspace: true,
   presets: [],
+  language: "system",
 };
 
 const isTauri = () => Boolean(window.__TAURI_INTERNALS__);
-
-const STATUS_LABEL: Record<ImageAsset["status"], string> = {
-  ready: "준비됨",
-  queued: "대기 중",
-  processing: "처리 중",
-  retrying: "처리 엔진 복구 중",
-  done: "완료",
-  failed: "실패",
-  cancelled: "취소됨",
-  interrupted: "중단됨",
-};
-
-const STATUS_SHORT_LABEL: Record<ImageAsset["status"], string> = {
-  ready: "준비",
-  queued: "대기",
-  processing: "처리",
-  retrying: "재시도",
-  done: "완료",
-  failed: "오류",
-  cancelled: "취소",
-  interrupted: "중단",
-};
 
 const toPersistedAsset = (asset: ImageAsset): PersistedAsset => ({
   id: asset.id,
@@ -124,6 +106,7 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
 }
 
 function App() {
+  const { t, formatLocale, setLanguagePreference } = useI18n();
   const [assets, setAssets] = useState<ImageAsset[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [settings, setSettings] = useState<OutputSettings>(DEFAULT_SETTINGS);
@@ -223,8 +206,8 @@ function App() {
       return [...current, ...unique];
     });
     setSelectedId((current) => current ?? incoming[0].id);
-    setNotice(`${incoming.length}개 이미지를 불러왔습니다.`);
-  }, []);
+    setNotice(t("notice.filesLoaded", { count: incoming.length }));
+  }, [t]);
 
   const preloadThumbnails = useCallback((incoming: ImageAsset[]) => {
     if (!isTauri()) return;
@@ -258,7 +241,7 @@ function App() {
       addAssets(incoming);
       preloadThumbnails(incoming);
     } catch (error) {
-      setNotice(`파일을 불러오지 못했습니다: ${String(error)}`);
+      setNotice(localizeCommandError(error, t, "error.files.inspect"));
     }
   }, [addAssets, preloadThumbnails]);
 
@@ -271,10 +254,12 @@ function App() {
       try {
         loadedPreferences = await invoke<AppPreferences>("load_app_preferences");
       } catch (error) {
-        if (!disposed) setNotice(`환경설정을 복구하지 못해 기본값을 사용합니다: ${String(error)}`);
+        if (!disposed) setNotice(t("notice.preferencesFallback"));
       }
       if (disposed) return;
+      loadedPreferences = { ...loadedPreferences, language: loadedPreferences.language ?? "system" };
       setPreferences(loadedPreferences);
+      setLanguagePreference(loadedPreferences.language);
 
       if (!loadedPreferences.restoreWorkspace) {
         setSettings(loadedPreferences.defaultSettings);
@@ -294,18 +279,18 @@ function App() {
         if (restored.items.some((asset) => asset.status === "done")) setViewMode("result");
         if (restored.items.length || restored.missingFiles || restored.interrupted) {
           setNotice([
-            `저장된 작업 ${restored.items.length}개 복구`,
-            restored.interrupted ? `중단 ${restored.interrupted}개` : null,
-            restored.missingFiles ? `찾을 수 없는 파일 ${restored.missingFiles}개 제외` : null,
+            t("notice.workspaceRestored", { count: restored.items.length }),
+            restored.interrupted ? t("notice.workspaceInterrupted", { count: restored.interrupted }) : null,
+            restored.missingFiles ? t("notice.workspaceMissing", { count: restored.missingFiles }) : null,
           ].filter(Boolean).join(" · "));
         }
       } catch (error) {
-        if (!disposed) setNotice(`저장된 작업을 복구하지 못했습니다: ${String(error)}`);
+        if (!disposed) setNotice(t("notice.workspaceRestoreFailed"));
       }
     })().finally(() => !disposed && setIsWorkspaceLoaded(true));
 
     return () => { disposed = true; };
-  }, [preloadThumbnails]);
+  }, [preloadThumbnails, setLanguagePreference]);
 
   useEffect(() => {
     if (!isTauri() || !isWorkspaceLoaded || !preferences.restoreWorkspace) return;
@@ -319,7 +304,7 @@ function App() {
       workspaceSaveQueue.current = workspaceSaveQueue.current
         .catch(() => undefined)
         .then(() => invoke<void>("save_workspace", { snapshot }))
-        .catch((error) => setNotice(`작업 상태를 저장하지 못했습니다: ${String(error)}`));
+        .catch(() => setNotice(t("notice.workspaceSaveFailed")));
     }, 120);
     workspaceSaveTimer.current = timer;
 
@@ -364,7 +349,7 @@ function App() {
     void listen<BatchProgress>("batch-progress", ({ payload }) => {
       if (payload.status === "modelDownloading") {
         setBatchTotal(payload.total);
-        setNotice("필요한 로컬 AI 모델을 준비하고 있습니다. 모델별로 최초 한 번만 다운로드합니다.");
+        setNotice(t("notice.modelsPreparing"));
         return;
       }
       setBatchCompleted(payload.completed);
@@ -372,12 +357,12 @@ function App() {
         if (asset.id !== payload.assetId) return asset;
         if (payload.status === "queued") return { ...asset, status: "queued", error: undefined };
         if (payload.status === "processing") return { ...asset, status: "processing", error: undefined };
-        if (payload.status === "retryingWorker") return { ...asset, status: "retrying", error: payload.error ?? undefined };
+        if (payload.status === "retryingWorker") return { ...asset, status: "retrying", error: t("status.retrying") };
         if (payload.status === "completed") {
           return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, error: undefined };
         }
-        if (payload.status === "failed") return { ...asset, status: "failed", error: payload.error ?? "처리에 실패했습니다." };
-        if (payload.status === "cancelled") return { ...asset, status: "cancelled", error: payload.error ?? "사용자가 취소했습니다." };
+        if (payload.status === "failed") return { ...asset, status: "failed", error: t("notice.processingFailed") };
+        if (payload.status === "cancelled") return { ...asset, status: "cancelled", error: t("notice.userCancelled") };
         return asset;
       }));
     }).then((unlisten) => {
@@ -389,7 +374,7 @@ function App() {
       disposed = true;
       stop?.();
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!isTauri() || !assets.length || isProcessing) {
@@ -409,7 +394,7 @@ function App() {
         .catch((error) => {
           if (!cancelled) {
             setExportPlan(null);
-            setNotice(`출력 설정을 확인해주세요: ${String(error)}`);
+            setNotice(localizeCommandError(error, t, "error.output.plan"));
           }
         })
         .finally(() => {
@@ -435,7 +420,7 @@ function App() {
           setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, previewUrl } : asset));
         }
       })
-      .catch((error) => !cancelled && setNotice(`미리보기를 만들지 못했습니다: ${String(error)}`));
+      .catch(() => !cancelled && setNotice(t("notice.previewFailed")));
     return () => { cancelled = true; };
   }, [selected?.id, selected?.path, selected?.previewUrl]);
 
@@ -473,7 +458,7 @@ function App() {
         const message = String(error);
         setMaskPreviewStatus("error");
         setMaskPreviewError(message);
-        setNotice(`마스크 미리보기를 갱신하지 못했습니다: ${message}`);
+        setNotice(t("notice.maskPreviewFailed"));
       });
     }, 180);
     return () => window.clearTimeout(timer);
@@ -488,7 +473,7 @@ function App() {
           setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, resultPreviewUrl } : asset));
         }
       })
-      .catch((error) => !cancelled && setNotice(`결과 미리보기를 만들지 못했습니다: ${String(error)}`));
+      .catch(() => !cancelled && setNotice(t("notice.resultPreviewFailed")));
     return () => { cancelled = true; };
   }, [selected?.id, selected?.outputPath, selected?.resultPreviewUrl]);
 
@@ -500,14 +485,14 @@ function App() {
     const selection = await openDialog({
       multiple: true,
       directory: false,
-      filters: [{ name: "이미지", extensions: SUPPORTED_EXTENSIONS }],
+      filters: [{ name: t("filter.images"), extensions: SUPPORTED_EXTENSIONS }],
     });
     if (selection) await inspectPaths(Array.isArray(selection) ? selection : [selection]);
   };
 
   const addFolderFromDialog = async () => {
     if (!isTauri()) {
-      setNotice("폴더 선택은 데스크톱 앱에서 사용할 수 있습니다.");
+      setNotice(t("notice.folderDesktopOnly"));
       return;
     }
     const selection = await openDialog({ multiple: false, directory: true });
@@ -666,7 +651,7 @@ function App() {
   };
 
   const clearWorkspace = async () => {
-    if (isProcessing || !window.confirm("작업 목록과 저장된 설정을 비울까요? 원본과 결과 파일은 삭제되지 않습니다.")) return;
+    if (isProcessing || !window.confirm(t("notice.clearConfirm"))) return;
     if (workspaceSaveTimer.current !== null) {
       window.clearTimeout(workspaceSaveTimer.current);
       workspaceSaveTimer.current = null;
@@ -686,9 +671,9 @@ function App() {
       setBatchTotal(0);
       setViewMode("original");
       setMaskDraft(null);
-      setNotice("작업 공간을 비웠습니다. 원본과 결과 파일은 그대로 유지됩니다.");
+      setNotice(t("notice.workspaceCleared"));
     } catch (error) {
-      setNotice(`작업 공간을 비우지 못했습니다: ${String(error)}`);
+      setNotice(t("notice.workspaceClearFailed"));
     }
   };
 
@@ -705,11 +690,11 @@ function App() {
     if (incompleteManual) {
       setPendingMaskEditId(incompleteManual.id);
       setSelectedId(incompleteManual.id);
-      setNotice(`'${incompleteManual.name}'에서 유지할 객체를 초록색 브러시로 먼저 표시해주세요.`);
+      setNotice(t("notice.paintKeepFirst", { name: incompleteManual.name }));
       return;
     }
     if (!isTauri()) {
-      setNotice(`화면 검증 모드입니다. 실제 ${settings.processingMode === "convert" ? "이미지 변환" : "배경 제거"}은 Tauri 데스크톱 앱에서 실행됩니다.`);
+      setNotice(t("notice.desktopPreview", { operation: t(settings.processingMode === "convert" ? "operation.convert" : "operation.remove") }));
       return;
     }
     const targetIds = new Set(targets.map((asset) => asset.id));
@@ -745,16 +730,16 @@ function App() {
       setLastOutputBytes(retainedOutputBytes + result.outputBytes);
       if (result.completed > 0) setViewMode("result");
       setNotice([
-        `${result.completed}개 저장 완료`,
-        result.failed ? `${result.failed}개 실패` : null,
-        result.cancelled ? `${result.cancelled}개 취소` : null,
-        result.workerRestarts ? `Worker ${result.workerRestarts}회 복구` : null,
-        `결과 ${formatBytes(result.outputBytes)}`,
+        t("notice.batchSaved", { count: result.completed }),
+        result.failed ? t("notice.batchFailed", { count: result.failed }) : null,
+        result.cancelled ? t("notice.batchCancelled", { count: result.cancelled }) : null,
+        result.workerRestarts ? t("notice.workerRecovered", { count: result.workerRestarts }) : null,
+        t("notice.outputResult", { size: formatBytes(result.outputBytes, formatLocale) }),
       ].filter(Boolean).join(" · "));
     } catch (error) {
-      const message = String(error);
+      const message = localizeCommandError(error, t, "error.batch.run");
       setAssets((current) => current.map((asset) => asset.status === "queued" || asset.status === "processing" || asset.status === "retrying" ? { ...asset, status: "failed", error: message } : asset));
-      setNotice(`${settings.processingMode === "convert" ? "이미지 변환" : "배경 제거"}을 완료하지 못했습니다: ${message}`);
+      setNotice(message);
     } finally {
       setIsProcessing(false);
       setIsCancelling(false);
@@ -766,11 +751,11 @@ function App() {
     setIsCancelling(true);
     try {
       const accepted = await invoke<boolean>("cancel_batch");
-      setNotice(accepted ? "현재 파일을 마친 뒤 나머지 작업을 취소합니다." : "취소할 작업이 없습니다.");
+      setNotice(t(accepted ? "notice.cancelPending" : "notice.nothingToCancel"));
       if (!accepted) setIsCancelling(false);
     } catch (error) {
       setIsCancelling(false);
-      setNotice(`취소 요청을 보내지 못했습니다: ${String(error)}`);
+      setNotice(t("notice.cancelFailed"));
     }
   };
 
@@ -784,7 +769,7 @@ function App() {
       setDiagnostics(nextDiagnostics);
       setModelStatus(nextModelStatus);
     } catch (error) {
-      setNotice(`진단 정보를 확인하지 못했습니다: ${String(error)}`);
+      setNotice(t("notice.diagnosticsFailed"));
     }
   };
 
@@ -804,10 +789,11 @@ function App() {
     try {
       if (isTauri()) await invoke<void>("save_app_preferences", { preferences: nextPreferences });
       setPreferences(nextPreferences);
+      setLanguagePreference(nextPreferences.language);
       if (!assets.length) setSettings(nextPreferences.defaultSettings);
-      setNotice("환경설정을 저장했습니다. 새 작업부터 기본 출력 설정을 적용합니다.");
+      setNotice(t("notice.preferencesSaved"));
     } catch (error) {
-      setNotice(`환경설정을 저장하지 못했습니다: ${String(error)}`);
+      setNotice(t("notice.preferencesSaveFailed"));
       throw error;
     } finally {
       setSettingsBusyAction(null);
@@ -820,7 +806,7 @@ function App() {
       setPreferences(nextPreferences);
       setNotice(message);
     } catch (error) {
-      setNotice(`출력 프리셋을 저장하지 못했습니다: ${String(error)}`);
+      setNotice(t("notice.presetSaveFailed"));
     }
   };
 
@@ -828,7 +814,7 @@ function App() {
     const preset = preferences.presets.find((candidate) => candidate.id === presetId);
     if (!preset) return;
     setSettings({ ...preset.settings });
-    setNotice(`'${preset.name}' 출력 프리셋을 불러왔습니다.`);
+    setNotice(t("notice.presetLoaded", { name: preset.name }));
   };
 
   const saveOutputPreset = async () => {
@@ -843,7 +829,7 @@ function App() {
     const presets = existing
       ? preferences.presets.map((candidate) => candidate.id === existing.id ? preset : candidate)
       : [...preferences.presets, preset];
-    await persistPresetPreferences({ ...preferences, presets }, existing ? `'${name}' 프리셋을 현재 설정으로 업데이트했습니다.` : `'${name}' 프리셋을 저장했습니다.`);
+    await persistPresetPreferences({ ...preferences, presets }, t(existing ? "notice.presetUpdated" : "notice.presetSaved", { name }));
     setPresetName("");
     setIsPresetNaming(false);
   };
@@ -851,10 +837,10 @@ function App() {
   const deleteOutputPreset = async () => {
     if (!activePresetId) return;
     const preset = preferences.presets.find((candidate) => candidate.id === activePresetId);
-    if (!preset || !window.confirm(`'${preset.name}' 출력 프리셋을 삭제할까요?`)) return;
+    if (!preset || !window.confirm(t("notice.presetDeleteConfirm", { name: preset.name }))) return;
     await persistPresetPreferences(
       { ...preferences, presets: preferences.presets.filter((candidate) => candidate.id !== activePresetId) },
-      `'${preset.name}' 프리셋을 삭제했습니다.`,
+      t("notice.presetDeleted", { name: preset.name }),
     );
   };
 
@@ -863,13 +849,14 @@ function App() {
     try {
       const reset = isTauri()
         ? await invoke<AppPreferences>("reset_app_preferences")
-        : { ...DEFAULT_PREFERENCES, defaultSettings: { ...DEFAULT_SETTINGS } };
+        : { ...DEFAULT_PREFERENCES, defaultSettings: { ...DEFAULT_SETTINGS }, language: "system" as LanguagePreference };
       setPreferences(reset);
+      setLanguagePreference(reset.language);
       if (!assets.length) setSettings(reset.defaultSettings);
-      setNotice("환경설정을 권장 기본값으로 초기화했습니다.");
+      setNotice(t("notice.preferencesReset"));
       return reset;
     } catch (error) {
-      setNotice(`환경설정을 초기화하지 못했습니다: ${String(error)}`);
+      setNotice(t("notice.preferencesResetFailed"));
       throw error;
     } finally {
       setSettingsBusyAction(null);
@@ -878,32 +865,32 @@ function App() {
 
   const installModelFromSettings = async () => {
     if (!isTauri()) {
-      setNotice("모델 설치는 Tauri 데스크톱 앱에서 사용할 수 있습니다.");
+      setNotice(t("notice.modelDesktopOnly"));
       return;
     }
     setSettingsBusyAction("model");
     try {
       const status = await invoke<ModelStatus>("install_model");
       setModelStatus(status);
-      setNotice("로컬 AI 모델을 설치하고 검증했습니다.");
+      setNotice(t("notice.modelInstalled"));
       await refreshSettingsData();
     } catch (error) {
-      setNotice(`AI 모델을 설치하지 못했습니다: ${String(error)}`);
+      setNotice(t("notice.modelInstallFailed"));
     } finally {
       setSettingsBusyAction(null);
     }
   };
 
   const deleteModelFromSettings = async () => {
-    if (!isTauri() || !window.confirm("설치된 AI 모델을 삭제할까요? 원본과 결과 파일은 유지되며 필요할 때 다시 내려받을 수 있습니다.")) return;
+    if (!isTauri() || !window.confirm(t("notice.modelDeleteConfirm"))) return;
     setSettingsBusyAction("model");
     try {
       const status = await invoke<ModelStatus>("delete_model");
       setModelStatus(status);
-      setNotice("설치된 AI 모델을 삭제했습니다.");
+      setNotice(t("notice.modelDeleted"));
       await refreshSettingsData();
     } catch (error) {
-      setNotice(`AI 모델을 삭제하지 못했습니다: ${String(error)}`);
+      setNotice(t("notice.modelDeleteFailed"));
     } finally {
       setSettingsBusyAction(null);
     }
@@ -922,12 +909,12 @@ function App() {
     ?? `${settings.prefix}${selected?.name.replace(/\.[^.]+$/, "") || "image"}${settings.suffix}.${settings.format}`;
   const estimateText = exportPlan?.estimatedOutputBytes == null
     ? null
-    : `${formatBytes(exportPlan.estimatedOutputBytes)} 예상`;
+    : t("estimate.expected", { size: formatBytes(exportPlan.estimatedOutputBytes, formatLocale) });
   const savingsText = exportPlan?.estimatedSavingsPercent == null
     ? null
     : exportPlan.estimatedSavingsPercent >= 0
-      ? `${Math.round(exportPlan.estimatedSavingsPercent)}% 감소 예상`
-      : `${Math.round(Math.abs(exportPlan.estimatedSavingsPercent))}% 증가 예상`;
+      ? t("estimate.decrease", { percent: Math.round(exportPlan.estimatedSavingsPercent) })
+      : t("estimate.increase", { percent: Math.round(Math.abs(exportPlan.estimatedSavingsPercent)) });
 
   const setFormat = (format: OutputFormat) => setSettings((current) => ({ ...current, format }));
 
@@ -939,7 +926,7 @@ function App() {
       webpLossless: DEFAULT_SETTINGS.webpLossless,
       pngEffort: DEFAULT_SETTINGS.pngEffort,
     }));
-    setNotice("파일 형식과 압축 설정을 기본값으로 되돌렸습니다.");
+    setNotice(t("notice.formatReset"));
   };
 
   const setResizeMode = (resizeMode: OutputSettings["resizeMode"]) => {
@@ -959,7 +946,7 @@ function App() {
 
   const resetOutputSettings = () => {
     setSettings({ ...preferences.defaultSettings });
-    setNotice("출력 설정을 새 작업 기본값으로 되돌렸습니다. 파일별 객체·가장자리 편집은 유지됩니다.");
+    setNotice(t("notice.outputReset"));
   };
 
   const setProcessingMode = (processingMode: OutputSettings["processingMode"]) => {
@@ -1047,7 +1034,7 @@ function App() {
     try {
       await invoke<void>("reveal_in_file_manager", { path });
     } catch (error) {
-      setNotice(`파일 위치를 열지 못했습니다: ${String(error)}`);
+      setNotice(t("notice.revealFailed"));
     }
   };
 
@@ -1070,7 +1057,7 @@ function App() {
           field.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste", data: text }));
         }
       } catch {
-        setNotice("클립보드 붙여넣기 권한을 확인해주세요. Ctrl/Cmd+V도 사용할 수 있습니다.");
+        setNotice(t("notice.clipboardPermission"));
       }
       return;
     }
@@ -1109,66 +1096,66 @@ function App() {
           <span>CrystalCut</span>
         </div>
         <div className="topbar-actions">
-          <button className={`model-pill ${modelStatus?.installed ? "ready" : ""}`} title="AI 모델 설정 열기" onClick={() => openSettings("model")}>
-            <span />자동 제거 AI {modelStatus?.installed ? "준비됨" : "필요 시 설치"}
+          <button className={`model-pill ${modelStatus?.installed ? "ready" : ""}`} title={t("model.openSettings")} onClick={() => openSettings("model")}>
+            <span />{t("model.autoRemove")} {t(modelStatus?.installed ? "status.ready" : "model.installWhenNeeded")}
           </button>
-          <button className="button secondary" onClick={addFilesFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="add" />파일 추가</button>
-          <button className="button secondary desktop-only" onClick={addFolderFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="folder" />폴더 추가</button>
-          <button ref={settingsButtonRef} className="icon-button" aria-label="환경 설정" title="환경 설정" aria-haspopup="dialog" aria-expanded={isSettingsOpen} aria-controls="preferences-dialog" onClick={() => openSettings("general")}><Icon name="settings" /></button>
+          <button className="button secondary" onClick={addFilesFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="add" />{t("app.addFiles")}</button>
+          <button className="button secondary desktop-only" onClick={addFolderFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="folder" />{t("app.addFolder")}</button>
+          <button ref={settingsButtonRef} className="icon-button" aria-label={t("app.settings")} title={t("app.settings")} aria-haspopup="dialog" aria-expanded={isSettingsOpen} aria-controls="preferences-dialog" onClick={() => openSettings("general")}><Icon name="settings" /></button>
         </div>
       </header>
 
       <main className="workspace">
         <aside className={`library-panel ${isLibraryCollapsed ? "collapsed" : ""}`}>
           <div className="panel-heading">
-            <div><span className="eyebrow">작업 목록</span><strong>{assets.length}</strong></div>
-            {assets.length > 0 && <span className="muted">{formatBytes(totalBytes)}</span>}
-            <button className="panel-toggle" onClick={() => setIsLibraryCollapsed((value) => !value)} aria-expanded={!isLibraryCollapsed} aria-label={isLibraryCollapsed ? "작업 목록 펼치기" : "작업 목록 접기"} title={isLibraryCollapsed ? "작업 목록 펼치기" : "작업 목록 접기"}><Icon name="chevron" size={15} /></button>
+            <div><span className="eyebrow">{t("library.title")}</span><strong>{assets.length}</strong></div>
+            {assets.length > 0 && <span className="muted">{formatBytes(totalBytes, formatLocale)}</span>}
+            <button className="panel-toggle" onClick={() => setIsLibraryCollapsed((value) => !value)} aria-expanded={!isLibraryCollapsed} aria-label={t(isLibraryCollapsed ? "library.expand" : "library.collapse")} title={t(isLibraryCollapsed ? "library.expand" : "library.collapse")}><Icon name="chevron" size={15} /></button>
           </div>
           <div className="asset-list">
             {assets.length === 0 ? (
-              <div className="library-empty"><Icon name="image" size={24} /><span>{isWorkspaceLoaded ? <>이미지를 추가하면<br />여기에 표시됩니다.</> : "저장된 작업 확인 중…"}</span></div>
+              <div className="library-empty"><Icon name="image" size={24} /><span>{t(isWorkspaceLoaded ? "library.empty" : "library.loading")}</span></div>
             ) : assets.map((asset, index) => (
               <button key={asset.id} className={`asset-row ${asset.id === selectedId ? "selected" : ""}`} onClick={() => setSelectedId(asset.id)} onContextMenu={(event) => openAssetContextMenu(event, asset.id)}>
                 <span className="asset-index">{String(index + 1).padStart(2, "0")}</span>
                 <span className="asset-thumb">{asset.thumbnailUrl || asset.previewUrl ? <img src={asset.thumbnailUrl ?? asset.previewUrl} alt="" /> : <Icon name="image" size={16} />}</span>
                 <span className="asset-copy">
                   <strong title={asset.name}>{asset.name}</strong>
-                  <small>{formatDimensions(asset.width, asset.height)} · {formatBytes(asset.sizeBytes)}</small>
+                  <small>{formatDimensions(asset.width, asset.height, formatLocale, t("format.unknownDimensions"))} · {formatBytes(asset.sizeBytes, formatLocale)}</small>
                 </span>
-                <span className={`asset-status-badge ${asset.status}`} title={asset.error || STATUS_LABEL[asset.status]}>{STATUS_SHORT_LABEL[asset.status]}</span>
+                <span className={`asset-status-badge ${asset.status}`} title={asset.error || t(`status.${asset.status}`)}>{t(`status.short.${asset.status}`)}</span>
               </button>
             ))}
           </div>
           {assets.length > 0 && (
             <div className="library-footer-actions">
-              <button className="add-more" onClick={addFilesFromDialog} disabled={isProcessing}><Icon name="add" size={16} />이미지 더 추가</button>
-              <button className="clear-workspace" onClick={() => void clearWorkspace()} disabled={isProcessing}><Icon name="trash" size={15} />작업 비우기</button>
+              <button className="add-more" onClick={addFilesFromDialog} disabled={isProcessing}><Icon name="add" size={16} />{t("app.addMore")}</button>
+              <button className="clear-workspace" onClick={() => void clearWorkspace()} disabled={isProcessing}><Icon name="trash" size={15} />{t("app.clearList")}</button>
             </div>
           )}
         </aside>
 
         <section className="canvas-panel">
           <div className="canvas-toolbar">
-            <div className="view-tabs" role="tablist" aria-label="미리보기 모드">
-              <button className={effectiveViewMode === "original" ? "active" : ""} onClick={() => setViewMode("original")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "original"}>원본</button>
-              <button className={effectiveViewMode === "result" ? "active" : ""} onClick={() => hasResultView ? setViewMode("result") : setNotice("객체 편집이나 가장자리 미리보기를 열면 편집 미리보기를 확인할 수 있습니다.")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "result"} aria-disabled={!hasResultView} title={hasResultView ? "현재 편집 미리보기 보기" : "먼저 객체 편집 또는 가장자리 미리보기를 실행하세요"}>미리보기</button>
-              <button className={effectiveViewMode === "mask" ? "active" : ""} onClick={() => hasMaskView ? setViewMode("mask") : setNotice("객체 편집이나 가장자리 미리보기를 열면 마스크를 확인할 수 있습니다.")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "mask"} aria-disabled={!hasMaskView} title={hasMaskView ? "흑백 마스크 보기" : "먼저 객체 편집 또는 가장자리 미리보기를 실행하세요"}>마스크</button>
-              <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => hasResultView ? setViewMode("compare") : setNotice("편집 미리보기가 준비된 뒤 원본과 비교할 수 있습니다.")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "compare"} aria-disabled={!hasResultView} title={hasResultView ? "원본과 현재 미리보기 비교" : "먼저 미리보기를 준비하세요"}>비교</button>
+            <div className="view-tabs" role="tablist" aria-label={t("preview.mode")}>
+              <button className={effectiveViewMode === "original" ? "active" : ""} onClick={() => setViewMode("original")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "original"}>{t("common.original")}</button>
+              <button className={effectiveViewMode === "result" ? "active" : ""} onClick={() => hasResultView ? setViewMode("result") : setNotice(t("notice.previewNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "result"} aria-disabled={!hasResultView}>{t("common.preview")}</button>
+              <button className={effectiveViewMode === "mask" ? "active" : ""} onClick={() => hasMaskView ? setViewMode("mask") : setNotice(t("notice.maskNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "mask"} aria-disabled={!hasMaskView}>{t("common.mask")}</button>
+              <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => hasResultView ? setViewMode("compare") : setNotice(t("notice.compareNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "compare"} aria-disabled={!hasResultView}>{t("common.compare")}</button>
             </div>
             <div className="canvas-actions">
-              <div className="preview-backgrounds" aria-label="미리보기 배경">
-                <button className={`background-swatch checker ${previewBackground === "checker" ? "active" : ""}`} onClick={() => setPreviewBackground("checker")} title="체크무늬 배경" aria-label="체크무늬 배경" />
-                <button className={`background-swatch light ${previewBackground === "light" ? "active" : ""}`} onClick={() => setPreviewBackground("light")} title="흰색 배경" aria-label="흰색 배경" />
-                <button className={`background-swatch dark ${previewBackground === "dark" ? "active" : ""}`} onClick={() => setPreviewBackground("dark")} title="검은색 배경" aria-label="검은색 배경" />
+              <div className="preview-backgrounds" aria-label={t("preview.background")}>
+                <button className={`background-swatch checker ${previewBackground === "checker" ? "active" : ""}`} onClick={() => setPreviewBackground("checker")} title={t("preview.background.checker")} aria-label={t("preview.background.checker")} />
+                <button className={`background-swatch light ${previewBackground === "light" ? "active" : ""}`} onClick={() => setPreviewBackground("light")} title={t("preview.background.light")} aria-label={t("preview.background.light")} />
+                <button className={`background-swatch dark ${previewBackground === "dark" ? "active" : ""}`} onClick={() => setPreviewBackground("dark")} title={t("preview.background.dark")} aria-label={t("preview.background.dark")} />
               </div>
               <span className="divider" />
-              <button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={16} />{isMaskEditing ? "편집 중" : "객체 편집"}</button>
+              <button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={16} />{t(isMaskEditing ? "preview.editing" : "preview.edit")}</button>
               <span className="divider" />
-              <button className="icon-button" aria-label="왼쪽으로 회전" title="왼쪽으로 90° 회전" onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
-              <button className="icon-button" aria-label="오른쪽으로 회전" title="오른쪽으로 90° 회전" onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /></button>
+              <button className="icon-button" aria-label={t("preview.rotateLeft")} title={t("preview.rotateLeft")} onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
+              <button className="icon-button" aria-label={t("preview.rotateRight")} title={t("preview.rotateRight")} onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /></button>
               <span className="divider" />
-              <button className="icon-button danger-hover" aria-label="목록에서 제거" title="목록에서 제거 · 원본 유지" onClick={removeSelected} disabled={!selected}><Icon name="trash" /></button>
+              <button className="icon-button danger-hover" aria-label={t("preview.removeFromList")} title={t("preview.removeFromList")} onClick={removeSelected} disabled={!selected}><Icon name="trash" /></button>
             </div>
           </div>
 
@@ -1186,15 +1173,15 @@ function App() {
                   previewStatus={maskPreviewStatus}
                   previewError={maskPreviewError}
                 />
-              ) : <div className="preview-stage"><div className="preview-loading"><span className="spinner" />미리보기 만드는 중</div></div>
+              ) : <div className="preview-stage"><div className="preview-loading"><span className="spinner" />{t("preview.loading")}</div></div>
             ) : (
               <div className="drop-card">
                 <span className="drop-icon"><Icon name="image" size={28} /></span>
-                <h1>처리할 이미지를 놓으세요</h1>
-                <p>배경 제거 또는 형식·크기 변환할 파일을 선택하세요.</p>
+                <h1>{t("app.dropTitle")}</h1>
+                <p>{t("app.dropDescription")}</p>
                 <div className="drop-actions">
-                  <button className="button primary compact" onClick={addFilesFromDialog}>이미지 선택</button>
-                  <button className="button ghost compact desktop-only" onClick={addFolderFromDialog}>폴더 선택</button>
+                  <button className="button primary compact" onClick={addFilesFromDialog}>{t("app.selectImages")}</button>
+                  <button className="button ghost compact desktop-only" onClick={addFolderFromDialog}>{t("app.selectFolder")}</button>
                 </div>
                 <small>JPEG · PNG · WebP</small>
               </div>
@@ -1204,82 +1191,82 @@ function App() {
           {selected && (
             <div className="file-info-bar">
               <span><strong>{selected.name}</strong></span>
-              <span>{formatDimensions(selected.width, selected.height)}</span>
+              <span>{formatDimensions(selected.width, selected.height, formatLocale, t("format.unknownDimensions"))}</span>
               <span>{selected.extension.toUpperCase()}</span>
-              {selected.rotation !== 0 && <span>{selected.rotation}° 회전</span>}
-              {selected.exif.takenAt && <span title="EXIF 촬영일">{selected.exif.takenAt}</span>}
-              {selected.exif.camera && <span title={selected.exif.lens ?? "EXIF 카메라"}>{selected.exif.camera}</span>}
-              <span className={`file-status ${selected.status}`}>{STATUS_LABEL[selected.status]}</span>
+              {selected.rotation !== 0 && <span>{t("preview.rotation", { degrees: selected.rotation })}</span>}
+              {selected.exif.takenAt && <span title={t("preview.exifDate")}>{selected.exif.takenAt}</span>}
+              {selected.exif.camera && <span title={selected.exif.lens ?? t("preview.exifCamera")}>{selected.exif.camera}</span>}
+              <span className={`file-status ${selected.status}`}>{t(`status.${selected.status}`)}</span>
             </div>
           )}
         </section>
 
         <aside className={`inspector-panel ${isInspectorCollapsed ? "collapsed" : ""}`}>
           <div className="inspector-header">
-            <span className="eyebrow">출력 설정</span>
-            <button className="text-button" onClick={resetOutputSettings} title="환경 설정의 새 작업 기본값으로 되돌립니다">출력 설정 초기화</button>
-            <button className="panel-toggle inspector-toggle" onClick={() => setIsInspectorCollapsed((value) => !value)} aria-expanded={!isInspectorCollapsed} aria-label={isInspectorCollapsed ? "설정 패널 펼치기" : "설정 패널 접기"} title={isInspectorCollapsed ? "설정 패널 펼치기" : "설정 패널 접기"}><Icon name="chevron" size={15} /></button>
+            <span className="eyebrow">{t("output.title")}</span>
+            <button className="text-button" onClick={resetOutputSettings}>{t("output.reset")}</button>
+            <button className="panel-toggle inspector-toggle" onClick={() => setIsInspectorCollapsed((value) => !value)} aria-expanded={!isInspectorCollapsed} aria-label={t(isInspectorCollapsed ? "output.expand" : "output.collapse")} title={t(isInspectorCollapsed ? "output.expand" : "output.collapse")}><Icon name="chevron" size={15} /></button>
           </div>
 
-          <div className="inspector-group-heading"><span>모든 파일</span><strong>출력과 저장</strong></div>
+          <div className="inspector-group-heading"><span>{t("common.allFiles")}</span><strong>{t("output.outputAndSave")}</strong></div>
 
           <section className="setting-section preset-section">
-            <div className="label-row"><label className="setting-label" htmlFor="output-preset">출력 프리셋</label><span className="scope-badge">모든 파일</span></div>
+            <div className="label-row"><label className="setting-label" htmlFor="output-preset">{t("output.preset")}</label><span className="scope-badge">{t("common.allFiles")}</span></div>
             <div className="preset-controls">
               <select id="output-preset" value={activePresetId} onChange={(event) => applyOutputPreset(event.target.value)}>
-                <option value="">{preferences.presets.length ? "현재 사용자 설정" : "저장된 프리셋 없음"}</option>
+                <option value="">{t(preferences.presets.length ? "output.currentCustom" : "output.noPresets")}</option>
                 {preferences.presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
               </select>
             </div>
-            <div className="preset-actions"><button type="button" onClick={() => { setPresetName(preferences.presets.find((preset) => preset.id === activePresetId)?.name ?? ""); setIsPresetNaming(true); }}>현재 설정 저장</button><button type="button" className="danger" onClick={() => void deleteOutputPreset()} disabled={!activePresetId}>선택 프리셋 삭제</button></div>
-            {isPresetNaming && <div className="preset-name-row"><input autoFocus type="text" value={presetName} maxLength={40} placeholder="예: 쇼핑몰 PNG 2000px" onChange={(event) => setPresetName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void saveOutputPreset(); if (event.key === "Escape") setIsPresetNaming(false); }} /><button type="button" onClick={() => void saveOutputPreset()} disabled={!presetName.trim()}>저장</button><button type="button" onClick={() => setIsPresetNaming(false)}>취소</button></div>}
-            <p className="setting-help">형식, 품질, 크기, 저장 위치, 이름 규칙과 메타데이터 설정을 함께 저장합니다.</p>
+            <div className="preset-actions"><button type="button" onClick={() => { setPresetName(preferences.presets.find((preset) => preset.id === activePresetId)?.name ?? ""); setIsPresetNaming(true); }}>{t("output.savePreset")}</button><button type="button" className="danger" onClick={() => void deleteOutputPreset()} disabled={!activePresetId}>{t("output.deletePreset")}</button></div>
+            {isPresetNaming && <div className="preset-name-row"><input autoFocus type="text" value={presetName} maxLength={40} placeholder={t("output.presetPlaceholder")} onChange={(event) => setPresetName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void saveOutputPreset(); if (event.key === "Escape") setIsPresetNaming(false); }} /><button type="button" onClick={() => void saveOutputPreset()} disabled={!presetName.trim()}>{t("common.save")}</button><button type="button" onClick={() => setIsPresetNaming(false)}>{t("common.cancel")}</button></div>}
+            <p className="setting-help">{t("output.presetHelp")}</p>
           </section>
 
           <section className="setting-section">
-            <label className="setting-label">처리 방식</label>
+            <label className="setting-label">{t("output.processingMode")}</label>
             <div className="segmented processing-mode">
-              <button className={settings.processingMode === "removeBackground" ? "active" : ""} onClick={() => setProcessingMode("removeBackground")}>배경 제거</button>
-              <button className={settings.processingMode === "convert" ? "active" : ""} onClick={() => setProcessingMode("convert")}>이미지만 변환</button>
+              <button className={settings.processingMode === "removeBackground" ? "active" : ""} onClick={() => setProcessingMode("removeBackground")}>{t("output.removeBackground")}</button>
+              <button className={settings.processingMode === "convert" ? "active" : ""} onClick={() => setProcessingMode("convert")}>{t("output.convertOnly")}</button>
             </div>
             <p className="setting-help">{settings.processingMode === "removeBackground"
-              ? "AI 마스크와 브러시 보정을 적용한 뒤 저장합니다."
-              : "배경은 건드리지 않고 회전·크기·형식·압축 설정만 적용합니다."}</p>
+              ? t("output.removeHelp")
+              : t("output.convertHelp")}</p>
           </section>
 
           <section className="setting-section">
-            <div className="setting-title-row"><span className="setting-label">파일 형식</span><button type="button" onClick={resetFormatSettings}>기본값</button></div>
+            <div className="setting-title-row"><span className="setting-label">{t("output.format")}</span><button type="button" onClick={resetFormatSettings}>{t("common.default")}</button></div>
             <div className="segmented">
               <button className={settings.format === "png" ? "active" : ""} onClick={() => setFormat("png")}>PNG</button>
               <button className={settings.format === "webp" ? "active" : ""} onClick={() => setFormat("webp")}>WebP</button>
             </div>
             <p className="setting-help">{settings.format === "png"
-              ? settings.processingMode === "removeBackground" ? "무손실 · 투명 배경에 가장 안전" : "무손실 변환 · 원본 투명도 유지"
-              : settings.processingMode === "removeBackground" ? "더 작은 파일 · 투명도 지원" : "더 작은 파일 · 화질과 압축률 조절"}</p>
+              ? t(settings.processingMode === "removeBackground" ? "output.pngRemoveHelp" : "output.pngConvertHelp")
+              : t(settings.processingMode === "removeBackground" ? "output.webpRemoveHelp" : "output.webpConvertHelp")}</p>
 
             {settings.format === "webp" ? (
               <div className="sub-setting">
-                <div className="label-row"><label htmlFor="quality">화질</label><output>{settings.webpQuality}</output></div>
+                <div className="label-row"><label htmlFor="quality">{t("output.quality")}</label><output>{settings.webpQuality}</output></div>
                 <input id="quality" type="range" min="1" max="100" value={settings.webpQuality} onChange={(e) => setSettings({ ...settings, webpQuality: Number(e.target.value) })} />
-                <label className="check-row"><input type="checkbox" checked={settings.webpLossless} onChange={(e) => setSettings({ ...settings, webpLossless: e.target.checked })} /><span><Icon name="check" size={13} /></span>무손실 WebP</label>
+                <label className="check-row"><input type="checkbox" checked={settings.webpLossless} onChange={(e) => setSettings({ ...settings, webpLossless: e.target.checked })} /><span><Icon name="check" size={13} /></span>{t("output.losslessWebp")}</label>
               </div>
             ) : (
               <div className="sub-setting">
-                <div className="label-row"><label htmlFor="effort">압축 강도</label><output>{settings.pngEffort}</output></div>
+                <div className="label-row"><label htmlFor="effort">{t("output.compression")}</label><output>{settings.pngEffort}</output></div>
                 <input id="effort" type="range" min="1" max="9" value={settings.pngEffort} onChange={(e) => setSettings({ ...settings, pngEffort: Number(e.target.value) })} />
-                <p className="setting-help flush">화질은 유지되고 저장 시간과 용량만 달라집니다.</p>
+                <p className="setting-help flush">{t("output.pngCompressionHelp")}</p>
               </div>
             )}
-            <label className="check-row metadata-check"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setSettings({ ...settings, preserveMetadata: event.target.checked })} /><span><Icon name="check" size={13} /></span>촬영 메타데이터 보존</label>
-            <p className="setting-help flush">촬영일·카메라·렌즈를 출력 파일에 기록합니다. GPS는 항상 제외합니다.</p>
+            <label className="check-row metadata-check"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setSettings({ ...settings, preserveMetadata: event.target.checked })} /><span><Icon name="check" size={13} /></span>{t("output.keepMetadata")}</label>
+            <p className="setting-help flush">{t("output.metadataHelp")}</p>
           </section>
 
           <section className="setting-section">
-            <label className="setting-label" htmlFor="resize-mode">크기 변경</label>
+            <label className="setting-label" htmlFor="resize-mode">{t("output.resize")}</label>
             <select id="resize-mode" value={settings.resizeMode} onChange={(e) => setResizeMode(e.target.value as OutputSettings["resizeMode"])}>
-              <option value="original">원본 크기 유지</option>
-              <option value="percent">비율로 변경</option>
-              <option value="longEdge">긴 변 기준</option>
+              <option value="original">{t("output.resize.original")}</option>
+              <option value="percent">{t("output.resize.percent")}</option>
+              <option value="longEdge">{t("output.resize.longEdge")}</option>
             </select>
             {settings.resizeMode !== "original" && (
               <div className="input-with-unit">
@@ -1287,87 +1274,87 @@ function App() {
                 <span>{settings.resizeMode === "percent" ? "%" : "px"}</span>
               </div>
             )}
-            <label className="check-row"><input type="checkbox" checked={settings.preventUpscale} onChange={(e) => setSettings({ ...settings, preventUpscale: e.target.checked })} /><span><Icon name="check" size={13} /></span>작은 이미지는 확대하지 않기</label>
+            <label className="check-row"><input type="checkbox" checked={settings.preventUpscale} onChange={(e) => setSettings({ ...settings, preventUpscale: e.target.checked })} /><span><Icon name="check" size={13} /></span>{t("output.noUpscale")}</label>
           </section>
 
           <section className="setting-section">
-            <label className="setting-label" htmlFor="save-location">저장 위치</label>
+            <label className="setting-label" htmlFor="save-location">{t("output.location")}</label>
             <select id="save-location" value={settings.outputLocation} onChange={(e) => setSettings({ ...settings, outputLocation: e.target.value as OutputSettings["outputLocation"] })}>
-              <option value="subfolder">원본 폴더 안에 새 폴더</option>
-              <option value="sameFolder">원본과 같은 폴더</option>
-              <option value="custom">지정한 폴더</option>
+              <option value="subfolder">{t("output.location.subfolder")}</option>
+              <option value="sameFolder">{t("output.location.sameFolder")}</option>
+              <option value="custom">{t("output.location.custom")}</option>
             </select>
             {settings.outputLocation === "custom" && (
-              <button className="path-picker" onClick={chooseOutputDirectory} title={settings.outputDirectory || "폴더를 선택하세요"}>
-                <Icon name="folder" size={16} /><span>{settings.outputDirectory || "폴더 선택"}</span><Icon name="chevron" size={14} />
+              <button className="path-picker" onClick={chooseOutputDirectory} title={settings.outputDirectory || t("output.chooseFolder")}>
+                <Icon name="folder" size={16} /><span>{settings.outputDirectory || t("output.chooseFolder")}</span><Icon name="chevron" size={14} />
               </button>
             )}
           </section>
 
           <section className="setting-section naming-section">
-            <div className="label-row"><label className="setting-label" htmlFor="name-template">파일 이름</label><span className="scope-badge neutral">이름 규칙</span></div>
+            <div className="label-row"><label className="setting-label" htmlFor="name-template">{t("output.fileName")}</label><span className="scope-badge neutral">{t("output.namingRule")}</span></div>
             <div className="name-grid">
-              <label><span>앞에 붙이기</span><input type="text" value={settings.prefix} placeholder="예: cut_" onChange={(e) => setSettings({ ...settings, prefix: e.target.value })} /></label>
-              <label><span>뒤에 붙이기</span><input type="text" value={settings.suffix} placeholder={settings.processingMode === "convert" ? "예: _converted" : "예: _bg"} onChange={(e) => setSettings({ ...settings, suffix: e.target.value })} /></label>
+              <label><span>{t("output.prefix")}</span><input type="text" value={settings.prefix} placeholder="cut_" onChange={(e) => setSettings({ ...settings, prefix: e.target.value })} /></label>
+              <label><span>{t("output.suffix")}</span><input type="text" value={settings.suffix} placeholder={settings.processingMode === "convert" ? "_converted" : "_bg"} onChange={(e) => setSettings({ ...settings, suffix: e.target.value })} /></label>
             </div>
             <label className="template-field" htmlFor="name-template">
-              <span>템플릿</span>
+              <span>{t("output.template")}</span>
               <input id="name-template" type="text" value={settings.nameTemplate} spellCheck={false} onChange={(e) => setSettings({ ...settings, nameTemplate: e.target.value })} />
             </label>
-            <div className="token-row" aria-label="파일 이름 토큰 추가">
-              <button type="button" onClick={() => appendNameToken("{taken:yyMMdd_HHmmss}")}>촬영일</button>
-              <button type="button" onClick={() => appendNameToken("{seq:03}")}>순번</button>
-              <button type="button" onClick={() => appendNameToken("{camera}")}>카메라</button>
-              <button type="button" onClick={() => appendNameToken("{lens}")}>렌즈</button>
+            <div className="token-row" aria-label={t("output.tokens")}>
+              <button type="button" onClick={() => appendNameToken("{taken:yyMMdd_HHmmss}")}>{t("output.token.date")}</button>
+              <button type="button" onClick={() => appendNameToken("{seq:03}")}>{t("output.token.sequence")}</button>
+              <button type="button" onClick={() => appendNameToken("{camera}")}>{t("output.token.camera")}</button>
+              <button type="button" onClick={() => appendNameToken("{lens}")}>{t("output.token.lens")}</button>
             </div>
-            <div className="name-preview"><span>{isEstimating ? "계산 중" : "미리보기"}</span><strong>{previewOutputName}</strong></div>
-            {exportPlan?.warnings[0] && <p className="setting-warning">{exportPlan.warnings[0]}</p>}
+            <div className="name-preview"><span>{t(isEstimating ? "output.calculating" : "common.preview")}</span><strong>{previewOutputName}</strong></div>
+            {exportPlan?.warnings[0] && <p className="setting-warning">{t(`warning.${exportPlan.warnings[0].code}`, { count: exportPlan.warnings[0].count })}</p>}
           </section>
 
-          {settings.processingMode === "removeBackground" && <div className="inspector-group-heading edit"><span>현재 파일</span><strong>객체 선택과 가장자리 감지</strong></div>}
+          {settings.processingMode === "removeBackground" && <div className="inspector-group-heading edit"><span>{t("common.currentFile")}</span><strong>{t("selection.title")}</strong></div>}
 
           {settings.processingMode === "removeBackground" && <section className="setting-section mask-summary-section">
-            <div className="label-row"><span className="setting-label">객체 선택</span><span className="state-badge-small">실시간 미리보기</span></div>
+            <div className="label-row"><span className="setting-label">{t("selection.object")}</span><span className="state-badge-small">{t("selection.livePreview")}</span></div>
             <p className="setting-help flush">{!selected
-              ? "이미지를 선택하면 브러시로 유지할 객체와 제거할 영역을 지정할 수 있습니다."
+              ? t("selection.emptyHelp")
               : selected.maskRecipe.mode === "manual"
-                ? `직접 선택 · 보정 ${selected.maskRecipe.strokes.length}개`
+                ? t("selection.manualSummary", { count: selected.maskRecipe.strokes.length })
                 : selected.maskRecipe.mode === "sam"
-                  ? `AI 객체 선택 · 포함/제외 ${selected.maskRecipe.strokes.length}개`
+                  ? t("selection.samSummary", { count: selected.maskRecipe.strokes.length })
                   : selected.maskRecipe.mode === "refine"
-                    ? `자동 감지 + 보정 · 브러시 ${selected.maskRecipe.strokes.length}개`
-                    : "자동 감지"}</p>
-            <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={15} />브러시로 객체 편집</button>
+                    ? t("selection.refineSummary", { count: selected.maskRecipe.strokes.length })
+                    : t("editor.source.auto")}</p>
+            <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={15} />{t("selection.openEditor")}</button>
           </section>}
 
-          {settings.processingMode === "removeBackground" && <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings"><span>가장자리 감지</span><Icon name="chevron" size={15} /></button>}
+          {settings.processingMode === "removeBackground" && <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings"><span>{t("edge.title")}</span><Icon name="chevron" size={15} /></button>}
           {settings.processingMode === "removeBackground" && isAdvancedOpen && (
             <section id="advanced-settings" className="setting-section advanced-settings">
-              <div className="advanced-section-title"><div><strong>파일별 가장자리 감지</strong><span>{selected?.name ?? "이미지를 선택하세요"}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected}>기본값</button></div>
-              <div className="advanced-preview-heading"><span>{maskPreviewStatus === "updating" ? "미리보기 갱신 중…" : maskPreviewStatus === "current" ? "선택 이미지에 실시간 반영됨" : "선택 이미지를 기준으로 미리보기"}</span>{maskPreviewStatus === "updating" && <span className="spinner" />}</div>
+              <div className="advanced-section-title"><div><strong>{t("edge.title")}</strong><span>{selected?.name ?? t("output.addImages")}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected}>{t("common.default")}</button></div>
+              <div className="advanced-preview-heading"><span>{t(maskPreviewStatus === "updating" ? "preview.updating" : maskPreviewStatus === "current" ? "preview.current" : "preview.selectedBasis")}</span>{maskPreviewStatus === "updating" && <span className="spinner" />}</div>
               <div className="sub-setting first">
-                <div className="label-row"><label htmlFor="edge-smoothing">가장자리 매끄럽게</label><output>{selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing}</output></div>
+                <div className="label-row"><label htmlFor="edge-smoothing">{t("edge.smoothing")}</label><output>{selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing}</output></div>
                 <input id="edge-smoothing" type="range" min="0" max="10" value={selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing} onChange={(event) => updateSelectedEdgeSettings({ edgeSmoothing: Number(event.target.value) })} disabled={!selected} />
-                <p className="setting-help flush">톱니 모양의 마스크 경계를 부드럽게 정리합니다.</p>
+                <p className="setting-help flush">{t("edge.smoothingHelp")}</p>
               </div>
               <div className="sub-setting">
-                <div className="label-row"><label htmlFor="edge-feather">가장자리 페더</label><output>{selected?.edgeSettings.edgeFeather ?? DEFAULT_EDGE_SETTINGS.edgeFeather}px</output></div>
+                <div className="label-row"><label htmlFor="edge-feather">{t("edge.feather")}</label><output>{selected?.edgeSettings.edgeFeather ?? DEFAULT_EDGE_SETTINGS.edgeFeather}px</output></div>
                 <input id="edge-feather" type="range" min="0" max="20" value={selected?.edgeSettings.edgeFeather ?? DEFAULT_EDGE_SETTINGS.edgeFeather} onChange={(event) => updateSelectedEdgeSettings({ edgeFeather: Number(event.target.value) })} disabled={!selected} />
               </div>
               <div className="sub-setting">
-                <div className="label-row"><label htmlFor="edge-shift">마스크 확장·축소</label><output>{(selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift) > 0 ? "+" : ""}{selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift}px</output></div>
+                <div className="label-row"><label htmlFor="edge-shift">{t("edge.shift")}</label><output>{(selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift) > 0 ? "+" : ""}{selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift}px</output></div>
                 <input id="edge-shift" type="range" min="-8" max="8" value={selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift} onChange={(event) => updateSelectedEdgeSettings({ edgeShift: Number(event.target.value) })} disabled={!selected} />
               </div>
               <div className="sub-setting">
-                <div className="label-row"><label htmlFor="alpha-threshold">희미한 배경 제거</label><output>{selected?.edgeSettings.alphaThreshold ?? DEFAULT_EDGE_SETTINGS.alphaThreshold}%</output></div>
+                <div className="label-row"><label htmlFor="alpha-threshold">{t("edge.alphaThreshold")}</label><output>{selected?.edgeSettings.alphaThreshold ?? DEFAULT_EDGE_SETTINGS.alphaThreshold}%</output></div>
                 <input id="alpha-threshold" type="range" min="0" max="30" value={selected?.edgeSettings.alphaThreshold ?? DEFAULT_EDGE_SETTINGS.alphaThreshold} onChange={(event) => updateSelectedEdgeSettings({ alphaThreshold: Number(event.target.value) })} disabled={!selected} />
               </div>
               <div className="sub-setting">
-                <div className="label-row"><label htmlFor="mask-contrast">마스크 대비</label><output>{(selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast) > 0 ? "+" : ""}{selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast}</output></div>
+                <div className="label-row"><label htmlFor="mask-contrast">{t("edge.contrast")}</label><output>{(selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast) > 0 ? "+" : ""}{selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast}</output></div>
                 <input id="mask-contrast" type="range" min="-50" max="50" value={selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast} onChange={(event) => updateSelectedEdgeSettings({ maskContrast: Number(event.target.value) })} disabled={!selected} />
               </div>
-              <label className="check-row"><input type="checkbox" checked={selected?.edgeSettings.preserveOriginalAlpha ?? DEFAULT_EDGE_SETTINGS.preserveOriginalAlpha} onChange={(event) => updateSelectedEdgeSettings({ preserveOriginalAlpha: event.target.checked })} disabled={!selected} /><span><Icon name="check" size={13} /></span>원본 투명도 보존</label>
-              <p className="setting-help">이 설정은 현재 선택한 파일에만 적용됩니다. 다른 파일을 선택하면 해당 파일의 값으로 전환됩니다.</p>
+              <label className="check-row"><input type="checkbox" checked={selected?.edgeSettings.preserveOriginalAlpha ?? DEFAULT_EDGE_SETTINGS.preserveOriginalAlpha} onChange={(event) => updateSelectedEdgeSettings({ preserveOriginalAlpha: event.target.checked })} disabled={!selected} /><span><Icon name="check" size={13} /></span>{t("edge.keepOriginalAlpha")}</label>
+              <p className="setting-help">{t("edge.fileOnlyHelp")}</p>
             </section>
           )}
         </aside>
@@ -1375,22 +1362,22 @@ function App() {
 
       <footer className="actionbar">
         <div className="estimate" role="status" aria-live="polite">
-          <span className="estimate-label">{isProcessing ? "처리 중" : displayOutputBytes === null ? "예상 용량" : "실제 용량"}</span>
-          <strong>{assets.length ? `저장 완료 ${isProcessing ? batchCompleted : assets.filter((asset) => asset.status === "done").length} / ${isProcessing ? batchTotal : assets.length}` : "이미지를 추가해주세요"}</strong>
+          <span className="estimate-label">{t(isProcessing ? "status.processing" : displayOutputBytes === null ? "output.estimatedSize" : "output.actualSize")}</span>
+          <strong>{assets.length ? t("output.savedProgress", { done: isProcessing ? batchCompleted : assets.filter((asset) => asset.status === "done").length, total: isProcessing ? batchTotal : assets.length }) : t("output.addImages")}</strong>
           {assets.length > 0 && <span className="muted">{
             displayOutputBytes !== null
-              ? `${formatBytes(totalBytes)} → ${formatBytes(displayOutputBytes)} 저장`
+              ? `${formatBytes(totalBytes, formatLocale)} → ${formatBytes(displayOutputBytes, formatLocale)}`
               : isEstimating
-                ? `${formatBytes(totalBytes)} 원본 · 용량 계산 중…`
+                ? `${formatBytes(totalBytes, formatLocale)} · ${t("output.calculating")}`
                 : estimateText
-                  ? `${formatBytes(totalBytes)} → ${estimateText}${savingsText ? ` · ${savingsText}` : ""}`
-                  : `${formatBytes(totalBytes)} 원본 · 로컬에서만 처리`
+                  ? `${formatBytes(totalBytes, formatLocale)} → ${estimateText}${savingsText ? ` · ${savingsText}` : ""}`
+                  : formatBytes(totalBytes, formatLocale)
           }</span>}
         </div>
         <div className="action-buttons">
           {!isProcessing && retryableAssets.length > 0 && (
             <button className="retry-button" onClick={() => void processAssets(retryableAssets)}>
-              <Icon name="rotateRight" size={15} />미완료 {retryableAssets.length}개 재시도
+              <Icon name="rotateRight" size={15} />{t("output.retry", { count: retryableAssets.length })}
             </button>
           )}
           <button
@@ -1400,10 +1387,10 @@ function App() {
           >
             <span className="run-icon"><Icon name={isProcessing ? "stop" : "sparkle"} /></span>
             <span>{isProcessing
-              ? isCancelling ? "취소 요청됨…" : `${batchCompleted} / ${batchTotal} 처리 중 · 취소`
+              ? isCancelling ? t("output.cancelRequest") : t("output.batchProgress", { done: batchCompleted, total: batchTotal })
               : assets.length
-                ? `${assets.length}개 ${settings.processingMode === "convert" ? "변환해서 저장" : "배경 지우고 저장"}`
-                : "이미지를 추가해주세요"}</span>
+                ? t(settings.processingMode === "convert" ? "output.runConvert" : "output.runRemove", { count: assets.length })
+                : t("output.addImages")}</span>
             {!isProcessing && <Icon name="chevron" size={16} />}
           </button>
         </div>
@@ -1411,7 +1398,7 @@ function App() {
 
       {isDragging && (
         <div className="drag-overlay">
-          <div><span><Icon name="add" size={28} /></span><strong>여기에 놓아 추가</strong><small>파일과 폴더를 함께 처리할 수 있습니다.</small></div>
+          <div><span><Icon name="add" size={28} /></span><strong>{t("app.dropOverlay")}</strong><small>{t("app.dropOverlayHelp")}</small></div>
         </div>
       )}
 
@@ -1419,39 +1406,39 @@ function App() {
         <div className="app-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}>
           {contextMenu.kind === "text" ? (
             <>
-              <button role="menuitem" onClick={() => void runTextMenuAction("undo")}><span>실행 취소</span><kbd>Ctrl+Z</kbd></button>
+              <button role="menuitem" onClick={() => void runTextMenuAction("undo")}><span>{t("context.undo")}</span><kbd>Ctrl+Z</kbd></button>
               <span className="context-separator" />
-              <button role="menuitem" onClick={() => void runTextMenuAction("cut")}><span>잘라내기</span><kbd>Ctrl+X</kbd></button>
-              <button role="menuitem" onClick={() => void runTextMenuAction("copy")}><span>복사</span><kbd>Ctrl+C</kbd></button>
-              <button role="menuitem" onClick={() => void runTextMenuAction("paste")}><span>붙여넣기</span><kbd>Ctrl+V</kbd></button>
+              <button role="menuitem" onClick={() => void runTextMenuAction("cut")}><span>{t("context.cut")}</span><kbd>Ctrl+X</kbd></button>
+              <button role="menuitem" onClick={() => void runTextMenuAction("copy")}><span>{t("context.copy")}</span><kbd>Ctrl+C</kbd></button>
+              <button role="menuitem" onClick={() => void runTextMenuAction("paste")}><span>{t("context.paste")}</span><kbd>Ctrl+V</kbd></button>
               <span className="context-separator" />
-              <button role="menuitem" onClick={() => void runTextMenuAction("selectAll")}><span>모두 선택</span><kbd>Ctrl+A</kbd></button>
+              <button role="menuitem" onClick={() => void runTextMenuAction("selectAll")}><span>{t("context.selectAll")}</span><kbd>Ctrl+A</kbd></button>
             </>
           ) : contextMenu.kind === "asset" && contextAsset ? (
             <>
-              <div className="context-file-heading"><strong title={contextAsset.name}>{contextAsset.name}</strong><span>{formatDimensions(contextAsset.width, contextAsset.height)} · {contextAsset.extension.toUpperCase()}</span></div>
+              <div className="context-file-heading"><strong title={contextAsset.name}>{contextAsset.name}</strong><span>{formatDimensions(contextAsset.width, contextAsset.height, formatLocale, t("format.unknownDimensions"))} · {contextAsset.extension.toUpperCase()}</span></div>
               <span className="context-separator" />
-              <button role="menuitem" onClick={() => { setContextMenu(null); setViewMode("original"); }}><span>원본 미리보기</span></button>
-              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!contextAsset.previewUrl || settings.processingMode === "convert"}><span>객체 마스크 편집</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); setViewMode("original"); }}><span>{t("context.openOriginal")}</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!contextAsset.previewUrl || settings.processingMode === "convert"}><span>{t("context.editMask")}</span></button>
               <span className="context-separator" />
-              <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(-1); }}><span>왼쪽으로 90° 회전</span></button>
-              <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(1); }}><span>오른쪽으로 90° 회전</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(-1); }}><span>{t("preview.rotateLeft")}</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(1); }}><span>{t("preview.rotateRight")}</span></button>
               <span className="context-separator" />
-              <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.path)}><span>원본 파일 위치 열기</span></button>
-              <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.outputPath!)} disabled={!contextAsset.outputPath}><span>결과 파일 위치 열기</span></button>
+              <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.path)}><span>{t("context.openOriginalLocation")}</span></button>
+              <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.outputPath!)} disabled={!contextAsset.outputPath}><span>{t("context.openResultLocation")}</span></button>
               <span className="context-separator" />
-              <button className="danger" role="menuitem" onClick={() => { setContextMenu(null); removeAsset(contextAsset.id); }} disabled={isProcessing}><span>목록에서 제거 · 원본 유지</span></button>
+              <button className="danger" role="menuitem" onClick={() => { setContextMenu(null); removeAsset(contextAsset.id); }} disabled={isProcessing}><span>{t("preview.removeFromList")}</span></button>
             </>
           ) : (
             <>
-              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!selected?.previewUrl || settings.processingMode === "convert"}><span>브러시로 객체 편집</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!selected?.previewUrl || settings.processingMode === "convert"}><span>{t("context.editMask")}</span></button>
               <span className="context-separator" />
-              <button role="menuitem" onClick={() => { setViewMode("original"); setContextMenu(null); }} disabled={!selected}><span>원본 보기</span></button>
-              <button role="menuitem" onClick={() => { setViewMode("result"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>저장 결과 보기</span></button>
-              <button role="menuitem" onClick={() => { setViewMode("compare"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>드래그 비교</span></button>
+              <button role="menuitem" onClick={() => { setViewMode("original"); setContextMenu(null); }} disabled={!selected}><span>{t("context.openOriginal")}</span></button>
+              <button role="menuitem" onClick={() => { setViewMode("result"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>{t("context.openSavedResult")}</span></button>
+              <button role="menuitem" onClick={() => { setViewMode("compare"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>{t("context.dragCompare")}</span></button>
               <span className="context-separator" />
-              <button role="menuitem" onClick={() => { setContextMenu(null); void addFilesFromDialog(); }}><span>이미지 추가…</span></button>
-              <button role="menuitem" onClick={() => { setContextMenu(null); openSettings("general"); }}><span>환경설정…</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); void addFilesFromDialog(); }}><span>{t("context.addImages")}</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); openSettings("general"); }}><span>{t("context.settings")}</span></button>
             </>
           )}
         </div>
@@ -1473,12 +1460,13 @@ function App() {
         onDeleteModel={deleteModelFromSettings}
         onChooseDefaultDirectory={chooseDefaultOutputDirectory}
         onRefreshDiagnostics={refreshSettingsData}
+        onPreviewLanguage={setLanguagePreference}
       />
 
       {notice && (
         <div className="toast" role="alert" aria-live="assertive">
           <span className="toast-message">{notice}</span>
-          <button type="button" className="toast-close" onClick={() => setNotice(null)} aria-label="알림 닫기">닫기</button>
+          <button type="button" className="toast-close" onClick={() => setNotice(null)} aria-label={t("toast.dismiss")}>{t("toast.dismiss")}</button>
           <span className="toast-progress" aria-hidden="true" />
         </div>
       )}

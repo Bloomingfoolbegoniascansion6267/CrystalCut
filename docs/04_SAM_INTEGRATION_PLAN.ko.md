@@ -14,7 +14,7 @@
 - 편집 미리보기와 최종 batch 저장이 동일한 Rust ONNX Runtime 구현을 사용
 - 모델이 필요 없는 `이미지만 변환` 처리에서는 SAM과 U2NetP를 설치하거나 실행하지 않음
 
-모델 출처와 고정한 binary manifest는 `THIRD_PARTY_MODELS.ko.md`에 기록한다.
+모델 출처와 고정한 binary manifest는 `05_THIRD_PARTY_MODELS.ko.md`에 기록한다.
 
 ## 1. 역할 분리
 

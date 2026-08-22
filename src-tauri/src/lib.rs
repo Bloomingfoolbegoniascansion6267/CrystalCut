@@ -22,7 +22,7 @@ use std::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::{GenericImageView, ImageFormat, ImageReader};
 use protocol::{
-    BatchItemStatus, BatchProgress, BatchResult, EdgeSettings, ExportPlan, MaskMode,
+    BatchItemStatus, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ExportWarning, MaskMode,
     OutputLocation, OutputSettings, PlannedOutput, ProcessItem, ProcessedItemResult,
     ProcessingMode, ResizeMode, WorkerRequest, WorkerResponse, WORKER_PROTOCOL_VERSION,
 };
@@ -174,11 +174,30 @@ struct ImageAsset {
     exif: metadata::ExifSummary,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandError {
+    code: &'static str,
+    detail: String,
+}
+
+impl CommandError {
+    fn new(code: &'static str, detail: impl ToString) -> Self {
+        Self {
+            code,
+            detail: detail.to_string(),
+        }
+    }
+}
+
+type CommandResult<T> = Result<T, CommandError>;
+
 #[tauri::command]
-async fn inspect_paths(paths: Vec<String>) -> Result<Vec<ImageAsset>, String> {
-    tauri::async_runtime::spawn_blocking(move || inspect_paths_blocking(paths))
+async fn inspect_paths(paths: Vec<String>) -> CommandResult<Vec<ImageAsset>> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || inspect_paths_blocking(paths))
         .await
-        .map_err(|error| format!("파일 검사 작업에 실패했습니다: {error}"))?
+        .map_err(|error| CommandError::new("files.inspect", error))?;
+    outcome.map_err(|error| CommandError::new("files.inspect", error))
 }
 
 fn inspect_paths_blocking(paths: Vec<String>) -> Result<Vec<ImageAsset>, String> {
@@ -257,10 +276,12 @@ fn push_supported_file(path: PathBuf, files: &mut Vec<ImageAsset>, seen: &mut Ha
 }
 
 #[tauri::command]
-async fn load_preview(path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || load_preview_blocking(Path::new(&path)))
-        .await
-        .map_err(|error| format!("미리보기 작업에 실패했습니다: {error}"))?
+async fn load_preview(path: String) -> CommandResult<String> {
+    let outcome =
+        tauri::async_runtime::spawn_blocking(move || load_preview_blocking(Path::new(&path)))
+            .await
+            .map_err(|error| CommandError::new("preview.load", error))?;
+    outcome.map_err(|error| CommandError::new("preview.load", error))
 }
 
 fn load_preview_blocking(path: &Path) -> Result<String, String> {
@@ -268,12 +289,13 @@ fn load_preview_blocking(path: &Path) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn load_thumbnail(path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+async fn load_thumbnail(path: String) -> CommandResult<String> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
         load_image_data_url_blocking(Path::new(&path), MAX_THUMBNAIL_EDGE)
     })
     .await
-    .map_err(|error| format!("썸네일 작업에 실패했습니다: {error}"))?
+    .map_err(|error| CommandError::new("preview.thumbnail", error))?;
+    outcome.map_err(|error| CommandError::new("preview.thumbnail", error))
 }
 
 fn load_image_data_url_blocking(path: &Path, max_edge: u32) -> Result<String, String> {
@@ -348,11 +370,13 @@ async fn generate_mask_preview(
     mask_recipe: protocol::ManualMaskRecipe,
     edge_settings: EdgeSettings,
     settings: OutputSettings,
-) -> Result<MaskPreviewBundle, String> {
-    validate_mask_recipe(&mask_recipe)?;
-    validate_edge_settings(&edge_settings)?;
+) -> CommandResult<MaskPreviewBundle> {
+    validate_mask_recipe(&mask_recipe)
+        .map_err(|error| CommandError::new("preview.invalidMask", error))?;
+    validate_edge_settings(&edge_settings)
+        .map_err(|error| CommandError::new("preview.invalidEdge", error))?;
     let controller = controller.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
         let model_path = model::ensure_default_model(&app)?;
         let mut slot = controller
             .engine
@@ -377,7 +401,8 @@ async fn generate_mask_preview(
         encode_mask_preview_bundle(result, mask)
     })
     .await
-    .map_err(|error| format!("자동 결과 미리보기를 실행하지 못했습니다: {error}"))?
+    .map_err(|error| CommandError::new("preview.generateMask", error))?;
+    outcome.map_err(|error| CommandError::new("preview.generateMask", error))
 }
 
 #[tauri::command]
@@ -389,11 +414,13 @@ async fn generate_sam_preview(
     mask_recipe: protocol::ManualMaskRecipe,
     edge_settings: EdgeSettings,
     settings: OutputSettings,
-) -> Result<MaskPreviewBundle, String> {
-    validate_mask_recipe(&mask_recipe)?;
-    validate_edge_settings(&edge_settings)?;
+) -> CommandResult<MaskPreviewBundle> {
+    validate_mask_recipe(&mask_recipe)
+        .map_err(|error| CommandError::new("preview.invalidMask", error))?;
+    validate_edge_settings(&edge_settings)
+        .map_err(|error| CommandError::new("preview.invalidEdge", error))?;
     let controller = controller.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
         let paths = sam::ensure_models(&app)?;
         let mut slot = controller
             .engine
@@ -418,12 +445,13 @@ async fn generate_sam_preview(
         encode_mask_preview_bundle(result, mask)
     })
     .await
-    .map_err(|error| format!("AI 객체 선택 미리보기를 실행하지 못했습니다: {error}"))?
+    .map_err(|error| CommandError::new("preview.generateSam", error))?;
+    outcome.map_err(|error| CommandError::new("preview.generateSam", error))
 }
 
 #[tauri::command]
-fn get_model_status(app: AppHandle) -> Result<model::ModelStatus, String> {
-    model::status(&app)
+fn get_model_status(app: AppHandle) -> CommandResult<model::ModelStatus> {
+    model::status(&app).map_err(|error| CommandError::new("model.status", error))
 }
 
 #[derive(Debug, Serialize)]
@@ -438,14 +466,18 @@ struct AppDiagnostics {
 }
 
 #[tauri::command]
-fn get_app_diagnostics(app: AppHandle) -> Result<AppDiagnostics, String> {
+fn get_app_diagnostics(app: AppHandle) -> CommandResult<AppDiagnostics> {
+    let app_data_directory = workspace::app_data_directory(&app)
+        .map_err(|error| CommandError::new("diagnostics.load", error))?;
+    let database_bytes = workspace::database_size(&app)
+        .map_err(|error| CommandError::new("diagnostics.load", error))?;
     Ok(AppDiagnostics {
         app_version: app.package_info().version.to_string(),
         worker_protocol_version: WORKER_PROTOCOL_VERSION,
         operating_system: std::env::consts::OS,
         architecture: std::env::consts::ARCH,
-        app_data_directory: workspace::app_data_directory(&app)?,
-        database_bytes: workspace::database_size(&app)?,
+        app_data_directory,
+        database_bytes,
     })
 }
 
@@ -453,38 +485,45 @@ fn get_app_diagnostics(app: AppHandle) -> Result<AppDiagnostics, String> {
 async fn install_model(
     app: AppHandle,
     controller: State<'_, BatchController>,
-) -> Result<model::ModelStatus, String> {
+) -> CommandResult<model::ModelStatus> {
     let controller = controller.inner().clone();
-    controller.begin()?;
+    controller
+        .begin()
+        .map_err(|error| CommandError::new("model.install", error))?;
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         model::ensure_default_model(&app)?;
         model::status(&app)
     })
     .await;
     controller.finish();
-    outcome.map_err(|error| format!("모델 설치 작업을 실행하지 못했습니다: {error}"))?
+    let outcome = outcome.map_err(|error| CommandError::new("model.install", error))?;
+    outcome.map_err(|error| CommandError::new("model.install", error))
 }
 
 #[tauri::command]
 fn delete_model(
     app: AppHandle,
     controller: State<'_, BatchController>,
-) -> Result<model::ModelStatus, String> {
+) -> CommandResult<model::ModelStatus> {
     let controller = controller.inner().clone();
-    controller.begin()?;
+    controller
+        .begin()
+        .map_err(|error| CommandError::new("model.delete", error))?;
     let outcome = model::remove_default_model(&app);
     controller.finish();
-    outcome
+    outcome.map_err(|error| CommandError::new("model.delete", error))
 }
 
 #[tauri::command]
 async fn prepare_export_plan(
     items: Vec<ProcessItem>,
     settings: OutputSettings,
-) -> Result<ExportPlan, String> {
-    tauri::async_runtime::spawn_blocking(move || prepare_export_plan_blocking(items, settings))
-        .await
-        .map_err(|error| format!("출력 예상 작업을 실행하지 못했습니다: {error}"))?
+) -> CommandResult<ExportPlan> {
+    let outcome =
+        tauri::async_runtime::spawn_blocking(move || prepare_export_plan_blocking(items, settings))
+            .await
+            .map_err(|error| CommandError::new("output.plan", error))?;
+    outcome.map_err(|error| CommandError::new("output.plan", error))
 }
 
 fn prepare_export_plan_blocking(
@@ -560,20 +599,24 @@ async fn process_batch(
     controller: State<'_, BatchController>,
     items: Vec<ProcessItem>,
     settings: OutputSettings,
-) -> Result<BatchResult, String> {
-    validate_settings(&settings)?;
+) -> CommandResult<BatchResult> {
+    validate_settings(&settings)
+        .map_err(|error| CommandError::new("batch.invalidSettings", error))?;
     if items.is_empty() {
-        return Err("처리할 이미지가 없습니다.".to_owned());
+        return Err(CommandError::new("batch.empty", "no process items"));
     }
     let controller = controller.inner().clone();
-    controller.begin()?;
+    controller
+        .begin()
+        .map_err(|error| CommandError::new("batch.busy", error))?;
     let blocking_controller = controller.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         process_batch_blocking(app, items, settings, blocking_controller)
     })
     .await;
     controller.finish();
-    outcome.map_err(|error| format!("batch 작업을 실행하지 못했습니다: {error}"))?
+    let outcome = outcome.map_err(|error| CommandError::new("batch.run", error))?;
+    outcome.map_err(|error| CommandError::new("batch.run", error))
 }
 
 #[tauri::command]
@@ -582,51 +625,59 @@ fn cancel_batch(controller: State<'_, BatchController>) -> bool {
 }
 
 #[tauri::command]
-async fn load_workspace(app: AppHandle) -> Result<Option<workspace::RestoredWorkspace>, String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::load(&app))
+async fn load_workspace(app: AppHandle) -> CommandResult<Option<workspace::RestoredWorkspace>> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || workspace::load(&app))
         .await
-        .map_err(|error| format!("작업 공간 복구를 실행하지 못했습니다: {error}"))?
+        .map_err(|error| CommandError::new("workspace.load", error))?;
+    outcome.map_err(|error| CommandError::new("workspace.load", error))
 }
 
 #[tauri::command]
 async fn save_workspace(
     app: AppHandle,
     snapshot: workspace::WorkspaceSnapshot,
-) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::save(&app, snapshot))
+) -> CommandResult<()> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || workspace::save(&app, snapshot))
         .await
-        .map_err(|error| format!("작업 공간 저장을 실행하지 못했습니다: {error}"))?
+        .map_err(|error| CommandError::new("workspace.save", error))?;
+    outcome.map_err(|error| CommandError::new("workspace.save", error))
 }
 
 #[tauri::command]
-async fn clear_workspace(app: AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::clear(&app))
+async fn clear_workspace(app: AppHandle) -> CommandResult<()> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || workspace::clear(&app))
         .await
-        .map_err(|error| format!("작업 공간 초기화를 실행하지 못했습니다: {error}"))?
+        .map_err(|error| CommandError::new("workspace.clear", error))?;
+    outcome.map_err(|error| CommandError::new("workspace.clear", error))
 }
 
 #[tauri::command]
-async fn load_app_preferences(app: AppHandle) -> Result<workspace::AppPreferences, String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::load_preferences(&app))
+async fn load_app_preferences(app: AppHandle) -> CommandResult<workspace::AppPreferences> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || workspace::load_preferences(&app))
         .await
-        .map_err(|error| format!("환경설정 복구를 실행하지 못했습니다: {error}"))?
+        .map_err(|error| CommandError::new("preferences.load", error))?;
+    outcome.map_err(|error| CommandError::new("preferences.load", error))
 }
 
 #[tauri::command]
 async fn save_app_preferences(
     app: AppHandle,
     preferences: workspace::AppPreferences,
-) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::save_preferences(&app, preferences))
-        .await
-        .map_err(|error| format!("환경설정 저장을 실행하지 못했습니다: {error}"))?
+) -> CommandResult<()> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        workspace::save_preferences(&app, preferences)
+    })
+    .await
+    .map_err(|error| CommandError::new("preferences.save", error))?;
+    outcome.map_err(|error| CommandError::new("preferences.save", error))
 }
 
 #[tauri::command]
-async fn reset_app_preferences(app: AppHandle) -> Result<workspace::AppPreferences, String> {
-    tauri::async_runtime::spawn_blocking(move || workspace::reset_preferences(&app))
+async fn reset_app_preferences(app: AppHandle) -> CommandResult<workspace::AppPreferences> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || workspace::reset_preferences(&app))
         .await
-        .map_err(|error| format!("환경설정 초기화를 실행하지 못했습니다: {error}"))?
+        .map_err(|error| CommandError::new("preferences.reset", error))?;
+    outcome.map_err(|error| CommandError::new("preferences.reset", error))
 }
 
 #[tauri::command]
@@ -998,7 +1049,7 @@ fn plan_output_path(
     Err("사용 가능한 출력 파일명을 만들지 못했습니다.".to_owned())
 }
 
-fn naming_warnings(items: &[ProcessItem], settings: &OutputSettings) -> Vec<String> {
+fn naming_warnings(items: &[ProcessItem], settings: &OutputSettings) -> Vec<ExportWarning> {
     let needs_taken = settings.name_template.contains("{taken:");
     let needs_camera = settings.name_template.contains("{camera}");
     let needs_lens = settings.name_template.contains("{lens}");
@@ -1024,19 +1075,22 @@ fn naming_warnings(items: &[ProcessItem], settings: &OutputSettings) -> Vec<Stri
 
     let mut warnings = Vec::new();
     if missing_taken > 0 {
-        warnings.push(format!(
-            "촬영일이 없는 {missing_taken}개 파일은 undated로 저장됩니다."
-        ));
+        warnings.push(ExportWarning {
+            code: "missingTakenAt",
+            count: missing_taken,
+        });
     }
     if missing_camera > 0 {
-        warnings.push(format!(
-            "카메라 정보가 없는 {missing_camera}개 파일은 unknown-camera로 저장됩니다."
-        ));
+        warnings.push(ExportWarning {
+            code: "missingCamera",
+            count: missing_camera,
+        });
     }
     if missing_lens > 0 {
-        warnings.push(format!(
-            "렌즈 정보가 없는 {missing_lens}개 파일은 unknown-lens로 저장됩니다."
-        ));
+        warnings.push(ExportWarning {
+            code: "missingLens",
+            count: missing_lens,
+        });
     }
     warnings
 }
@@ -1143,6 +1197,7 @@ pub fn run() {
         .manage(MaskPreviewController::default())
         .manage(SamPreviewController::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_os::init())
         .invoke_handler(tauri::generate_handler![
             inspect_paths,
             load_preview,

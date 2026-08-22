@@ -1,71 +1,232 @@
-# CrystalCut
+<p align="center">
+  <img src="assets/app-icon.svg" alt="CrystalCut" width="112" />
+</p>
 
-<img src="assets/app-icon.svg" alt="CrystalCut 로고" width="96" />
+<h1 align="center">CrystalCut</h1>
 
-Windows와 macOS에서 이미지 배경을 로컬로 제거하고 일괄 변환하는 Tauri 2 데스크톱 앱입니다. 현재는 실제 파일을 선택해 ONNX 추론부터 PNG/WebP 저장까지 완료할 수 있는 핵심 end-to-end vertical slice가 구현되어 있습니다.
+<p align="center">
+  Fast, local-first background removal and batch image conversion for Windows and macOS.
+</p>
 
-브랜드 원본은 `assets/app-icon.svg`이며 수정 형태와 정밀한 절단면을 결합한 심볼입니다. 플랫폼 아이콘은 `npx tauri icon assets/app-icon.svg`로 동일 원본에서 생성합니다.
+<p align="center">
+  <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-7057e8" />
+  <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" />
+  <img alt="Rust" src="https://img.shields.io/badge/engine-Rust-000000?logo=rust&logoColor=white" />
+  <img alt="Local processing" src="https://img.shields.io/badge/processing-local--first-2f855a" />
+  <img alt="9 languages" src="https://img.shields.io/badge/languages-9-4f46e5" />
+</p>
 
-## 현재 구현
+<p align="center">
+  <a href="../../releases/latest"><strong>Download the latest release</strong></a>
+  ·
+  <a href="#quick-start">Build from source</a>
+  ·
+  <a href="#한국어-안내">한국어 안내</a>
+</p>
 
-- React/TypeScript 기반 3단 작업 화면과 접을 수 있는 좌우 패널, 확대·축소·이동 가능한 원본·편집 미리보기, 드래그 분할 비교
-- 파일·폴더 drag-and-drop 및 native picker, Rust 기반 이미지 유효성·크기 검사와 목록 썸네일 즉시 선로딩
-- UI와 분리된 동일 실행 파일의 `--worker` 모드 및 버전이 명시된 JSONL protocol
-- 최초 처리 시 U2NetP 모델 다운로드, 파일 크기·SHA-256 검증, 안전한 임시 파일 교체
-- 로컬 ONNX Runtime 추론, 파일별 유지·제거 브러시 마스크, 기존 알파 보존, 회전 및 비율/긴 변 기준 크기 변경
-- AI 자동 마스크 보정과 직접 칠하기 모드, Undo/Redo 및 작업 공간 자동 복구
-- 파일별 가장자리 감지(매끄럽게·페더·확장/축소·희미한 배경 제거·마스크 대비)와 항목 기본값 복원
-- PNG 압축 강도와 WebP 손실/무손실·품질 설정
-- 형식·품질·크기·저장 위치·이름 규칙·메타데이터를 묶는 출력 프리셋 저장·불러오기
-- 원본과 같은 폴더, 하위 폴더, 사용자 지정 폴더 저장 및 접두사·접미사
-- EXIF 촬영일·카메라·렌즈 및 순번을 조합하는 안전한 파일명 템플릿과 실시간 미리보기
-- 선택 시 촬영일·카메라·렌즈만 PNG/WebP에 보존하고 GPS와 원본 전체 EXIF는 제외
-- 최대 3개 대표 파일의 실제 encoder sample을 이용한 출력 용량·증감률 사전 예측
-- 출력 충돌 시 기존 파일을 덮어쓰지 않고 `이름 (2).png` 방식으로 자동 회피
-- 항목별 처리 상태, 전체 진행률, 결과 용량·소요 시간 표시
-- 현재 파일 완료 후 안전하게 중단하는 batch 취소와 실패·취소 항목만 다시 처리하는 재시도
-- worker 통신 종료 시 새 프로세스로 1회 자동 복구하며 완료 직후 응답 손실도 중복 저장 없이 회수
-- SQLite WAL에 작업 목록·출력 설정·처리 상태를 자동 저장하고 앱 재시작 시 파일을 재검증해 복구
-- 환경설정 modal에서 새 작업 기본값·복구 정책·AI 모델·저장 공간·개인정보·진단 정보 관리
-- 작업 목록 파일의 미리보기·회전·원본/결과 위치 열기·목록 제거를 제공하는 앱 전용 우클릭 메뉴와 Windows 릴리스 콘솔 숨김
+CrystalCut turns background removal into a dependable desktop workflow: add one image or a whole folder, review the result instantly, refine the object when needed, and export optimized PNG or WebP files with one click. Images stay on your computer; only the pinned AI model files are downloaded on first use.
 
-U2NetP는 처리 파이프라인과 배포 구조를 빠르게 검증하기 위한 경량 모델입니다. 머리카락·반투명 물체 같은 최종 제품 품질은 BiRefNet 등 후보 모델을 동일 protocol 뒤에서 비교한 후 결정합니다. GPU provider와 모델 품질 benchmark는 다음 단계입니다.
+![CrystalCut workspace](docs/assets/crystalcut-workspace.png)
 
-파일명 템플릿은 `{name}`, `{prefix}`, `{suffix}`, `{taken:yyMMdd_HHmmss}`, `{seq:03}`, `{camera}`, `{lens}`를 지원합니다. 촬영일·카메라·렌즈 정보가 없으면 각각 `undated`, `unknown-camera`, `unknown-lens`를 사용하므로 batch 결과가 임의로 달라지지 않습니다. GPS EXIF는 읽거나 UI에 노출하지 않습니다.
+## Why CrystalCut?
 
-## 개발 실행
+| | Capability |
+| --- | --- |
+| **Private by design** | Background removal, previews, brush masks, resizing, metadata handling and encoding run locally. Images are not uploaded. |
+| **Fast batch workflow** | Drag in files or folders, preload thumbnails, process a queue, cancel safely, and retry only unfinished items. |
+| **Editable AI results** | Use automatic removal, SlimSAM object selection, a keep/remove brush, undo/redo and per-file edge controls. |
+| **More than a remover** | Convert without removing the background, rotate, resize, compress and rename an entire batch. |
+| **Predictable output** | Preview names and estimated sizes, avoid accidental overwrites, and save complete output presets. |
+| **Native desktop feel** | Tauri 2 shell, Rust processing engine, native pickers, app-specific context menus and no release console window on Windows. |
+
+## A three-step workflow
+
+1. **Add images** — choose JPEG, PNG or WebP files, select a folder, paste, or drag and drop.
+2. **Review and refine** — inspect the live result, zoom, pan, rotate, view the mask, or drag the comparison slider across the original and edited image.
+3. **Export once or in bulk** — remove backgrounds or convert only, then apply format, quality, size, metadata, destination and naming rules to the queue.
+
+## Editing and preview tools
+
+- Automatic U2NetP background removal with a verified, pinned model download.
+- SlimSAM-assisted object selection using include/exclude marks.
+- Manual selection from an empty mask and brush refinement over an AI result.
+- Restore/erase brushes, adjustable brush size, undo, redo and clear actions.
+- Original, result, mask and split comparison views.
+- Wheel zoom, toolbar zoom, fit-to-screen and drag-to-pan navigation.
+- Live per-file edge preview for smoothing, feathering, mask expansion/contraction, faint-pixel trimming, contrast and original-alpha preservation.
+
+## Batch output
+
+### Formats and size
+
+- Input: **JPEG, PNG, WebP**
+- Output: **PNG, lossy WebP, lossless WebP**
+- Keep original dimensions, resize by percentage, or set the long edge in pixels.
+- Prevent upscaling of smaller source images.
+- Tune WebP quality or PNG compression effort and see an estimated size change before export.
+- Switch to **Convert only** to keep the background while applying rotation, resize, format and compression.
+
+### Destination and naming
+
+- Save beside each original, into a new neighboring folder, or into one chosen folder.
+- Add a prefix or suffix, or build a reusable file-name template.
+- Available tokens: `{name}`, `{prefix}`, `{suffix}`, `{taken:yyMMdd_HHmmss}`, `{seq:03}`, `{camera}`, `{lens}`.
+- Missing EXIF values resolve deterministically to `undated`, `unknown-camera` and `unknown-lens`.
+- Existing files are never overwritten silently; CrystalCut creates `name (2).png`, and so on.
+- Save format, quality, size, destination, naming and metadata as an output preset.
+
+### Metadata and privacy
+
+When metadata preservation is enabled, CrystalCut writes only the capture date, camera and lens to the output. GPS and the full original EXIF block are never copied. Location EXIF is not stored in the job database.
+
+## Languages
+
+CrystalCut follows the operating-system language by default and can be changed instantly in Settings.
+
+- 한국어
+- English
+- 日本語
+- 简体中文
+- 繁體中文
+- Español
+- Deutsch
+- Français
+- Português (Brasil)
+
+All 355 interface messages—including toasts, errors, confirmations, context menus and accessibility labels—are covered in every supported locale. The build fails if a locale is missing a message.
+
+## Download and installation
+
+Open [GitHub Releases](../../releases/latest) and choose the package for your computer:
+
+- **Windows x64:** the `setup.exe` installer is the simplest option; `.msi` is also published for managed environments.
+- **macOS Apple Silicon:** for M1, M2, M3, M4 and newer Apple chips.
+- **macOS Intel:** for older Intel-based Macs.
+
+Current community builds are unsigned. Windows SmartScreen or macOS Gatekeeper may therefore ask you to confirm the first launch. Code signing is intentionally kept separate from the public build workflow until signing credentials are configured.
+
+The removal model and SlimSAM files are not bundled into the installer. They are downloaded only when needed, verified against pinned size/hash metadata, and cached in the application data folder. After installation, first-time AI use therefore requires an internet connection.
+
+## Architecture
+
+```text
+React + TypeScript UI
+        │  typed Tauri commands / events
+        ▼
+Rust desktop coordinator ─── SQLite workspace and preferences
+        │  versioned JSONL over stdio
+        ▼
+Same executable in --worker mode
+        ├── ONNX Runtime inference (U2NetP / SlimSAM)
+        ├── mask and edge processing
+        └── rotate, resize, metadata and PNG/WebP encoding
+```
+
+The UI process never performs heavy image work. The worker can be restarted once after an unexpected communication failure, and completed output is recovered without saving a duplicate. Workspace state uses SQLite WAL and is revalidated when the app reopens.
+
+## Quick start
+
+### Prerequisites
+
+- Node.js 20 or newer (CI uses Node.js 22)
+- Rust stable toolchain
+- [Tauri 2 platform prerequisites](https://v2.tauri.app/start/prerequisites/) for Windows or macOS
+
+### Run the desktop app
 
 ```powershell
-npm install
+git clone <your-fork-or-repository-url>
+cd CrystalCut
+npm ci
 npm run tauri dev
 ```
 
-프론트엔드만 확인하려면 다음 명령을 사용합니다. 이 모드에서는 native 파일 처리 기능을 사용할 수 없습니다.
+To inspect only the React interface in a browser:
 
 ```powershell
 npm run dev
 ```
 
-첫 실제 처리 때 모델을 앱 데이터 폴더에 내려받습니다. 개발 저장소의 `models/cache/`는 로컬 검증용이며 Git에서 제외됩니다. 모델 출처·해시·입력 규격은 [`models/manifest/u2netp.json`](models/manifest/u2netp.json)에 고정되어 있습니다.
+Native file inspection, AI inference and export require the Tauri desktop runtime and are intentionally unavailable in browser-only mode.
 
-## 검사
+## Validation
 
 ```powershell
 npm run build
+npm run check:release
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run build:desktop
 ```
 
-릴리스 실행 파일은 반드시 `npm run build:desktop`으로 생성합니다. 이 script가 production build 표식을 설정하고 Tauri CLI를 실행합니다. `cargo build --release`를 직접 실행하면 Tauri의 production `custom-protocol` 없이 개발 서버 주소를 바라보는 실행 파일이 만들어질 수 있으므로 build script가 이를 차단합니다.
+- `npm run build:desktop` creates an unbundled production executable for local verification.
+- `npm run build:bundle` creates the installers supported by the current operating system.
+- Do not run `cargo build --release` directly: the build guard prevents a release binary from accidentally retaining the development-server URL.
 
-## 문서
+## Publishing a GitHub release
 
-- [제품·아키텍처 계획](docs/PRODUCT_ARCHITECTURE_PLAN.ko.md)
-- [현재 구현 구조와 검증 결과](docs/IMPLEMENTATION_STATUS.ko.md)
-- [전체 UI/UX 감사 및 개선 계획](docs/UI_UX_AUDIT_PLAN.ko.md)
-- [수동 객체 선택·마스크 보정·환경설정 구현 계획](docs/MANUAL_MASK_AND_SETTINGS_PLAN.ko.md)
-- [SAM 계열 객체 선택 통합 계획](docs/SAM_INTEGRATION_PLAN.ko.md)
-- [제3자 AI 모델 고지](docs/THIRD_PARTY_MODELS.ko.md)
-- [ADR 0001: Electron 대신 Tauri 2 사용](docs/adr/0001-tauri-over-electron.ko.md)
+The repository includes [`.github/workflows/release.yml`](.github/workflows/release.yml). Pushing a version tag builds Windows x64, macOS Apple Silicon and macOS Intel packages in parallel, creates a GitHub Release and uploads each installer.
+
+Before tagging, keep the version identical in these three files:
+
+- `package.json`
+- `src-tauri/tauri.conf.json`
+- `src-tauri/Cargo.toml`
+
+Then validate and push the matching tag:
+
+```powershell
+npm run check:release
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow rejects a tag that does not match the application version. Release assets are also retained as GitHub Actions artifacts. The workflow uses the official Tauri release action pinned to an explicit version; add Windows and Apple signing secrets later without committing certificates or passwords.
+
+## Project layout
+
+```text
+assets/                 Brand source artwork
+docs/                   Product, UX, model and localization decisions
+models/manifest/        Pinned background-removal model metadata
+scripts/                Build and consistency checks
+src/                    React UI and locale catalogs
+src-tauri/src/          Rust coordinator, worker, inference and image pipeline
+.github/workflows/      Cross-platform GitHub Release automation
+```
+
+## Current limitations and roadmap
+
+- U2NetP is the lightweight baseline. Hair, glass, fur and other difficult edges still need broader BiRefNet-style model benchmarking.
+- Processing is CPU-first; DirectML/CoreML selection remains disabled until quality and recovery behavior are validated.
+- The first model download can take time depending on the network.
+- Public builds are not yet code-signed or notarized.
+- Installer and model licenses must be reviewed together with [third-party model notices](docs/05_THIRD_PARTY_MODELS.ko.md) before commercial redistribution.
+
+Well-scoped bug reports are welcome. For processing issues, include the OS, CPU architecture, CrystalCut version, model status and the diagnostics shown in Settings—without attaching private source images unless you choose to share them.
+
+## Documentation
+
+- [Product and architecture plan (Korean)](docs/01_PRODUCT_ARCHITECTURE_PLAN.ko.md)
+- [Implementation status (Korean)](docs/02_IMPLEMENTATION_STATUS.ko.md)
+- [Manual masks and settings plan (Korean)](docs/03_MANUAL_MASK_AND_SETTINGS_PLAN.ko.md)
+- [SAM integration plan (Korean)](docs/04_SAM_INTEGRATION_PLAN.ko.md)
+- [Third-party AI model notices (Korean)](docs/05_THIRD_PARTY_MODELS.ko.md)
+- [UI/UX audit (Korean)](docs/06_UI_UX_AUDIT_PLAN.ko.md)
+- [Localization implementation plan (Korean)](docs/07_LOCALIZATION_IMPLEMENTATION_PLAN.ko.md)
+- [ADR: Tauri instead of Electron (Korean)](docs/adr/01_tauri-over-electron.ko.md)
+
+## 한국어 안내
+
+CrystalCut은 Windows와 macOS에서 동작하는 로컬 우선 배경 제거·일괄 이미지 변환 앱입니다. 이미지나 폴더를 추가한 뒤 자동 배경 제거 결과를 즉시 확인하고, 필요할 때 AI 객체 선택 또는 유지·제거 브러시로 보정할 수 있습니다. 배경을 지우지 않고 회전·크기·형식·압축만 일괄 적용하는 변환 모드도 제공합니다.
+
+- 원본·결과·마스크·드래그 비교 화면과 확대·축소·이동
+- 파일별 가장자리 감지 설정과 실시간 미리보기
+- PNG/WebP, 화질·압축, 비율·긴 변 크기 변경
+- 같은 폴더·새 폴더·지정 폴더 저장과 EXIF 기반 파일명
+- 출력 프리셋, 작업 자동 복구, 안전한 취소·재시도
+- 촬영일·카메라·렌즈 선택 보존, GPS 항상 제외
+- 시스템 언어 자동 감지 및 9개 언어 완전 지원
+
+이미지는 외부 서버로 전송되지 않습니다. 최초 AI 기능 사용 시 검증된 모델 파일만 내려받으며, 이후에는 앱 데이터 폴더의 로컬 캐시를 사용합니다. 일반 사용자는 [Releases](../../releases/latest)에서 운영체제에 맞는 설치 파일을 받으면 됩니다.

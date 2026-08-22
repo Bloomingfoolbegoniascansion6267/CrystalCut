@@ -99,7 +99,12 @@ export interface ExportPlan {
   estimatedOutputBytes: number | null;
   estimatedSavingsPercent: number | null;
   estimateSampleCount: number;
-  warnings: string[];
+  warnings: ExportWarning[];
+}
+
+export interface ExportWarning {
+  code: "missingTakenAt" | "missingCamera" | "missingLens";
+  count: number;
 }
 
 export interface PlannedOutput {
@@ -162,6 +167,7 @@ export interface AppPreferences {
   defaultSettings: OutputSettings;
   restoreWorkspace: boolean;
   presets: OutputPreset[];
+  language: LanguagePreference;
 }
 
 export interface OutputPreset {
@@ -178,3 +184,4 @@ export interface AppDiagnostics {
   appDataDirectory: string;
   databaseBytes: number;
 }
+import type { LanguagePreference } from "./i18n/locale";

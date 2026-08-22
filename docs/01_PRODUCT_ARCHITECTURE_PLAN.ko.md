@@ -3,7 +3,7 @@
 작성일: 2026-08-22  
 대상: Windows / macOS 신규 데스크톱 애플리케이션
 
-> **결정 상태:** 2026-08-22에 Electron과 Tauri를 비교한 뒤 **Tauri 2**를 최종 선택했다. 상세 근거는 `docs/adr/0001-tauri-over-electron.ko.md`에 기록한다.
+> **결정 상태:** 2026-08-22에 Electron과 Tauri를 비교한 뒤 **Tauri 2**를 최종 선택했다. 상세 근거는 `docs/adr/01_tauri-over-electron.ko.md`에 기록한다.
 
 ## 1. 제품 정의
 

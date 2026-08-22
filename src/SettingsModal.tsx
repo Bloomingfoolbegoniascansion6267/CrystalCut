@@ -1,6 +1,8 @@
-import { KeyboardEvent, useEffect, useRef, useState } from "react";
+import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { AppDiagnostics, AppPreferences, ModelStatus, OutputSettings } from "./types";
 import { formatBytes } from "./lib/format";
+import { useI18n } from "./i18n/I18nProvider";
+import { LOCALE_OPTIONS, type LanguagePreference } from "./i18n/locale";
 
 export type SettingsTab = "general" | "model" | "privacy" | "diagnostics";
 
@@ -20,14 +22,8 @@ interface SettingsModalProps {
   onDeleteModel: () => Promise<void>;
   onChooseDefaultDirectory: () => Promise<string | null>;
   onRefreshDiagnostics: () => Promise<void>;
+  onPreviewLanguage: (language: LanguagePreference) => void;
 }
-
-const TAB_LABELS: Array<{ id: SettingsTab; label: string; description: string }> = [
-  { id: "general", label: "일반", description: "새 작업 기본값과 복구" },
-  { id: "model", label: "AI 모델", description: "로컬 모델과 저장 공간" },
-  { id: "privacy", label: "개인정보", description: "메타데이터 처리 정책" },
-  { id: "diagnostics", label: "진단", description: "버전과 데이터 경로" },
-];
 
 const clonePreferences = (preferences: AppPreferences): AppPreferences => ({
   ...preferences,
@@ -51,11 +47,26 @@ export default function SettingsModal({
   onDeleteModel,
   onChooseDefaultDirectory,
   onRefreshDiagnostics,
+  onPreviewLanguage,
 }: SettingsModalProps) {
+  const { t, formatLocale, systemLocale } = useI18n();
   const [tab, setTab] = useState<SettingsTab>("general");
   const [draft, setDraft] = useState(() => clonePreferences(preferences));
   const dialogRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const tabLabels = useMemo<Array<{ id: SettingsTab; label: string; description: string }>>(() => [
+    { id: "general", label: t("settings.tab.general"), description: t("settings.tab.generalHelp") },
+    { id: "model", label: t("settings.tab.model"), description: t("settings.tab.modelHelp") },
+    { id: "privacy", label: t("settings.tab.privacy"), description: t("settings.tab.privacyHelp") },
+    { id: "diagnostics", label: t("settings.tab.diagnostics"), description: t("settings.tab.diagnosticsHelp") },
+  ], [t]);
+  const systemLanguageName = useMemo(() => {
+    try {
+      return new Intl.DisplayNames([formatLocale], { type: "language" }).of(systemLocale) ?? systemLocale;
+    } catch {
+      return systemLocale;
+    }
+  }, [formatLocale, systemLocale]);
 
   useEffect(() => {
     if (!open) return;
@@ -68,16 +79,18 @@ export default function SettingsModal({
   if (!open) return null;
 
   const updateDefaultSettings = (patch: Partial<OutputSettings>) => {
-    setDraft((current) => ({
-      ...current,
-      defaultSettings: { ...current.defaultSettings, ...patch },
-    }));
+    setDraft((current) => ({ ...current, defaultSettings: { ...current.defaultSettings, ...patch } }));
+  };
+
+  const cancelAndClose = () => {
+    onPreviewLanguage(preferences.language);
+    onClose();
   };
 
   const handleDialogKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape" && !busyAction) {
       event.preventDefault();
-      onClose();
+      cancelAndClose();
       return;
     }
     if (event.key !== "Tab") return;
@@ -97,10 +110,11 @@ export default function SettingsModal({
   };
 
   const handleReset = async () => {
-    if (!window.confirm("환경설정을 권장 기본값으로 초기화할까요? 현재 작업 목록과 파일은 유지됩니다.")) return;
+    if (!window.confirm(t("dialog.resetSettings"))) return;
     try {
       const reset = await onReset();
       setDraft(clonePreferences(reset));
+      onPreviewLanguage(reset.language);
     } catch {
       // The parent presents the error and the current draft remains intact.
     }
@@ -120,64 +134,51 @@ export default function SettingsModal({
     }
   };
 
+  const selectLanguage = (language: LanguagePreference) => {
+    setDraft((current) => ({ ...current, language }));
+    onPreviewLanguage(language);
+  };
+
   const renderGeneral = () => (
     <div className="preferences-sections">
+      <section className="preferences-card language-card">
+        <div className="preferences-card-heading stacked">
+          <div><strong>{t("settings.language.title")}</strong><span>{t("settings.language.help")}</span></div>
+        </div>
+        <label className="preferences-wide-field">
+          <select aria-label={t("settings.language.title")} value={draft.language} onChange={(event) => selectLanguage(event.target.value as LanguagePreference)}>
+            <option value="system">{t("settings.language.system", { language: systemLanguageName })}</option>
+            {LOCALE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.nativeName}</option>)}
+          </select>
+        </label>
+      </section>
+
       <section className="preferences-card">
         <div className="preferences-card-heading">
-          <div><strong>작업 복구</strong><span>앱을 다시 열었을 때 마지막 목록과 진행 상태를 복원합니다.</span></div>
+          <div><strong>{t("settings.restore.title")}</strong><span>{t("settings.restore.help")}</span></div>
           <label className="switch-control">
-            <input
-              type="checkbox"
-              checked={draft.restoreWorkspace}
-              onChange={(event) => setDraft((current) => ({ ...current, restoreWorkspace: event.target.checked }))}
-            />
+            <input type="checkbox" checked={draft.restoreWorkspace} onChange={(event) => setDraft((current) => ({ ...current, restoreWorkspace: event.target.checked }))} />
             <span aria-hidden="true" />
           </label>
         </div>
-        {!draft.restoreWorkspace && <p className="preferences-note warning">저장된 작업은 삭제하지 않지만 다음 실행에서 자동으로 불러오지 않습니다.</p>}
+        {!draft.restoreWorkspace && <p className="preferences-note warning">{t("settings.restore.off")}</p>}
       </section>
 
       <section className="preferences-card">
         <div className="preferences-card-heading stacked">
-          <div><strong>새 작업 기본값</strong><span>작업 목록이 비어 있을 때 사용할 출력 설정 조합입니다.</span></div>
-          <button className="small-action" type="button" onClick={() => setDraft((current) => ({ ...current, defaultSettings: { ...currentSettings } }))}>현재 작업 설정 가져오기</button>
+          <div><strong>{t("settings.defaults.title")}</strong><span>{t("settings.defaults.help")}</span></div>
+          <button className="small-action" type="button" onClick={() => setDraft((current) => ({ ...current, defaultSettings: { ...currentSettings } }))}>{t("settings.defaults.import")}</button>
         </div>
         <div className="preferences-form-grid">
-          <label>
-            <span>이미지 형식</span>
-            <select value={draft.defaultSettings.format} onChange={(event) => updateDefaultSettings({ format: event.target.value as OutputSettings["format"] })}>
-              <option value="png">PNG · 무손실 투명도</option>
-              <option value="webp">WebP · 작은 용량</option>
-            </select>
-          </label>
-          <label>
-            <span>기본 저장 위치</span>
-            <select value={draft.defaultSettings.outputLocation} onChange={(event) => updateDefaultSettings({ outputLocation: event.target.value as OutputSettings["outputLocation"] })}>
-              <option value="subfolder">원본 아래 새 폴더</option>
-              <option value="sameFolder">원본과 같은 폴더</option>
-              <option value="custom">지정한 한 폴더</option>
-            </select>
-          </label>
-          <label>
-            <span>앞에 붙이기</span>
-            <input value={draft.defaultSettings.prefix} onChange={(event) => updateDefaultSettings({ prefix: event.target.value })} placeholder="예: cut_" />
-          </label>
-          <label>
-            <span>뒤에 붙이기</span>
-            <input value={draft.defaultSettings.suffix} onChange={(event) => updateDefaultSettings({ suffix: event.target.value })} placeholder="예: _bg" />
-          </label>
+          <label><span>{t("settings.format")}</span><select value={draft.defaultSettings.format} onChange={(event) => updateDefaultSettings({ format: event.target.value as OutputSettings["format"] })}><option value="png">{t("settings.format.png")}</option><option value="webp">{t("settings.format.webp")}</option></select></label>
+          <label><span>{t("settings.defaultLocation")}</span><select value={draft.defaultSettings.outputLocation} onChange={(event) => updateDefaultSettings({ outputLocation: event.target.value as OutputSettings["outputLocation"] })}><option value="subfolder">{t("settings.defaultLocation.subfolder")}</option><option value="sameFolder">{t("settings.defaultLocation.sameFolder")}</option><option value="custom">{t("settings.defaultLocation.custom")}</option></select></label>
+          <label><span>{t("output.prefix")}</span><input value={draft.defaultSettings.prefix} onChange={(event) => updateDefaultSettings({ prefix: event.target.value })} placeholder="cut_" /></label>
+          <label><span>{t("output.suffix")}</span><input value={draft.defaultSettings.suffix} onChange={(event) => updateDefaultSettings({ suffix: event.target.value })} placeholder="_bg" /></label>
         </div>
-        {draft.defaultSettings.outputLocation === "custom" && (
-          <button className="preferences-path-picker" type="button" onClick={() => void handleChooseDirectory()}>
-            <span>{draft.defaultSettings.outputDirectory || "기본 저장 폴더를 선택하세요"}</span><b>찾아보기</b>
-          </button>
-        )}
-        <label className="preferences-wide-field">
-          <span>파일 이름 템플릿</span>
-          <input value={draft.defaultSettings.nameTemplate} spellCheck={false} onChange={(event) => updateDefaultSettings({ nameTemplate: event.target.value })} />
-        </label>
-        <label className="check-row preferences-metadata-check"><input type="checkbox" checked={draft.defaultSettings.preserveMetadata} onChange={(event) => updateDefaultSettings({ preserveMetadata: event.target.checked })} /><span aria-hidden="true">✓</span>새 작업에서 촬영 메타데이터 보존</label>
-        <p className="preferences-note">품질·압축·크기 변경 값도 함께 저장됩니다. 세부 값은 현재 작업 설정을 가져온 뒤 저장할 수 있습니다.</p>
+        {draft.defaultSettings.outputLocation === "custom" && <button className="preferences-path-picker" type="button" onClick={() => void handleChooseDirectory()}><span>{draft.defaultSettings.outputDirectory || t("settings.defaultFolder")}</span><b>{t("common.browse")}</b></button>}
+        <label className="preferences-wide-field"><span>{t("settings.nameTemplate")}</span><input value={draft.defaultSettings.nameTemplate} spellCheck={false} onChange={(event) => updateDefaultSettings({ nameTemplate: event.target.value })} /></label>
+        <label className="check-row preferences-metadata-check"><input type="checkbox" checked={draft.defaultSettings.preserveMetadata} onChange={(event) => updateDefaultSettings({ preserveMetadata: event.target.checked })} /><span aria-hidden="true">✓</span>{t("settings.keepMetadata")}</label>
+        <p className="preferences-note">{t("settings.defaults.note")}</p>
       </section>
     </div>
   );
@@ -187,46 +188,32 @@ export default function SettingsModal({
       <section className="preferences-card model-card">
         <div className="model-status-large">
           <span className={`model-orb ${modelStatus?.installed ? "ready" : ""}`} />
-          <div>
-            <strong>{modelStatus?.installed ? "자동 배경 제거 모델 준비됨" : "자동 배경 제거 모델 설치 필요"}</strong>
-            <span>U2NetP · {formatBytes(modelStatus?.expectedBytes ?? 0)}</span>
-          </div>
-          {modelStatus?.installed ? <span className="state-badge success">설치됨</span> : <span className="state-badge">미설치</span>}
+          <div><strong>{t(modelStatus?.installed ? "settings.model.ready" : "settings.model.missing")}</strong><span>U2NetP · {formatBytes(modelStatus?.expectedBytes ?? 0, formatLocale)}</span></div>
+          <span className={`state-badge ${modelStatus?.installed ? "success" : ""}`}>{t(modelStatus?.installed ? "settings.model.installed" : "settings.model.notInstalled")}</span>
         </div>
-        <p className="preferences-note">모든 추론은 이 컴퓨터에서 실행됩니다. 최초 설치 때만 검증된 모델 파일을 내려받습니다.</p>
+        <p className="preferences-note">{t("settings.model.localHelp")}</p>
         <div className="preferences-actions left">
-          {!modelStatus?.installed && <button className="button primary compact" type="button" disabled={busyAction !== null || processing} onClick={() => void onInstallModel()}>{busyAction === "model" ? "설치 중…" : "모델 설치"}</button>}
-          {modelStatus?.installed && modelStatus.canDelete && <button className="button danger compact" type="button" disabled={busyAction !== null || processing} onClick={() => void onDeleteModel()}>{busyAction === "model" ? "처리 중…" : "모델 삭제"}</button>}
+          {!modelStatus?.installed && <button className="button primary compact" type="button" disabled={busyAction !== null || processing} onClick={() => void onInstallModel()}>{busyAction === "model" ? t("common.installing") : t("settings.model.install")}</button>}
+          {modelStatus?.installed && modelStatus.canDelete && <button className="button danger compact" type="button" disabled={busyAction !== null || processing} onClick={() => void onDeleteModel()}>{busyAction === "model" ? t("common.processing") : t("settings.model.delete")}</button>}
         </div>
         {modelStatus?.path && <code className="path-code" title={modelStatus.path}>{modelStatus.path}</code>}
-        <p className="preferences-note">AI 객체 선택용 SlimSAM은 해당 기능을 처음 사용할 때 별도로 설치되며, revision과 SHA-256을 확인한 뒤 로컬에서 실행합니다.</p>
+        <p className="preferences-note">{t("settings.model.samHelp")}</p>
       </section>
-
       <section className="preferences-card">
-        <div className="preferences-card-heading"><div><strong>저장 공간</strong><span>작업 DB와 모델은 앱 데이터 폴더에 저장됩니다.</span></div></div>
-        <dl className="metric-list">
-          <div><dt>작업 데이터베이스</dt><dd>{formatBytes(diagnostics?.databaseBytes ?? 0)}</dd></div>
-          <div><dt>자동 제거 모델</dt><dd>{formatBytes(modelStatus?.installedBytes ?? 0)}</dd></div>
-          <div><dt>현재 처리 장치</dt><dd>CPU · 필요 시 자동 전환</dd></div>
-        </dl>
-        <p className="preferences-note">{processing ? "현재 일괄 처리 중이므로 모델 변경은 잠겨 있습니다." : "GPU 처리 장치 선택은 실제 DirectML/CoreML 검증을 마친 뒤 활성화합니다."}</p>
+        <div className="preferences-card-heading"><div><strong>{t("settings.storage.title")}</strong><span>{t("settings.storage.help")}</span></div></div>
+        <dl className="metric-list"><div><dt>{t("settings.storage.database")}</dt><dd>{formatBytes(diagnostics?.databaseBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.model")}</dt><dd>{formatBytes(modelStatus?.installedBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.device")}</dt><dd>{t("settings.storage.deviceValue")}</dd></div></dl>
+        <p className="preferences-note">{t(processing ? "settings.storage.locked" : "settings.storage.gpuLater")}</p>
       </section>
     </div>
   );
 
   const renderPrivacy = () => (
     <div className="preferences-sections">
-      <section className="preferences-card policy-card">
-        <span className="policy-icon">LOCAL</span>
-        <div><strong>이미지는 외부 서버로 전송되지 않습니다.</strong><p>배경 제거, 미리보기, 크기 변경과 인코딩은 모두 로컬 worker에서 처리합니다.</p></div>
-      </section>
+      <section className="preferences-card policy-card"><span className="policy-icon" aria-hidden="true">✓</span><div><strong>{t("settings.privacy.localTitle")}</strong><p>{t("settings.privacy.localHelp")}</p></div></section>
       <section className="preferences-card">
-        <div className="preferences-card-heading"><div><strong>메타데이터 정책</strong><span>현재 구현에 실제 적용되는 범위입니다.</span></div></div>
+        <div className="preferences-card-heading"><div><strong>{t("settings.privacy.policy")}</strong><span>{t("settings.privacy.policyHelp")}</span></div></div>
         <ul className="policy-list">
-          <li><span className="policy-check">✓</span><div><strong>GPS 비수집</strong><small>위치 EXIF는 읽거나 작업 DB에 저장하지 않습니다.</small></div></li>
-          <li><span className="policy-check">✓</span><div><strong>필요한 EXIF만 요약</strong><small>촬영일, 카메라, 렌즈, orientation만 파일명과 회전에 사용합니다.</small></div></li>
-          <li><span className="policy-check">✓</span><div><strong>출력 촬영 정보 선택</strong><small>출력 설정에서 촬영일·카메라·렌즈 보존을 선택할 수 있습니다. 회전 정보는 픽셀 기준으로 정규화됩니다.</small></div></li>
-          <li><span className="policy-check">✓</span><div><strong>민감 정보 제외</strong><small>GPS와 원본 전체 EXIF는 복사하지 않으며, 선택한 비민감 요약 정보만 PNG·WebP에 기록합니다.</small></div></li>
+          {["noGps", "summary", "optional", "sensitive"].map((item) => <li key={item}><span className="policy-check">✓</span><div><strong>{t(`settings.privacy.${item}`)}</strong><small>{t(`settings.privacy.${item}Help`)}</small></div></li>)}
         </ul>
       </section>
     </div>
@@ -235,53 +222,22 @@ export default function SettingsModal({
   const renderDiagnostics = () => (
     <div className="preferences-sections">
       <section className="preferences-card">
-        <div className="preferences-card-heading stacked">
-          <div><strong>앱 정보</strong><span>오류를 제보할 때 함께 확인할 수 있는 정보입니다.</span></div>
-          <button className="small-action" type="button" onClick={() => void onRefreshDiagnostics()}>새로 고침</button>
-        </div>
-        <dl className="metric-list diagnostics-list">
-          <div><dt>CrystalCut</dt><dd>v{diagnostics?.appVersion ?? "-"}</dd></div>
-          <div><dt>처리 엔진 버전</dt><dd>v{diagnostics?.workerProtocolVersion ?? "-"}</dd></div>
-          <div><dt>운영체제</dt><dd>{diagnostics ? `${diagnostics.operatingSystem} · ${diagnostics.architecture}` : "-"}</dd></div>
-          <div><dt>모델</dt><dd>{modelStatus ? `${modelStatus.id} · ${modelStatus.installed ? "ready" : "not installed"}` : "-"}</dd></div>
-        </dl>
+        <div className="preferences-card-heading stacked"><div><strong>{t("settings.diagnostics.app")}</strong><span>{t("settings.diagnostics.appHelp")}</span></div><button className="small-action" type="button" onClick={() => void onRefreshDiagnostics()}>{t("common.refresh")}</button></div>
+        <dl className="metric-list diagnostics-list"><div><dt>CrystalCut</dt><dd>v{diagnostics?.appVersion ?? "-"}</dd></div><div><dt>{t("settings.diagnostics.engine")}</dt><dd>v{diagnostics?.workerProtocolVersion ?? "-"}</dd></div><div><dt>{t("settings.diagnostics.os")}</dt><dd>{diagnostics ? `${diagnostics.operatingSystem} · ${diagnostics.architecture}` : "-"}</dd></div><div><dt>{t("settings.diagnostics.model")}</dt><dd>{modelStatus ? `${modelStatus.id} · ${t(modelStatus.installed ? "settings.model.installed" : "settings.model.notInstalled")}` : "-"}</dd></div></dl>
       </section>
-      <section className="preferences-card">
-        <div className="preferences-card-heading"><div><strong>앱 데이터 폴더</strong><span>작업 DB와 설치 모델이 저장되는 위치입니다.</span></div></div>
-        <code className="path-code">{diagnostics?.appDataDirectory ?? "확인 중…"}</code>
-      </section>
+      <section className="preferences-card"><div className="preferences-card-heading"><div><strong>{t("settings.diagnostics.dataFolder")}</strong><span>{t("settings.diagnostics.dataFolderHelp")}</span></div></div><code className="path-code">{diagnostics?.appDataDirectory ?? t("common.checking")}</code></section>
     </div>
   );
 
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busyAction) onClose(); }}>
+    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busyAction) cancelAndClose(); }}>
       <div id="preferences-dialog" ref={dialogRef} className="preferences-dialog" role="dialog" aria-modal="true" aria-labelledby="preferences-title" onKeyDown={handleDialogKeyDown}>
-        <header className="preferences-header">
-          <div><h2 id="preferences-title" ref={headingRef} tabIndex={-1}>환경 설정</h2><p>CrystalCut의 기본 동작과 로컬 데이터를 관리합니다.</p></div>
-          <button className="modal-close" type="button" aria-label="환경 설정 닫기" onClick={onClose} disabled={busyAction !== null}>×</button>
-        </header>
+        <header className="preferences-header"><div><h2 id="preferences-title" ref={headingRef} tabIndex={-1}>{t("settings.title")}</h2><p>{t("settings.subtitle")}</p></div><button className="modal-close" type="button" aria-label={t("settings.close")} onClick={cancelAndClose} disabled={busyAction !== null}>×</button></header>
         <div className="preferences-layout">
-          <nav className="preferences-nav" aria-label="환경 설정 영역">
-            {TAB_LABELS.map((item) => (
-              <button key={item.id} type="button" className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>
-                <strong>{item.label}</strong><span>{item.description}</span>
-              </button>
-            ))}
-          </nav>
-          <main className="preferences-content">
-            {tab === "general" && renderGeneral()}
-            {tab === "model" && renderModel()}
-            {tab === "privacy" && renderPrivacy()}
-            {tab === "diagnostics" && renderDiagnostics()}
-          </main>
+          <nav className="preferences-nav" aria-label={t("settings.navigation")}>{tabLabels.map((item) => <button key={item.id} type="button" className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><strong>{item.label}</strong><span>{item.description}</span></button>)}</nav>
+          <main className="preferences-content">{tab === "general" && renderGeneral()}{tab === "model" && renderModel()}{tab === "privacy" && renderPrivacy()}{tab === "diagnostics" && renderDiagnostics()}</main>
         </div>
-        <footer className="preferences-footer">
-          <button className="reset-preferences" type="button" disabled={busyAction !== null} onClick={() => void handleReset()}>{busyAction === "reset" ? "초기화 중…" : "기본값으로 초기화"}</button>
-          <div className="preferences-actions">
-            <button className="button ghost compact" type="button" onClick={onClose} disabled={busyAction !== null}>취소</button>
-            <button className="button primary compact" type="button" disabled={busyAction !== null} onClick={() => void handleSave()}>{busyAction === "save" ? "저장 중…" : "설정 저장"}</button>
-          </div>
-        </footer>
+        <footer className="preferences-footer"><button className="reset-preferences" type="button" disabled={busyAction !== null} onClick={() => void handleReset()}>{busyAction === "reset" ? t("settings.resetting") : t("settings.resetAll")}</button><div className="preferences-actions"><button className="button ghost compact" type="button" onClick={cancelAndClose} disabled={busyAction !== null}>{t("common.cancel")}</button><button className="button primary compact" type="button" disabled={busyAction !== null} onClick={() => void handleSave()}>{busyAction === "save" ? t("settings.saving") : t("settings.save")}</button></div></footer>
       </div>
     </div>
   );

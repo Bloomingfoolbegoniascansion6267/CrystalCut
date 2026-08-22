@@ -5,16 +5,21 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && npm run check:i18n && vite build",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:release": "node scripts/check-release-version.mjs",
     "build:desktop": "node scripts/build-desktop.mjs",
+    "build:bundle": "node scripts/build-desktop.mjs --bundle",
     "preview": "vite preview",
     "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-os": "^2.3.2",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "react-intl": "^10.1.22"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

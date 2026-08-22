@@ -102,6 +102,32 @@ pub struct AppPreferences {
     pub default_settings: OutputSettings,
     pub restore_workspace: bool,
     pub presets: Vec<OutputPreset>,
+    pub language: LanguagePreference,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LanguagePreference {
+    #[serde(rename = "system")]
+    #[default]
+    System,
+    #[serde(rename = "ko")]
+    Ko,
+    #[serde(rename = "en")]
+    En,
+    #[serde(rename = "ja")]
+    Ja,
+    #[serde(rename = "zh-CN")]
+    ZhCn,
+    #[serde(rename = "zh-TW")]
+    ZhTw,
+    #[serde(rename = "es")]
+    Es,
+    #[serde(rename = "de")]
+    De,
+    #[serde(rename = "fr")]
+    Fr,
+    #[serde(rename = "pt-BR")]
+    PtBr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,6 +144,7 @@ impl Default for AppPreferences {
             default_settings: OutputSettings::default(),
             restore_workspace: true,
             presets: Vec::new(),
+            language: LanguagePreference::System,
         }
     }
 }
@@ -758,6 +785,7 @@ mod tests {
         migrate(&connection).expect("migrate database");
         let preferences = AppPreferences {
             restore_workspace: false,
+            language: LanguagePreference::Ja,
             default_settings: OutputSettings {
                 format: OutputFormat::Webp,
                 prefix: "default_".to_owned(),
@@ -789,6 +817,18 @@ mod tests {
             load_preferences_from_connection(&connection).expect("fallback preferences"),
             AppPreferences::default()
         );
+    }
+
+    #[test]
+    fn legacy_preferences_without_language_use_system_locale() {
+        let legacy = serde_json::json!({
+            "defaultSettings": OutputSettings::default(),
+            "restoreWorkspace": true,
+            "presets": []
+        });
+        let preferences: AppPreferences =
+            serde_json::from_value(legacy).expect("deserialize legacy preferences");
+        assert_eq!(preferences.language, LanguagePreference::System);
     }
 
     #[test]

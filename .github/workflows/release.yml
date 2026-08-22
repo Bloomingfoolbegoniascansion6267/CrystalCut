@@ -1,0 +1,77 @@
+name: Publish desktop release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows x64
+            platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc --bundles nsis,msi
+          - label: macOS Apple Silicon
+            platform: macos-latest
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles dmg
+          - label: macOS Intel
+            platform: macos-latest
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin --bundles dmg
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify release version
+        run: npm run check:release -- ${{ github.ref_name }}
+
+      - name: Build and publish installers
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CRYSTALCUT_TAURI_BUILD: "1"
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: CrystalCut v__VERSION__
+          releaseBody: |
+            Download the installer for your platform below.
+
+            - Windows: use the `setup.exe` installer for most users, or the `.msi` package for managed deployment.
+            - macOS: choose Apple Silicon for M1 or newer Macs, and Intel for older Macs.
+            - AI models are downloaded and verified on first use; images are processed locally.
+
+            These community builds are currently unsigned, so Windows SmartScreen or macOS Gatekeeper may ask for confirmation.
+          releaseDraft: false
+          prerelease: false
+          generateReleaseNotes: true
+          uploadUpdaterJson: false
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: CrystalCut-[version]-[platform]-[arch]-[bundle]
+          releaseAssetNamePattern: CrystalCut_[version]_[platform]_[arch][setup][ext]
+          retryAttempts: 2
+          args: ${{ matrix.args }}
