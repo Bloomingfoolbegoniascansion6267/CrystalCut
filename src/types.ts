@@ -16,6 +16,26 @@ export interface ImageAsset {
   outputBytes?: number;
   error?: string;
   rotation: 0 | 90 | 180 | 270;
+  maskRecipe: ManualMaskRecipe;
+}
+
+export type MaskMode = "automatic" | "refine" | "manual";
+export type BrushMode = "keep" | "remove";
+
+export interface MaskPoint {
+  x: number;
+  y: number;
+}
+
+export interface BrushStroke {
+  mode: BrushMode;
+  radius: number;
+  points: MaskPoint[];
+}
+
+export interface ManualMaskRecipe {
+  mode: MaskMode;
+  strokes: BrushStroke[];
 }
 
 export interface ExifSummary {
@@ -42,6 +62,12 @@ export interface OutputSettings {
   prefix: string;
   suffix: string;
   nameTemplate: string;
+  edgeSmoothing: number;
+  edgeFeather: number;
+  edgeShift: number;
+  alphaThreshold: number;
+  maskContrast: number;
+  preserveOriginalAlpha: boolean;
 }
 
 export type PersistedAsset = Omit<ImageAsset, "previewUrl" | "resultPreviewUrl">;
@@ -77,6 +103,7 @@ export interface ProcessItem {
   rotation: number;
   sequence?: number;
   exif?: ExifSummary;
+  maskRecipe: ManualMaskRecipe;
 }
 
 export type BatchProgressStatus = "modelDownloading" | "queued" | "processing" | "retryingWorker" | "completed" | "failed" | "cancelled";

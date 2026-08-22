@@ -64,28 +64,35 @@ worker 표준 입출력이 끊기거나 protocol 응답이 손상되면 해당 �
 
 앱 시작 시 원본 경로와 파일 크기, 완료 결과 경로를 다시 검사한다. 사라진 원본은 목록에서 제외하고, 변경된 원본·실행 중 종료된 항목·사라진 결과는 `interrupted`로 복구해 미완료 재시도 대상으로 제공한다. 완료 결과가 남아 있으면 다시 처리하지 않고 결과 미리보기를 복원한다. UI의 작업 비우기는 SQLite snapshot만 제거하며 원본과 결과 파일은 삭제하지 않는다.
 
-SQLite schema v2는 작업 snapshot과 분리된 `app_preferences` table을 추가한다. 톱니바퀴 환경설정에서 새 작업의 기본 출력 recipe와 재시작 복구 여부를 저장하며, 전역 기본값 변경은 이미 목록에 들어온 작업을 자동 변경하지 않는다. schema v1 DB는 작업 table을 보존한 채 v2로 migration하고 손상된 환경설정 JSON은 권장 기본값으로 fallback한다.
+SQLite schema v3는 작업 snapshot과 분리된 `app_preferences` table 및 파일별 `mask_recipe_json`을 저장한다. 톱니바퀴 환경설정에서 새 작업의 기본 출력 recipe와 재시작 복구 여부를 저장하며, 전역 기본값 변경은 이미 목록에 들어온 작업을 자동 변경하지 않는다. schema v1 DB는 작업 table을 보존한 채 v2와 v3으로 순서대로 migration하고 손상된 환경설정 JSON은 권장 기본값으로 fallback한다.
 
 환경설정 modal은 focus trap, Esc 닫기와 호출 버튼 focus 복귀를 지원한다. 일반, AI 모델·저장 공간, 개인정보, 진단 영역을 제공하며 모델 설치·삭제는 batch와 같은 실행 잠금을 사용한다. 앱 version, worker protocol, OS/architecture, DB 크기와 앱 데이터 경로는 실제 Tauri command에서 읽는다. 아직 검증하지 않은 GPU provider나 EXIF/ICC 보존 option은 활성 control로 노출하지 않는다.
 
+미리보기 canvas는 휠과 버튼 확대·축소, pointer drag 이동, 화면 맞춤을 지원한다. 비교 모드는 원본과 수정본을 같은 좌표계에 겹치고 수직 분할 바를 좌우로 움직여 경계를 확인한다. 브러시 편집 좌표는 zoom·pan과 무관한 회전 후 이미지의 정규화 좌표로 저장한다.
+
+마스크는 `automatic`, `refine`, `manual` 세 방식이다. `refine`은 U2NetP 결과 위에 초록 유지·빨강 제거 stroke를 합성하고, `manual`은 빈 마스크에서 유지 stroke로 객체를 직접 칠한다. 회전 시 stroke 좌표도 함께 변환하며 Undo/Redo와 전체 지우기를 제공한다. worker는 AI 추론 후 회전된 mask에 stroke를 적용한 다음 가장자리 smoothing, feather, 확장·축소, alpha threshold와 mask contrast를 순서대로 처리한다.
+
+브라우저 기본 context menu는 텍스트 편집 명령과 Clearcut의 브러시·미리보기·파일 추가·환경설정 명령을 제공하는 앱 메뉴로 교체했다. Windows release는 GUI subsystem으로 빌드해 console 창을 숨기고 debug build에서는 console을 유지한다.
+
 ## 5. 검증 범위
 
-- Rust 단위 테스트 28개: resize 비율, 확대 방지, 기존 alpha 결합, 모델 입력 layout·정규화, 모델 hash·TLS provider, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌, SQLite v1→v2 migration·환경설정 fallback·snapshot round trip·중단/완료 결과 복구
+- Rust 단위 테스트 33개: resize 비율, 확대 방지, 기존 alpha 결합·교체, 수동 유지·제거 마스크와 입력 검증, 가장자리 확장, 모델 입력 layout·정규화, 모델 hash·TLS provider, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌, SQLite v1→v3 migration·브러시 recipe·환경설정 fallback·snapshot round trip·중단/완료 결과 복구
 - TypeScript production build
 - 공식 U-2-Net 테스트 사진을 사용한 worker 스모크 테스트
   - 400×267 PNG 입력
   - 추론·PNG 저장 약 0.55초(개발 빌드, 현재 Windows 개발 장비)
   - 좌·우 하늘과 하단 잔디 alpha 0, 말 몸통과 인물 몸통 alpha 255 확인
+  - `manual` 유지 브러시를 중앙에 적용한 실제 protocol v2 요청에서 중앙 alpha 255, 모서리와 외부 alpha 0 확인
 - Tauri release `--no-bundle` 빌드로 frontend와 native binary 결합 확인
 
 위 시간은 제품 성능 보장이 아니라 단일 개발 장비의 구조 검증값이다.
 
 ## 6. 다음 우선순위
 
-1. Canvas 유지/지우기 brush, Undo/Redo와 correction mask 저장
-2. promptable segmentation 및 자동 배경 제거 모델의 품질·속도·메모리 benchmark와 물체 단위 대상 선택
-3. Windows DirectML/Windows ML과 macOS CoreML provider packaging
-4. 선택 파일 자동 미리보기와 최종 export 결과 일치 검증
+1. promptable segmentation 및 자동 배경 제거 모델의 품질·속도·메모리 benchmark와 stroke로 물체 전체를 확장 선택하는 기능
+2. Windows DirectML/Windows ML과 macOS CoreML provider packaging
+3. 브러시 overlay와 최종 export mask의 pixel 일치 golden test
+4. 선택 파일의 AI 결과를 저장 전에 계산하는 고품질 실시간 미리보기
 5. 현재 추론까지 즉시 중단하는 강제 취소 option과 `.partial` 정리 검증
 6. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
 7. 대규모 목록 virtual scroll과 SQLite delta 저장 최적화

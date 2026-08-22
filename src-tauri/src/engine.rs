@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     fs::{self, File},
     io::Write,
     path::{Path, PathBuf},
@@ -16,7 +17,10 @@ use ort::{
 
 use crate::{
     metadata,
-    protocol::{OutputFormat, OutputSettings, ResizeMode, WorkerRequest},
+    protocol::{
+        BrushMode, BrushStroke, ManualMaskRecipe, MaskMode, OutputFormat, OutputSettings,
+        ResizeMode, WorkerRequest,
+    },
 };
 
 const INPUT_WIDTH: u32 = 320;
@@ -67,8 +71,11 @@ impl InferenceEngine {
         let exif = metadata::read_exif_summary(input_path);
         metadata::apply_orientation(&mut source, exif.orientation);
         let mask = self.infer_mask(&source)?;
-        let mut composed = apply_alpha(source, &mask);
-        composed = rotate(composed, request.rotation)?;
+        let source = rotate(source, request.rotation)?;
+        let mask = rotate_mask(mask, request.rotation)?;
+        let mask = apply_manual_mask(mask, &request.mask_recipe);
+        let mask = refine_mask(mask, &request.settings);
+        let mut composed = apply_alpha(source, &mask, request.settings.preserve_original_alpha);
         composed = resize(composed, &request.settings);
         let encoded = encode(&composed, &request.settings)?;
         atomic_write(output_path, &encoded)?;
@@ -187,12 +194,204 @@ fn prepare_input(source: &DynamicImage) -> Vec<f32> {
     input
 }
 
-fn apply_alpha(source: DynamicImage, mask: &GrayImage) -> DynamicImage {
+fn apply_alpha(
+    source: DynamicImage,
+    mask: &GrayImage,
+    preserve_original_alpha: bool,
+) -> DynamicImage {
     let mut rgba = source.to_rgba8();
     for (pixel, alpha) in rgba.pixels_mut().zip(mask.pixels()) {
-        pixel[3] = ((u16::from(pixel[3]) * u16::from(alpha[0])) / 255) as u8;
+        pixel[3] = if preserve_original_alpha {
+            ((u16::from(pixel[3]) * u16::from(alpha[0])) / 255) as u8
+        } else {
+            alpha[0]
+        };
     }
     DynamicImage::ImageRgba8(rgba)
+}
+
+fn rotate_mask(mask: GrayImage, rotation: u16) -> Result<GrayImage, String> {
+    match rotation % 360 {
+        0 => Ok(mask),
+        90 => Ok(image::imageops::rotate90(&mask)),
+        180 => Ok(image::imageops::rotate180(&mask)),
+        270 => Ok(image::imageops::rotate270(&mask)),
+        value => Err(format!("지원하지 않는 회전 각도입니다: {value}")),
+    }
+}
+
+fn apply_manual_mask(mut inferred: GrayImage, recipe: &ManualMaskRecipe) -> GrayImage {
+    if matches!(recipe.mode, MaskMode::Automatic) {
+        return inferred;
+    }
+    if matches!(recipe.mode, MaskMode::Manual) {
+        inferred.fill(0);
+    }
+    for stroke in &recipe.strokes {
+        paint_stroke(&mut inferred, stroke);
+    }
+    inferred
+}
+
+fn paint_stroke(mask: &mut GrayImage, stroke: &BrushStroke) {
+    if stroke.points.is_empty() {
+        return;
+    }
+    let width = mask.width();
+    let height = mask.height();
+    let minimum_edge = width.min(height).max(1) as f32;
+    let radius = (stroke.radius * minimum_edge)
+        .round()
+        .clamp(1.0, minimum_edge * 0.5) as i32;
+    let value = if matches!(stroke.mode, BrushMode::Keep) {
+        255
+    } else {
+        0
+    };
+    let to_pixel = |point: crate::protocol::MaskPoint| {
+        (
+            point.x.clamp(0.0, 1.0) * width.saturating_sub(1) as f32,
+            point.y.clamp(0.0, 1.0) * height.saturating_sub(1) as f32,
+        )
+    };
+    let mut previous = to_pixel(stroke.points[0]);
+    draw_disc(
+        mask,
+        previous.0.round() as i32,
+        previous.1.round() as i32,
+        radius,
+        value,
+    );
+    for point in stroke.points.iter().copied().skip(1) {
+        let current = to_pixel(point);
+        let distance = (current.0 - previous.0).hypot(current.1 - previous.1);
+        let steps = (distance / (radius as f32 * 0.45).max(1.0)).ceil().max(1.0) as usize;
+        for step in 1..=steps {
+            let ratio = step as f32 / steps as f32;
+            let x = previous.0 + (current.0 - previous.0) * ratio;
+            let y = previous.1 + (current.1 - previous.1) * ratio;
+            draw_disc(mask, x.round() as i32, y.round() as i32, radius, value);
+        }
+        previous = current;
+    }
+}
+
+fn draw_disc(mask: &mut GrayImage, center_x: i32, center_y: i32, radius: i32, value: u8) {
+    let radius_squared = radius * radius;
+    let minimum_x = (center_x - radius).max(0);
+    let maximum_x = (center_x + radius).min(mask.width() as i32 - 1);
+    let minimum_y = (center_y - radius).max(0);
+    let maximum_y = (center_y + radius).min(mask.height() as i32 - 1);
+    for y in minimum_y..=maximum_y {
+        for x in minimum_x..=maximum_x {
+            let dx = x - center_x;
+            let dy = y - center_y;
+            if dx * dx + dy * dy <= radius_squared {
+                mask.get_pixel_mut(x as u32, y as u32)[0] = value;
+            }
+        }
+    }
+}
+
+fn refine_mask(mut mask: GrayImage, settings: &OutputSettings) -> GrayImage {
+    if settings.edge_shift != 0 {
+        mask = shift_mask(mask, settings.edge_shift);
+    }
+    if settings.edge_smoothing > 0 {
+        mask = image::imageops::blur(&mask, f32::from(settings.edge_smoothing) * 0.38);
+        for alpha in mask.pixels_mut() {
+            let value = f32::from(alpha[0]) / 255.0;
+            alpha[0] = (value * value * (3.0 - 2.0 * value) * 255.0).round() as u8;
+        }
+    }
+    if settings.alpha_threshold > 0 {
+        let cutoff = u16::from(settings.alpha_threshold) * 255 / 100;
+        for alpha in mask.pixels_mut() {
+            let value = u16::from(alpha[0]);
+            alpha[0] = if value <= cutoff {
+                0
+            } else {
+                (((value - cutoff) * 255) / (255 - cutoff).max(1)) as u8
+            };
+        }
+    }
+    if settings.mask_contrast != 0 {
+        let contrast = f32::from(settings.mask_contrast);
+        let factor = (100.0 + contrast) / (100.0 - contrast);
+        for alpha in mask.pixels_mut() {
+            alpha[0] = ((f32::from(alpha[0]) - 127.5) * factor + 127.5)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+        }
+    }
+    if settings.edge_feather > 0 {
+        mask = image::imageops::blur(&mask, f32::from(settings.edge_feather) * 0.55);
+    }
+    mask
+}
+
+fn shift_mask(mask: GrayImage, amount: i8) -> GrayImage {
+    let radius = amount.unsigned_abs() as usize;
+    if radius == 0 {
+        return mask;
+    }
+    let dilate = amount > 0;
+    let width = mask.width() as usize;
+    let height = mask.height() as usize;
+    let source = mask.into_raw();
+    let mut horizontal = vec![0_u8; source.len()];
+    for y in 0..height {
+        let row = &source[y * width..(y + 1) * width];
+        let filtered = sliding_extreme(row, radius, dilate);
+        horizontal[y * width..(y + 1) * width].copy_from_slice(&filtered);
+    }
+    let mut output = vec![0_u8; source.len()];
+    let mut column = vec![0_u8; height];
+    for x in 0..width {
+        for y in 0..height {
+            column[y] = horizontal[y * width + x];
+        }
+        let filtered = sliding_extreme(&column, radius, dilate);
+        for y in 0..height {
+            output[y * width + x] = filtered[y];
+        }
+    }
+    GrayImage::from_raw(width as u32, height as u32, output).expect("mask dimensions are preserved")
+}
+
+fn sliding_extreme(values: &[u8], radius: usize, maximum: bool) -> Vec<u8> {
+    let mut output = vec![0_u8; values.len()];
+    let mut deque = VecDeque::<usize>::new();
+    for cursor in 0..values.len().saturating_add(radius) {
+        if cursor < values.len() {
+            while let Some(&index) = deque.back() {
+                let ordered = if maximum {
+                    values[index] <= values[cursor]
+                } else {
+                    values[index] >= values[cursor]
+                };
+                if !ordered {
+                    break;
+                }
+                deque.pop_back();
+            }
+            deque.push_back(cursor);
+        }
+        if cursor >= radius {
+            let output_index = cursor - radius;
+            if output_index >= values.len() {
+                break;
+            }
+            let minimum_index = output_index.saturating_sub(radius);
+            while deque.front().is_some_and(|index| *index < minimum_index) {
+                deque.pop_front();
+            }
+            if let Some(&index) = deque.front() {
+                output[output_index] = values[index];
+            }
+        }
+    }
+    output
 }
 
 fn rotate(image: DynamicImage, rotation: u16) -> Result<DynamicImage, String> {
@@ -307,18 +506,11 @@ mod tests {
 
     fn settings(mode: ResizeMode, value: u32, prevent_upscale: bool) -> OutputSettings {
         OutputSettings {
-            format: OutputFormat::Png,
-            webp_quality: 82,
-            webp_lossless: false,
-            png_effort: 6,
             resize_mode: mode,
             resize_value: value,
             prevent_upscale,
             output_location: crate::protocol::OutputLocation::SameFolder,
-            output_directory: String::new(),
-            prefix: String::new(),
-            suffix: "_bg".to_owned(),
-            name_template: crate::naming::DEFAULT_NAME_TEMPLATE.to_owned(),
+            ..OutputSettings::default()
         }
     }
 
@@ -341,8 +533,51 @@ mod tests {
         let mut source = RgbaImage::new(1, 1);
         source.get_pixel_mut(0, 0)[3] = 128;
         let mask = GrayImage::from_pixel(1, 1, image::Luma([128]));
-        let result = apply_alpha(DynamicImage::ImageRgba8(source), &mask).to_rgba8();
+        let result = apply_alpha(DynamicImage::ImageRgba8(source), &mask, true).to_rgba8();
         assert_eq!(result.get_pixel(0, 0)[3], 64);
+    }
+
+    #[test]
+    fn replacing_alpha_is_available_for_advanced_workflows() {
+        let mut source = RgbaImage::new(1, 1);
+        source.get_pixel_mut(0, 0)[3] = 32;
+        let mask = GrayImage::from_pixel(1, 1, image::Luma([192]));
+        let result = apply_alpha(DynamicImage::ImageRgba8(source), &mask, false).to_rgba8();
+        assert_eq!(result.get_pixel(0, 0)[3], 192);
+    }
+
+    #[test]
+    fn manual_keep_and_remove_strokes_override_the_mask() {
+        let mask = GrayImage::from_pixel(20, 20, image::Luma([0]));
+        let recipe = ManualMaskRecipe {
+            mode: MaskMode::Manual,
+            strokes: vec![
+                BrushStroke {
+                    mode: BrushMode::Keep,
+                    radius: 0.2,
+                    points: vec![crate::protocol::MaskPoint { x: 0.5, y: 0.5 }],
+                },
+                BrushStroke {
+                    mode: BrushMode::Remove,
+                    radius: 0.05,
+                    points: vec![crate::protocol::MaskPoint { x: 0.5, y: 0.5 }],
+                },
+            ],
+        };
+        let result = apply_manual_mask(mask, &recipe);
+        assert_eq!(result.get_pixel(10, 10)[0], 0);
+        assert_eq!(result.get_pixel(8, 10)[0], 255);
+        assert_eq!(result.get_pixel(0, 0)[0], 0);
+    }
+
+    #[test]
+    fn positive_edge_shift_expands_the_foreground() {
+        let mut mask = GrayImage::from_pixel(5, 5, image::Luma([0]));
+        mask.get_pixel_mut(2, 2)[0] = 255;
+        let shifted = shift_mask(mask, 1);
+        assert_eq!(shifted.get_pixel(1, 1)[0], 255);
+        assert_eq!(shifted.get_pixel(3, 3)[0], 255);
+        assert_eq!(shifted.get_pixel(0, 0)[0], 0);
     }
 
     #[test]

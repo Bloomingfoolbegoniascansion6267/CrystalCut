@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const WORKER_PROTOCOL_VERSION: u16 = 1;
+pub const WORKER_PROTOCOL_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,10 +12,49 @@ pub struct ProcessItem {
     pub sequence: Option<usize>,
     #[serde(default)]
     pub exif: Option<crate::metadata::ExifSummary>,
+    #[serde(default)]
+    pub mask_recipe: ManualMaskRecipe,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ManualMaskRecipe {
+    pub mode: MaskMode,
+    pub strokes: Vec<BrushStroke>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MaskMode {
+    #[default]
+    Automatic,
+    Refine,
+    Manual,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrushStroke {
+    pub mode: BrushMode,
+    pub radius: f32,
+    pub points: Vec<MaskPoint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BrushMode {
+    Keep,
+    Remove,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct MaskPoint {
+    pub x: f32,
+    pub y: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct OutputSettings {
     pub format: OutputFormat,
     pub webp_quality: u8,
@@ -30,6 +69,12 @@ pub struct OutputSettings {
     pub suffix: String,
     #[serde(default = "crate::naming::default_name_template")]
     pub name_template: String,
+    pub edge_smoothing: u8,
+    pub edge_feather: u8,
+    pub edge_shift: i8,
+    pub alpha_threshold: u8,
+    pub mask_contrast: i8,
+    pub preserve_original_alpha: bool,
 }
 
 impl Default for OutputSettings {
@@ -47,6 +92,12 @@ impl Default for OutputSettings {
             prefix: String::new(),
             suffix: "_bg".to_owned(),
             name_template: crate::naming::default_name_template(),
+            edge_smoothing: 2,
+            edge_feather: 1,
+            edge_shift: 0,
+            alpha_threshold: 2,
+            mask_contrast: 0,
+            preserve_original_alpha: true,
         }
     }
 }
@@ -93,6 +144,7 @@ pub struct WorkerRequest {
     pub model_path: String,
     pub rotation: u16,
     pub settings: OutputSettings,
+    pub mask_recipe: ManualMaskRecipe,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

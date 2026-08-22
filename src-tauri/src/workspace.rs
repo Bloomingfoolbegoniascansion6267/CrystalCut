@@ -7,9 +7,12 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::{metadata::ExifSummary, protocol::OutputSettings};
+use crate::{
+    metadata::ExifSummary,
+    protocol::{ManualMaskRecipe, OutputSettings},
+};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const DATABASE_FILE: &str = "workspace.sqlite3";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +35,8 @@ pub struct PersistedAsset {
     pub exif: ExifSummary,
     pub status: PersistedStatus,
     pub rotation: u16,
+    #[serde(default)]
+    pub mask_recipe: ManualMaskRecipe,
     pub output_path: Option<String>,
     pub output_bytes: Option<u64>,
     pub error: Option<String>,
@@ -248,6 +253,17 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                  COMMIT;",
             )
             .map_err(|error| format!("환경설정 schema를 만들지 못했습니다: {error}"))?;
+        version = 2;
+    }
+    if version == 2 {
+        connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 ALTER TABLE workspace_items ADD COLUMN mask_recipe_json TEXT NOT NULL DEFAULT '{\"mode\":\"automatic\",\"strokes\":[]}';
+                 PRAGMA user_version = 3;
+                 COMMIT;",
+            )
+            .map_err(|error| format!("브러시 마스크 schema를 만들지 못했습니다: {error}"))?;
     }
     Ok(())
 }
@@ -329,13 +345,15 @@ fn insert_asset(
 ) -> Result<(), String> {
     let exif_json = serde_json::to_string(&item.exif)
         .map_err(|error| format!("EXIF 요약을 직렬화하지 못했습니다: {error}"))?;
+    let mask_recipe_json = serde_json::to_string(&item.mask_recipe)
+        .map_err(|error| format!("브러시 마스크를 직렬화하지 못했습니다: {error}"))?;
     let modified_at_ms = file_modified_ms(Path::new(&item.path));
     transaction
         .execute(
             "INSERT INTO workspace_items(
                 id, position, name, path, size_bytes, modified_at_ms, extension, width, height,
-                exif_json, status, rotation, output_path, output_bytes, error
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                exif_json, status, rotation, mask_recipe_json, output_path, output_bytes, error
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 item.id,
                 to_i64(position as u64),
@@ -349,6 +367,7 @@ fn insert_asset(
                 exif_json,
                 item.status.as_str(),
                 i64::from(item.rotation),
+                mask_recipe_json,
                 item.output_path,
                 item.output_bytes.map(to_i64),
                 item.error,
@@ -375,7 +394,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
     let mut statement = connection
         .prepare(
             "SELECT id, name, path, size_bytes, modified_at_ms, extension, width, height, exif_json,
-                    status, rotation, output_path, output_bytes, error
+                    status, rotation, mask_recipe_json, output_path, output_bytes, error
              FROM workspace_items ORDER BY position",
         )
         .map_err(|error| format!("저장된 작업 항목 query를 준비하지 못했습니다: {error}"))?;
@@ -393,9 +412,10 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
                 row.get::<_, String>(8)?,
                 row.get::<_, String>(9)?,
                 row.get::<_, i64>(10)?,
-                row.get::<_, Option<String>>(11)?,
-                row.get::<_, Option<i64>>(12)?,
-                row.get::<_, Option<String>>(13)?,
+                row.get::<_, String>(11)?,
+                row.get::<_, Option<String>>(12)?,
+                row.get::<_, Option<i64>>(13)?,
+                row.get::<_, Option<String>>(14)?,
             ))
         })
         .map_err(|error| format!("저장된 작업 항목을 읽지 못했습니다: {error}"))?;
@@ -416,6 +436,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             exif_json,
             status,
             rotation,
+            mask_recipe_json,
             output_path,
             output_bytes,
             error,
@@ -426,6 +447,8 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
         }
         let exif = serde_json::from_str(&exif_json)
             .map_err(|error| format!("저장된 EXIF 요약이 올바르지 않습니다: {error}"))?;
+        let mask_recipe = serde_json::from_str(&mask_recipe_json)
+            .map_err(|error| format!("저장된 브러시 마스크가 올바르지 않습니다: {error}"))?;
         let mut item = PersistedAsset {
             id,
             name,
@@ -437,6 +460,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             exif,
             status: PersistedStatus::from_str(&status)?,
             rotation: u16::try_from(rotation).unwrap_or(0),
+            mask_recipe,
             output_path,
             output_bytes: output_bytes.map(to_u64),
             error,
@@ -535,25 +559,14 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        naming,
-        protocol::{OutputFormat, OutputLocation, ResizeMode},
+    use crate::protocol::{
+        BrushMode, BrushStroke, MaskMode, MaskPoint, OutputFormat, OutputLocation,
     };
 
     fn settings() -> OutputSettings {
         OutputSettings {
-            format: OutputFormat::Png,
-            webp_quality: 82,
-            webp_lossless: false,
-            png_effort: 6,
-            resize_mode: ResizeMode::Original,
-            resize_value: 2048,
-            prevent_upscale: true,
             output_location: OutputLocation::SameFolder,
-            output_directory: String::new(),
-            prefix: String::new(),
-            suffix: "_bg".to_owned(),
-            name_template: naming::DEFAULT_NAME_TEMPLATE.to_owned(),
+            ..OutputSettings::default()
         }
     }
 
@@ -578,6 +591,7 @@ mod tests {
             exif: ExifSummary::default(),
             status,
             rotation: 0,
+            mask_recipe: ManualMaskRecipe::default(),
             output_path: None,
             output_bytes: None,
             error: None,
@@ -599,11 +613,17 @@ mod tests {
         let second = directory.join("second.jpg");
         std::fs::write(&first, b"first").expect("write first fixture");
         std::fs::write(&second, b"second").expect("write second fixture");
+        let mut edited = asset(&first, PersistedStatus::Ready);
+        edited.mask_recipe = ManualMaskRecipe {
+            mode: MaskMode::Manual,
+            strokes: vec![BrushStroke {
+                mode: BrushMode::Keep,
+                radius: 0.04,
+                points: vec![MaskPoint { x: 0.25, y: 0.75 }],
+            }],
+        };
         let snapshot = WorkspaceSnapshot {
-            items: vec![
-                asset(&first, PersistedStatus::Ready),
-                asset(&second, PersistedStatus::Failed),
-            ],
+            items: vec![edited, asset(&second, PersistedStatus::Failed)],
             settings: settings(),
         };
         save_to_connection(&mut connection, &snapshot).expect("save snapshot");
@@ -613,6 +633,11 @@ mod tests {
             .expect("workspace exists");
         assert_eq!(restored.items.len(), 2);
         assert_eq!(restored.items[0].path, first.to_string_lossy());
+        assert!(matches!(
+            restored.items[0].mask_recipe.mode,
+            MaskMode::Manual
+        ));
+        assert_eq!(restored.items[0].mask_recipe.strokes.len(), 1);
         assert_eq!(restored.items[1].status, PersistedStatus::Failed);
         assert_eq!(restored.settings.suffix, "_bg");
 
@@ -739,7 +764,7 @@ mod tests {
         let schema_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("read schema version");
-        assert_eq!(schema_version, 2);
+        assert_eq!(schema_version, SCHEMA_VERSION);
         assert_eq!(
             load_preferences_from_connection(&connection).expect("load default preferences"),
             AppPreferences::default()

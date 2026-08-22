@@ -1,10 +1,11 @@
-import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, ExportPlan, ImageAsset, ModelStatus, OutputFormat, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
+import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, ModelStatus, OutputFormat, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 import SettingsModal from "./SettingsModal";
+import PreviewEditor from "./PreviewEditor";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 
@@ -21,7 +22,15 @@ const DEFAULT_SETTINGS: OutputSettings = {
   prefix: "",
   suffix: "_bg",
   nameTemplate: "{prefix}{name}{suffix}",
+  edgeSmoothing: 2,
+  edgeFeather: 1,
+  edgeShift: 0,
+  alphaThreshold: 2,
+  maskContrast: 0,
+  preserveOriginalAlpha: true,
 };
+
+const DEFAULT_MASK_RECIPE: ManualMaskRecipe = { mode: "automatic", strokes: [] };
 
 const DEFAULT_PREFERENCES: AppPreferences = {
   defaultSettings: DEFAULT_SETTINGS,
@@ -55,6 +64,7 @@ const toPersistedAsset = (asset: ImageAsset): PersistedAsset => ({
   outputPath: asset.outputPath,
   outputBytes: asset.outputBytes,
   error: asset.error,
+  maskRecipe: asset.maskRecipe,
 });
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
@@ -70,6 +80,7 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
     check: <path d="m5 12 4 4L19 6" />,
     stop: <rect x="7" y="7" width="10" height="10" rx="2" />,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z" /></>,
+    brush: <><path d="m14.5 4.5 5 5L10 19H5v-5z" /><path d="m12.5 6.5 5 5" /></>,
   };
 
   return (
@@ -90,6 +101,8 @@ function App() {
   const [batchTotal, setBatchTotal] = useState(0);
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [viewMode, setViewMode] = useState<"original" | "result" | "compare">("original");
+  const [isMaskEditing, setIsMaskEditing] = useState(false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
   const [exportPlan, setExportPlan] = useState<ExportPlan | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
@@ -99,6 +112,7 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsBusyAction, setSettingsBusyAction] = useState<"save" | "model" | "reset" | null>(null);
   const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; textField: HTMLInputElement | HTMLTextAreaElement | null } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const skipNextWorkspaceSave = useRef(false);
@@ -120,7 +134,7 @@ function App() {
   const persistedAssets = useMemo(() => assets.map(toPersistedAsset), [assets]);
   const workspaceKey = useMemo(() => JSON.stringify({ items: persistedAssets, settings }), [persistedAssets, settings]);
   const planKey = useMemo(() => JSON.stringify({
-    items: assets.map(({ path, rotation }) => ({ path, rotation })),
+    items: assets.map(({ path, rotation, maskRecipe }) => ({ path, rotation, maskRecipe })),
     settings,
   }), [assets, settings]);
 
@@ -139,7 +153,7 @@ function App() {
     if (!paths.length) return;
     try {
       const inspected = await invoke<Omit<ImageAsset, "status" | "rotation">[]>("inspect_paths", { paths });
-      addAssets(inspected.map((asset) => ({ ...asset, status: "ready", rotation: 0 })));
+      addAssets(inspected.map((asset) => ({ ...asset, status: "ready", rotation: 0, maskRecipe: DEFAULT_MASK_RECIPE })));
     } catch (error) {
       setNotice(`파일을 불러오지 못했습니다: ${String(error)}`);
     }
@@ -282,7 +296,7 @@ function App() {
     const timer = window.setTimeout(() => {
       setIsEstimating(true);
       void invoke<ExportPlan>("prepare_export_plan", {
-        items: assets.map((asset, index) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, sequence: index + 1, exif: asset.exif })),
+        items: assets.map((asset, index) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, sequence: index + 1, exif: asset.exif, maskRecipe: asset.maskRecipe })),
         settings,
       })
         .then((plan) => {
@@ -372,6 +386,7 @@ function App() {
         status: "ready",
         previewUrl: URL.createObjectURL(file),
         rotation: 0,
+        maskRecipe: DEFAULT_MASK_RECIPE,
       }));
     addAssets(incoming);
     event.target.value = "";
@@ -394,9 +409,19 @@ function App() {
     if (!selectedId) return;
     setAssets((current) => current.map((asset) => {
       if (asset.id !== selectedId) return asset;
+      const rotatePoint = (point: MaskPoint): MaskPoint => direction === 1
+        ? { x: 1 - point.y, y: point.x }
+        : { x: point.y, y: 1 - point.x };
       return {
         ...asset,
         rotation: ((asset.rotation + direction * 90 + 360) % 360) as ImageAsset["rotation"],
+        maskRecipe: {
+          ...asset.maskRecipe,
+          strokes: asset.maskRecipe.strokes.map((stroke) => ({
+            ...stroke,
+            points: stroke.points.map(rotatePoint),
+          })),
+        },
         status: "ready",
         outputPath: undefined,
         outputBytes: undefined,
@@ -404,6 +429,47 @@ function App() {
       };
     }));
   };
+
+  const updateSelectedMask = useCallback((maskRecipe: ManualMaskRecipe) => {
+    if (!selectedId) return;
+    setAssets((current) => current.map((asset) => {
+      if (asset.id !== selectedId) return asset;
+      const effectiveKey = (recipe: ManualMaskRecipe) => recipe.mode === "automatic" || (recipe.mode === "refine" && recipe.strokes.length === 0)
+        ? "automatic"
+        : JSON.stringify(recipe);
+      const invalidatesResult = effectiveKey(asset.maskRecipe) !== effectiveKey(maskRecipe);
+      return {
+        ...asset,
+        maskRecipe,
+        status: invalidatesResult ? "ready" : asset.status,
+        outputPath: invalidatesResult ? undefined : asset.outputPath,
+        outputBytes: invalidatesResult ? undefined : asset.outputBytes,
+        resultPreviewUrl: invalidatesResult ? undefined : asset.resultPreviewUrl,
+        error: invalidatesResult ? undefined : asset.error,
+      };
+    }));
+    if (maskRecipe.mode !== "automatic" && maskRecipe.strokes.length > 0) setViewMode("original");
+  }, [selectedId]);
+
+  useEffect(() => {
+    setIsMaskEditing(false);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const closeOnKey = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", closeOnKey);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", closeOnKey);
+    };
+  }, [contextMenu]);
 
   const removeSelected = () => {
     if (!selectedId) return;
@@ -448,6 +514,15 @@ function App() {
 
   const processAssets = async (targets: ImageAsset[]) => {
     if (!targets.length) return;
+    const incompleteManual = targets.find((asset) => asset.maskRecipe.mode === "manual"
+      && !asset.maskRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length));
+    if (incompleteManual) {
+      setSelectedId(incompleteManual.id);
+      setViewMode("original");
+      setIsMaskEditing(true);
+      setNotice(`'${incompleteManual.name}'에서 유지할 객체를 초록색 브러시로 먼저 칠해주세요.`);
+      return;
+    }
     if (!isTauri()) {
       setNotice("화면 검증 모드입니다. 실제 배경 제거는 Tauri 데스크톱 앱에서 실행됩니다.");
       return;
@@ -471,6 +546,7 @@ function App() {
           rotation: asset.rotation,
           sequence: assets.findIndex((candidate) => candidate.id === asset.id) + 1,
           exif: asset.exif,
+          maskRecipe: asset.maskRecipe,
         })),
         settings,
       });
@@ -624,9 +700,56 @@ function App() {
 
   const setFormat = (format: OutputFormat) => setSettings((current) => ({ ...current, format }));
 
+  const openMaskEditor = () => {
+    if (!selected) return;
+    if (selected.maskRecipe.mode === "automatic") {
+      updateSelectedMask({ ...selected.maskRecipe, mode: "refine" });
+    }
+    setViewMode("original");
+    setIsMaskEditing(true);
+  };
+
+  const openAppContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const element = event.target as HTMLElement;
+    const textField = element.closest("input[type='text'], input[type='search'], input[type='url'], input[type='email'], input[type='tel'], textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+    setContextMenu({
+      x: Math.min(event.clientX, window.innerWidth - 190),
+      y: Math.min(event.clientY, window.innerHeight - (textField ? 188 : 230)),
+      textField,
+    });
+  };
+
+  const runTextMenuAction = async (action: "undo" | "cut" | "copy" | "paste" | "selectAll") => {
+    const field = contextMenu?.textField;
+    setContextMenu(null);
+    if (!field) return;
+    field.focus();
+    if (action === "selectAll") {
+      field.select();
+      return;
+    }
+    if (action === "paste") {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!document.execCommand("insertText", false, text)) {
+          const start = field.selectionStart ?? field.value.length;
+          const end = field.selectionEnd ?? start;
+          field.setRangeText(text, start, end, "end");
+          field.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste", data: text }));
+        }
+      } catch {
+        setNotice("클립보드 붙여넣기 권한을 확인해주세요. Ctrl/Cmd+V도 사용할 수 있습니다.");
+      }
+      return;
+    }
+    document.execCommand(action);
+  };
+
   return (
     <div
       className="app"
+      onContextMenu={openAppContextMenu}
       onDragEnter={(event) => { event.preventDefault(); setIsDragging(true); }}
       onDragOver={(event) => event.preventDefault()}
       onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragging(false); }}
@@ -687,6 +810,8 @@ function App() {
               <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => setViewMode("compare")} role="tab" disabled={!selected?.outputPath}>비교</button>
             </div>
             <div className="canvas-actions">
+              <button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? () => setIsMaskEditing(false) : openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={16} />{isMaskEditing ? "편집 완료" : "브러시 편집"}</button>
+              <span className="divider" />
               <button className="icon-button" aria-label="왼쪽으로 회전" onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
               <button className="icon-button" aria-label="오른쪽으로 회전" onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /></button>
               <span className="divider" />
@@ -696,23 +821,15 @@ function App() {
 
           <div className={`canvas ${selected ? "has-image" : ""}`}>
             {selected ? (
-              <div className="preview-stage">
-                {effectiveViewMode === "compare" && selected.previewUrl && selected.resultPreviewUrl ? (
-                  <div className="compare-grid">
-                    <figure><img src={selected.previewUrl} alt={`${selected.name} 원본`} style={{ transform: `rotate(${selected.rotation}deg)` }} /><figcaption>원본</figcaption></figure>
-                    <figure><img src={selected.resultPreviewUrl} alt={`${selected.name} 결과`} /><figcaption>결과</figcaption></figure>
-                  </div>
-                ) : effectiveViewMode === "result" && selected.resultPreviewUrl ? (
-                  <img className="preview-image" src={selected.resultPreviewUrl} alt={`${selected.name} 배경 제거 결과`} />
-                ) : selected.previewUrl ? (
-                  <img
-                    className="preview-image"
-                    src={selected.previewUrl}
-                    alt={`${selected.name} 미리보기`}
-                    style={{ transform: `rotate(${selected.rotation}deg)` }}
-                  />
-                ) : <div className="preview-loading"><span className="spinner" />미리보기 만드는 중</div>}
-              </div>
+              selected.previewUrl ? (
+                <PreviewEditor
+                  asset={selected}
+                  viewMode={effectiveViewMode}
+                  editing={isMaskEditing}
+                  onEditingChange={setIsMaskEditing}
+                  onMaskChange={updateSelectedMask}
+                />
+              ) : <div className="preview-stage"><div className="preview-loading"><span className="spinner" />미리보기 만드는 중</div></div>
             ) : (
               <div className="drop-card">
                 <span className="drop-icon"><Icon name="image" size={28} /></span>
@@ -819,7 +936,46 @@ function App() {
             {exportPlan?.warnings[0] && <p className="setting-warning">{exportPlan.warnings[0]}</p>}
           </section>
 
-          <button className="advanced-row" disabled><span>가장자리 및 고급 옵션</span><span className="coming-soon">다음 단계</span></button>
+          <section className="setting-section mask-summary-section">
+            <div className="label-row"><span className="setting-label">객체 마스크</span><span className="live-badge">파일별</span></div>
+            <p className="setting-help flush">{!selected
+              ? "이미지를 선택하면 브러시로 유지할 객체와 제거할 영역을 지정할 수 있습니다."
+              : selected.maskRecipe.mode === "manual"
+                ? `직접 칠하기 · 브러시 ${selected.maskRecipe.strokes.length}개`
+                : selected.maskRecipe.mode === "refine"
+                  ? `자동 결과 보정 · 브러시 ${selected.maskRecipe.strokes.length}개`
+                  : "AI 자동 배경 제거"}</p>
+            <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={15} />브러시로 객체 편집</button>
+          </section>
+
+          <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings"><span>가장자리 및 고급 옵션</span><Icon name="chevron" size={15} /></button>
+          {isAdvancedOpen && (
+            <section id="advanced-settings" className="setting-section advanced-settings">
+              <div className="sub-setting first">
+                <div className="label-row"><label htmlFor="edge-smoothing">가장자리 매끄럽게</label><output>{settings.edgeSmoothing}</output></div>
+                <input id="edge-smoothing" type="range" min="0" max="10" value={settings.edgeSmoothing} onChange={(event) => setSettings({ ...settings, edgeSmoothing: Number(event.target.value) })} />
+                <p className="setting-help flush">톱니 모양의 마스크 경계를 부드럽게 정리합니다.</p>
+              </div>
+              <div className="sub-setting">
+                <div className="label-row"><label htmlFor="edge-feather">가장자리 페더</label><output>{settings.edgeFeather}px</output></div>
+                <input id="edge-feather" type="range" min="0" max="20" value={settings.edgeFeather} onChange={(event) => setSettings({ ...settings, edgeFeather: Number(event.target.value) })} />
+              </div>
+              <div className="sub-setting">
+                <div className="label-row"><label htmlFor="edge-shift">마스크 확장·축소</label><output>{settings.edgeShift > 0 ? "+" : ""}{settings.edgeShift}px</output></div>
+                <input id="edge-shift" type="range" min="-8" max="8" value={settings.edgeShift} onChange={(event) => setSettings({ ...settings, edgeShift: Number(event.target.value) })} />
+              </div>
+              <div className="sub-setting">
+                <div className="label-row"><label htmlFor="alpha-threshold">희미한 배경 제거</label><output>{settings.alphaThreshold}%</output></div>
+                <input id="alpha-threshold" type="range" min="0" max="30" value={settings.alphaThreshold} onChange={(event) => setSettings({ ...settings, alphaThreshold: Number(event.target.value) })} />
+              </div>
+              <div className="sub-setting">
+                <div className="label-row"><label htmlFor="mask-contrast">마스크 대비</label><output>{settings.maskContrast > 0 ? "+" : ""}{settings.maskContrast}</output></div>
+                <input id="mask-contrast" type="range" min="-50" max="50" value={settings.maskContrast} onChange={(event) => setSettings({ ...settings, maskContrast: Number(event.target.value) })} />
+              </div>
+              <label className="check-row"><input type="checkbox" checked={settings.preserveOriginalAlpha} onChange={(event) => setSettings({ ...settings, preserveOriginalAlpha: event.target.checked })} /><span><Icon name="check" size={13} /></span>원본 투명도 보존</label>
+              <p className="setting-help">고급 옵션은 모든 파일에 적용되며, 브러시 마스크는 선택한 파일에만 적용됩니다.</p>
+            </section>
+          )}
         </aside>
       </main>
 
@@ -858,6 +1014,33 @@ function App() {
       {isDragging && (
         <div className="drag-overlay">
           <div><span><Icon name="add" size={28} /></span><strong>여기에 놓아 추가</strong><small>파일과 폴더를 함께 처리할 수 있습니다.</small></div>
+        </div>
+      )}
+
+      {contextMenu && (
+        <div className="app-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}>
+          {contextMenu.textField ? (
+            <>
+              <button role="menuitem" onClick={() => void runTextMenuAction("undo")}><span>실행 취소</span><kbd>Ctrl+Z</kbd></button>
+              <span className="context-separator" />
+              <button role="menuitem" onClick={() => void runTextMenuAction("cut")}><span>잘라내기</span><kbd>Ctrl+X</kbd></button>
+              <button role="menuitem" onClick={() => void runTextMenuAction("copy")}><span>복사</span><kbd>Ctrl+C</kbd></button>
+              <button role="menuitem" onClick={() => void runTextMenuAction("paste")}><span>붙여넣기</span><kbd>Ctrl+V</kbd></button>
+              <span className="context-separator" />
+              <button role="menuitem" onClick={() => void runTextMenuAction("selectAll")}><span>모두 선택</span><kbd>Ctrl+A</kbd></button>
+            </>
+          ) : (
+            <>
+              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!selected?.previewUrl}><span>브러시로 객체 편집</span></button>
+              <span className="context-separator" />
+              <button role="menuitem" onClick={() => { setViewMode("original"); setContextMenu(null); }} disabled={!selected}><span>원본 보기</span></button>
+              <button role="menuitem" onClick={() => { setViewMode("result"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>결과 보기</span></button>
+              <button role="menuitem" onClick={() => { setViewMode("compare"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>드래그 비교</span></button>
+              <span className="context-separator" />
+              <button role="menuitem" onClick={() => { setContextMenu(null); void addFilesFromDialog(); }}><span>이미지 추가…</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); openSettings(); }}><span>환경설정…</span></button>
+            </>
+          )}
         </div>
       )}
 

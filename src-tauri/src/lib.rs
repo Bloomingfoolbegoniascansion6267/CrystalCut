@@ -494,6 +494,9 @@ fn process_batch_blocking(
     settings: OutputSettings,
     controller: BatchController,
 ) -> Result<BatchResult, String> {
+    for item in &items {
+        validate_mask_recipe(&item.mask_recipe)?;
+    }
     let total = items.len();
     emit_progress(
         &app,
@@ -527,6 +530,7 @@ fn process_batch_blocking(
             model_path: model_path_string.clone(),
             rotation: item.rotation,
             settings: settings.clone(),
+            mask_recipe: item.mask_recipe.clone(),
         });
         emit_progress(
             &app,
@@ -848,6 +852,21 @@ fn validate_settings(settings: &OutputSettings) -> Result<(), String> {
     if matches!(settings.resize_mode, ResizeMode::LongEdge) && settings.resize_value > 32_768 {
         return Err("긴 변은 안전을 위해 32,768px 이하여야 합니다.".to_owned());
     }
+    if settings.edge_smoothing > 10 {
+        return Err("가장자리 매끄럽게 값은 0에서 10 사이여야 합니다.".to_owned());
+    }
+    if settings.edge_feather > 20 {
+        return Err("가장자리 페더는 0에서 20px 사이여야 합니다.".to_owned());
+    }
+    if !(-8..=8).contains(&settings.edge_shift) {
+        return Err("마스크 확장·축소는 -8에서 8px 사이여야 합니다.".to_owned());
+    }
+    if settings.alpha_threshold > 100 {
+        return Err("희미한 배경 제거 값은 0에서 100% 사이여야 합니다.".to_owned());
+    }
+    if !(-50..=50).contains(&settings.mask_contrast) {
+        return Err("마스크 대비는 -50에서 50 사이여야 합니다.".to_owned());
+    }
     if matches!(settings.output_location, OutputLocation::Custom)
         && settings.output_directory.trim().is_empty()
     {
@@ -864,6 +883,38 @@ fn validate_settings(settings: &OutputSettings) -> Result<(), String> {
             metadata: &sample_metadata,
         },
     )?;
+    Ok(())
+}
+
+fn validate_mask_recipe(recipe: &protocol::ManualMaskRecipe) -> Result<(), String> {
+    if recipe.strokes.len() > 2_048 {
+        return Err("파일 하나에는 브러시 획을 최대 2,048개까지 저장할 수 있습니다.".to_owned());
+    }
+    let mut point_count = 0_usize;
+    let mut has_keep = false;
+    for stroke in &recipe.strokes {
+        if !(0.000_1..=0.5).contains(&stroke.radius) || !stroke.radius.is_finite() {
+            return Err("브러시 크기 정보가 올바르지 않습니다.".to_owned());
+        }
+        point_count = point_count.saturating_add(stroke.points.len());
+        has_keep |= matches!(stroke.mode, protocol::BrushMode::Keep) && !stroke.points.is_empty();
+        if stroke.points.iter().any(|point| {
+            !point.x.is_finite()
+                || !point.y.is_finite()
+                || !(0.0..=1.0).contains(&point.x)
+                || !(0.0..=1.0).contains(&point.y)
+        }) {
+            return Err("브러시 좌표 정보가 올바르지 않습니다.".to_owned());
+        }
+    }
+    if point_count > 100_000 {
+        return Err(
+            "파일 하나에는 브러시 좌표를 최대 100,000개까지 저장할 수 있습니다.".to_owned(),
+        );
+    }
+    if matches!(recipe.mode, protocol::MaskMode::Manual) && !has_keep {
+        return Err("직접 칠하기 모드에서는 유지할 객체를 먼저 칠해주세요.".to_owned());
+    }
     Ok(())
 }
 
@@ -896,22 +947,12 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol::{OutputFormat, OutputLocation, ResizeMode};
+    use protocol::OutputLocation;
 
     fn settings() -> OutputSettings {
         OutputSettings {
-            format: OutputFormat::Png,
-            webp_quality: 82,
-            webp_lossless: false,
-            png_effort: 6,
-            resize_mode: ResizeMode::Original,
-            resize_value: 2048,
-            prevent_upscale: true,
             output_location: OutputLocation::SameFolder,
-            output_directory: String::new(),
-            prefix: String::new(),
-            suffix: "_bg".to_owned(),
-            name_template: naming::DEFAULT_NAME_TEMPLATE.to_owned(),
+            ..OutputSettings::default()
         }
     }
 
@@ -985,6 +1026,19 @@ mod tests {
     }
 
     #[test]
+    fn manual_mask_requires_a_keep_stroke_before_processing() {
+        let recipe = protocol::ManualMaskRecipe {
+            mode: protocol::MaskMode::Manual,
+            strokes: vec![protocol::BrushStroke {
+                mode: protocol::BrushMode::Remove,
+                radius: 0.02,
+                points: vec![protocol::MaskPoint { x: 0.5, y: 0.5 }],
+            }],
+        };
+        assert!(validate_mask_recipe(&recipe).is_err());
+    }
+
+    #[test]
     fn export_plan_estimates_bytes_without_creating_output_files() {
         let temp_dir =
             std::env::temp_dir().join(format!("clearcut-estimate-{}", std::process::id()));
@@ -999,6 +1053,7 @@ mod tests {
             rotation: 0,
             sequence: None,
             exif: None,
+            mask_recipe: protocol::ManualMaskRecipe::default(),
         }];
 
         let plan = prepare_export_plan_blocking(items, settings()).expect("prepare export plan");
