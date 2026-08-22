@@ -46,8 +46,10 @@ npm run build
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
-npm run tauri -- build --no-bundle
+npm run build:desktop
 ```
+
+릴리스 실행 파일은 반드시 `npm run build:desktop`으로 생성합니다. 이 script가 production build 표식을 설정하고 Tauri CLI를 실행합니다. `cargo build --release`를 직접 실행하면 Tauri의 production `custom-protocol` 없이 개발 서버 주소를 바라보는 실행 파일이 만들어질 수 있으므로 build script가 이를 차단합니다.
 
 ## 문서
 

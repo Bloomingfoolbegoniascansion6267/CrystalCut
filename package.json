@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:desktop": "node scripts/build-desktop.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
