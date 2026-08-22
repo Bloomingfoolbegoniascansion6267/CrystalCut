@@ -10,7 +10,11 @@ use std::{
     hash::{Hash, Hasher},
     io::{BufRead, BufReader, Cursor, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -21,11 +25,128 @@ use protocol::{
     WORKER_PROTOCOL_VERSION,
 };
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 use walkdir::WalkDir;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const MAX_PREVIEW_EDGE: u32 = 1600;
+
+#[derive(Clone, Default)]
+struct BatchController {
+    running: Arc<AtomicBool>,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl BatchController {
+    fn begin(&self) -> Result<(), String> {
+        self.running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .map_err(|_| "이미 다른 batch 작업이 실행 중입니다.".to_owned())?;
+        self.cancelled.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn finish(&self) {
+        self.cancelled.store(false, Ordering::SeqCst);
+        self.running.store(false, Ordering::SeqCst);
+    }
+
+    fn request_cancel(&self) -> bool {
+        if !self.running.load(Ordering::SeqCst) {
+            return false;
+        }
+        self.cancelled.store(true, Ordering::SeqCst);
+        true
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
+struct WorkerClient {
+    child: Child,
+    stdin: Option<ChildStdin>,
+    stdout: BufReader<ChildStdout>,
+}
+
+impl WorkerClient {
+    fn spawn(executable: &Path) -> Result<Self, String> {
+        let mut child = Command::new(executable)
+            .arg("--worker")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("AI worker를 시작하지 못했습니다: {error}"))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "AI worker 입력 채널을 열지 못했습니다.".to_owned())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "AI worker 출력 채널을 열지 못했습니다.".to_owned())?;
+        Ok(Self {
+            child,
+            stdin: Some(stdin),
+            stdout: BufReader::new(stdout),
+        })
+    }
+
+    fn request(&mut self, request: &WorkerRequest) -> Result<WorkerResponse, String> {
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "AI worker 입력 채널이 닫혀 있습니다.".to_owned())?;
+        serde_json::to_writer(&mut *stdin, request)
+            .map_err(|error| format!("AI worker 요청을 만들지 못했습니다: {error}"))?;
+        stdin
+            .write_all(b"\n")
+            .and_then(|_| stdin.flush())
+            .map_err(|error| format!("AI worker 요청을 보내지 못했습니다: {error}"))?;
+
+        let mut line = String::new();
+        if self
+            .stdout
+            .read_line(&mut line)
+            .map_err(|error| format!("AI worker 응답을 읽지 못했습니다: {error}"))?
+            == 0
+        {
+            return Err("AI worker가 응답 없이 종료되었습니다.".to_owned());
+        }
+        let response: WorkerResponse = serde_json::from_str(&line)
+            .map_err(|error| format!("AI worker 응답이 올바르지 않습니다: {error}"))?;
+        if response.protocol_version != WORKER_PROTOCOL_VERSION {
+            return Err("AI worker protocol 버전이 앱과 다릅니다.".to_owned());
+        }
+        if response.job_id != request.job_id {
+            return Err("AI worker가 다른 작업의 응답을 반환했습니다.".to_owned());
+        }
+        Ok(response)
+    }
+
+    fn shutdown(mut self) {
+        self.stdin.take();
+        let _ = self.child.wait();
+    }
+
+    fn terminate(mut self) {
+        self.stdin.take();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for WorkerClient {
+    fn drop(&mut self) {
+        self.stdin.take();
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -187,7 +308,7 @@ fn prepare_export_plan_blocking(
                 Path::new(&item.path),
                 &settings,
                 &mut reserved,
-                index + 1,
+                item.sequence.unwrap_or(index + 1),
                 item.exif.as_ref(),
             )
             .map(|path| PlannedOutput {
@@ -243,6 +364,7 @@ fn prepare_export_plan_blocking(
 #[tauri::command]
 async fn process_batch(
     app: AppHandle,
+    controller: State<'_, BatchController>,
     items: Vec<ProcessItem>,
     settings: OutputSettings,
 ) -> Result<BatchResult, String> {
@@ -250,16 +372,27 @@ async fn process_batch(
     if items.is_empty() {
         return Err("처리할 이미지가 없습니다.".to_owned());
     }
+    let controller = controller.inner().clone();
+    controller.begin()?;
+    let blocking_controller = controller.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        process_batch_blocking(app, items, settings, blocking_controller)
+    })
+    .await;
+    controller.finish();
+    outcome.map_err(|error| format!("batch 작업을 실행하지 못했습니다: {error}"))?
+}
 
-    tauri::async_runtime::spawn_blocking(move || process_batch_blocking(app, items, settings))
-        .await
-        .map_err(|error| format!("batch 작업을 실행하지 못했습니다: {error}"))?
+#[tauri::command]
+fn cancel_batch(controller: State<'_, BatchController>) -> bool {
+    controller.request_cancel()
 }
 
 fn process_batch_blocking(
     app: AppHandle,
     items: Vec<ProcessItem>,
     settings: OutputSettings,
+    controller: BatchController,
 ) -> Result<BatchResult, String> {
     let total = items.len();
     emit_progress(
@@ -283,7 +416,7 @@ fn process_batch_blocking(
             Path::new(&item.path),
             &settings,
             &mut reserved,
-            index + 1,
+            item.sequence.unwrap_or(index + 1),
             item.exif.as_ref(),
         )?;
         requests.push(WorkerRequest {
@@ -310,25 +443,14 @@ fn process_batch_blocking(
 
     let executable = std::env::current_exe()
         .map_err(|error| format!("AI worker 실행 파일을 찾지 못했습니다: {error}"))?;
-    let mut child = Command::new(executable)
-        .arg("--worker")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("AI worker를 시작하지 못했습니다: {error}"))?;
-
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| "AI worker 입력 채널을 열지 못했습니다.".to_owned())?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "AI worker 출력 채널을 열지 못했습니다.".to_owned())?;
-    let mut stdout = BufReader::new(stdout);
+    let mut worker: Option<WorkerClient> = None;
+    let mut worker_restarts = 0_usize;
     let mut results = Vec::with_capacity(total);
-    for request in &requests {
+    for (request_index, request) in requests.iter().enumerate() {
+        if controller.is_cancelled() {
+            append_cancelled_results(&app, &requests[request_index..], total, &mut results);
+            break;
+        }
         emit_progress(
             &app,
             BatchProgress {
@@ -340,28 +462,87 @@ fn process_batch_blocking(
                 error: None,
             },
         );
-        serde_json::to_writer(&mut stdin, request)
-            .map_err(|error| format!("AI worker 요청을 만들지 못했습니다: {error}"))?;
-        stdin
-            .write_all(b"\n")
-            .and_then(|_| stdin.flush())
-            .map_err(|error| format!("AI worker 요청을 보내지 못했습니다: {error}"))?;
-
-        let mut line = String::new();
-        if stdout
-            .read_line(&mut line)
-            .map_err(|error| format!("AI worker 응답을 읽지 못했습니다: {error}"))?
-            == 0
-        {
-            return Err("AI worker가 응답 없이 종료되었습니다.".to_owned());
-        }
-        let response: WorkerResponse = serde_json::from_str(&line)
-            .map_err(|error| format!("AI worker 응답이 올바르지 않습니다: {error}"))?;
-        if response.protocol_version != WORKER_PROTOCOL_VERSION {
-            return Err("AI worker protocol 버전이 앱과 다릅니다.".to_owned());
-        }
-
+        let has_prior_results = !results.is_empty();
+        let completed_before_request = results.len();
+        let (response, attempts) = retry_once(
+            |attempt| {
+                if worker.is_none() {
+                    if has_prior_results || attempt > 1 {
+                        worker_restarts += 1;
+                    }
+                    worker = Some(WorkerClient::spawn(&executable)?);
+                }
+                let result = worker
+                    .as_mut()
+                    .ok_or_else(|| "AI worker를 준비하지 못했습니다.".to_owned())?
+                    .request(request);
+                if let Err(error) = result {
+                    if let Some(failed_worker) = worker.take() {
+                        failed_worker.terminate();
+                    }
+                    if let Ok(metadata) = Path::new(&request.output_path).metadata() {
+                        if metadata.is_file() && metadata.len() > 0 {
+                            return Ok(WorkerResponse {
+                                protocol_version: WORKER_PROTOCOL_VERSION,
+                                job_id: request.job_id.clone(),
+                                success: true,
+                                output_path: Some(request.output_path.clone()),
+                                output_bytes: Some(metadata.len()),
+                                duration_ms: 0,
+                                error: None,
+                            });
+                        }
+                    }
+                    return Err(error);
+                }
+                result
+            },
+            |error| {
+                emit_progress(
+                    &app,
+                    BatchProgress {
+                        asset_id: request.job_id.clone(),
+                        completed: completed_before_request,
+                        total,
+                        status: BatchItemStatus::RetryingWorker,
+                        output_path: None,
+                        error: Some(error.to_owned()),
+                    },
+                );
+            },
+        );
         let completed = results.len() + 1;
+        let response = match response {
+            Ok(response) => response,
+            Err(transport_error) => {
+                let error = format!(
+                    "AI worker를 재시작한 뒤에도 응답하지 않았습니다: {}",
+                    transport_error
+                );
+                emit_progress(
+                    &app,
+                    BatchProgress {
+                        asset_id: request.job_id.clone(),
+                        completed,
+                        total,
+                        status: BatchItemStatus::Failed,
+                        output_path: None,
+                        error: Some(error.clone()),
+                    },
+                );
+                results.push(ProcessedItemResult {
+                    asset_id: request.job_id.clone(),
+                    success: false,
+                    cancelled: false,
+                    attempts,
+                    output_path: None,
+                    output_bytes: None,
+                    duration_ms: 0,
+                    error: Some(error),
+                });
+                continue;
+            }
+        };
         emit_progress(
             &app,
             BatchProgress {
@@ -380,21 +561,16 @@ fn process_batch_blocking(
         results.push(ProcessedItemResult {
             asset_id: response.job_id,
             success: response.success,
+            cancelled: false,
+            attempts,
             output_path: response.output_path,
             output_bytes: response.output_bytes,
             duration_ms: response.duration_ms,
             error: response.error,
         });
     }
-    drop(stdin);
-    drop(stdout);
-
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("AI worker 종료 상태를 확인하지 못했습니다: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("AI worker가 비정상 종료되었습니다: {stderr}"));
+    if let Some(worker) = worker {
+        worker.shutdown();
     }
     if results.len() != total {
         return Err(format!(
@@ -405,10 +581,61 @@ fn process_batch_blocking(
 
     Ok(BatchResult {
         completed: results.iter().filter(|item| item.success).count(),
-        failed: results.iter().filter(|item| !item.success).count(),
+        failed: results
+            .iter()
+            .filter(|item| !item.success && !item.cancelled)
+            .count(),
+        cancelled: results.iter().filter(|item| item.cancelled).count(),
+        worker_restarts,
         output_bytes: results.iter().filter_map(|item| item.output_bytes).sum(),
         items: results,
     })
+}
+
+fn append_cancelled_results(
+    app: &AppHandle,
+    requests: &[WorkerRequest],
+    total: usize,
+    results: &mut Vec<ProcessedItemResult>,
+) {
+    for request in requests {
+        let completed = results.len() + 1;
+        let error = "사용자가 batch 처리를 취소했습니다.".to_owned();
+        emit_progress(
+            app,
+            BatchProgress {
+                asset_id: request.job_id.clone(),
+                completed,
+                total,
+                status: BatchItemStatus::Cancelled,
+                output_path: None,
+                error: Some(error.clone()),
+            },
+        );
+        results.push(ProcessedItemResult {
+            asset_id: request.job_id.clone(),
+            success: false,
+            cancelled: true,
+            attempts: 0,
+            output_path: None,
+            output_bytes: None,
+            duration_ms: 0,
+            error: Some(error),
+        });
+    }
+}
+
+fn retry_once<T>(
+    mut operation: impl FnMut(u8) -> Result<T, String>,
+    mut on_retry: impl FnMut(&str),
+) -> (Result<T, String>, u8) {
+    match operation(1) {
+        Ok(value) => (Ok(value), 1),
+        Err(first_error) => {
+            on_retry(&first_error);
+            (operation(2), 2)
+        }
+    }
 }
 
 fn emit_progress(app: &AppHandle, progress: BatchProgress) {
@@ -543,13 +770,15 @@ fn validate_settings(settings: &OutputSettings) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(BatchController::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             inspect_paths,
             load_preview,
             get_model_status,
             prepare_export_plan,
-            process_batch
+            process_batch,
+            cancel_batch
         ])
         .run(tauri::generate_context!())
         .expect("error while running Clearcut");
@@ -659,6 +888,7 @@ mod tests {
             id: "estimate-1".to_owned(),
             path: source.to_string_lossy().into_owned(),
             rotation: 0,
+            sequence: None,
             exif: None,
         }];
 
@@ -669,5 +899,56 @@ mod tests {
 
         std::fs::remove_file(source).expect("remove estimate fixture");
         std::fs::remove_dir(temp_dir).expect("remove estimate directory");
+    }
+
+    #[test]
+    fn batch_controller_rejects_overlap_and_resets_after_finish() {
+        let controller = BatchController::default();
+        assert!(controller.begin().is_ok());
+        assert!(controller.begin().is_err());
+        assert!(controller.request_cancel());
+        assert!(controller.is_cancelled());
+
+        controller.finish();
+        assert!(!controller.request_cancel());
+        assert!(!controller.is_cancelled());
+        assert!(controller.begin().is_ok());
+        controller.finish();
+    }
+
+    #[test]
+    fn worker_transport_is_retried_exactly_once() {
+        let mut calls = Vec::new();
+        let mut retry_errors = Vec::new();
+        let (result, attempts) = retry_once(
+            |attempt| {
+                calls.push(attempt);
+                if attempt == 1 {
+                    Err("worker exited".to_owned())
+                } else {
+                    Ok("recovered")
+                }
+            },
+            |error| retry_errors.push(error.to_owned()),
+        );
+        assert_eq!(result, Ok("recovered"));
+        assert_eq!(attempts, 2);
+        assert_eq!(calls, vec![1, 2]);
+        assert_eq!(retry_errors, vec!["worker exited"]);
+    }
+
+    #[test]
+    fn permanent_worker_transport_failure_stops_after_second_attempt() {
+        let mut calls = 0;
+        let (result, attempts) = retry_once(
+            |_| {
+                calls += 1;
+                Err::<(), _>(format!("failure {calls}"))
+            },
+            |_| {},
+        );
+        assert_eq!(result, Err("failure 2".to_owned()));
+        assert_eq!(attempts, 2);
+        assert_eq!(calls, 2);
     }
 }

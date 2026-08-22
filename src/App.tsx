@@ -28,8 +28,10 @@ const STATUS_LABEL: Record<ImageAsset["status"], string> = {
   ready: "준비됨",
   queued: "대기 중",
   processing: "처리 중",
+  retrying: "Worker 복구 중",
   done: "완료",
   failed: "실패",
+  cancelled: "취소됨",
 };
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
@@ -43,6 +45,7 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
     sparkle: <><path d="m12 3 1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4z" /><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" /></>,
     chevron: <path d="m9 18 6-6-6-6" />,
     check: <path d="m5 12 4 4L19 6" />,
+    stop: <rect x="7" y="7" width="10" height="10" rx="2" />,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z" /></>,
   };
 
@@ -59,7 +62,9 @@ function App() {
   const [settings, setSettings] = useState<OutputSettings>(DEFAULT_SETTINGS);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [batchCompleted, setBatchCompleted] = useState(0);
+  const [batchTotal, setBatchTotal] = useState(0);
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [viewMode, setViewMode] = useState<"original" | "result" | "compare">("original");
   const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
@@ -71,6 +76,10 @@ function App() {
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
   const totalBytes = useMemo(() => assets.reduce((sum, asset) => sum + asset.sizeBytes, 0), [assets]);
   const effectiveViewMode = selected?.resultPreviewUrl ? viewMode : "original";
+  const retryableAssets = useMemo(
+    () => assets.filter((asset) => asset.status === "failed" || asset.status === "cancelled"),
+    [assets],
+  );
   const planKey = useMemo(() => JSON.stringify({
     items: assets.map(({ path, rotation }) => ({ path, rotation })),
     settings,
@@ -131,6 +140,7 @@ function App() {
       .catch(() => undefined);
     void listen<BatchProgress>("batch-progress", ({ payload }) => {
       if (payload.status === "modelDownloading") {
+        setBatchTotal(payload.total);
         setNotice("로컬 AI 모델을 준비하고 있습니다. 최초 한 번만 다운로드합니다.");
         return;
       }
@@ -139,10 +149,12 @@ function App() {
         if (asset.id !== payload.assetId) return asset;
         if (payload.status === "queued") return { ...asset, status: "queued", error: undefined };
         if (payload.status === "processing") return { ...asset, status: "processing", error: undefined };
+        if (payload.status === "retryingWorker") return { ...asset, status: "retrying", error: payload.error ?? undefined };
         if (payload.status === "completed") {
           return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, resultPreviewUrl: undefined, error: undefined };
         }
         if (payload.status === "failed") return { ...asset, status: "failed", error: payload.error ?? "처리에 실패했습니다." };
+        if (payload.status === "cancelled") return { ...asset, status: "cancelled", error: payload.error ?? "사용자가 취소했습니다." };
         return asset;
       }));
     }).then((unlisten) => {
@@ -165,7 +177,7 @@ function App() {
     const timer = window.setTimeout(() => {
       setIsEstimating(true);
       void invoke<ExportPlan>("prepare_export_plan", {
-        items: assets.map((asset) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, exif: asset.exif })),
+        items: assets.map((asset, index) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, sequence: index + 1, exif: asset.exif })),
         settings,
       })
         .then((plan) => {
@@ -282,6 +294,7 @@ function App() {
         rotation: ((asset.rotation + direction * 90 + 360) % 360) as ImageAsset["rotation"],
         status: "ready",
         outputPath: undefined,
+        outputBytes: undefined,
         resultPreviewUrl: undefined,
       };
     }));
@@ -302,30 +315,69 @@ function App() {
     if (selection) setSettings((current) => ({ ...current, outputDirectory: selection }));
   };
 
-  const processAssets = async () => {
-    if (!assets.length) return;
+  const processAssets = async (targets: ImageAsset[]) => {
+    if (!targets.length) return;
     if (!isTauri()) {
       setNotice("화면 검증 모드입니다. 실제 배경 제거는 Tauri 데스크톱 앱에서 실행됩니다.");
       return;
     }
+    const targetIds = new Set(targets.map((asset) => asset.id));
+    const retainedOutputBytes = assets
+      .filter((asset) => !targetIds.has(asset.id))
+      .reduce((sum, asset) => sum + (asset.outputBytes ?? 0), 0);
     setIsProcessing(true);
+    setIsCancelling(false);
     setBatchCompleted(0);
-    setAssets((current) => current.map((asset) => ({ ...asset, status: "queued", outputPath: undefined, resultPreviewUrl: undefined, error: undefined })));
+    setBatchTotal(targets.length);
+    setAssets((current) => current.map((asset) => targetIds.has(asset.id)
+      ? { ...asset, status: "queued", outputPath: undefined, outputBytes: undefined, resultPreviewUrl: undefined, error: undefined }
+      : asset));
     try {
       const result = await invoke<BatchResult>("process_batch", {
-        items: assets.map((asset) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, exif: asset.exif })),
+        items: targets.map((asset) => ({
+          id: asset.id,
+          path: asset.path,
+          rotation: asset.rotation,
+          sequence: assets.findIndex((candidate) => candidate.id === asset.id) + 1,
+          exif: asset.exif,
+        })),
         settings,
       });
+      const resultById = new Map(result.items.map((item) => [item.assetId, item]));
+      setAssets((current) => current.map((asset) => {
+        const item = resultById.get(asset.id);
+        return item?.success ? { ...asset, outputBytes: item.outputBytes ?? undefined } : asset;
+      }));
       setModelStatus((current) => current ? { ...current, installed: true } : current);
-      setLastOutputBytes(result.outputBytes);
+      setLastOutputBytes(retainedOutputBytes + result.outputBytes);
       if (result.completed > 0) setViewMode("result");
-      setNotice(`${result.completed}개 저장 완료${result.failed ? ` · ${result.failed}개 실패` : ""} · 결과 ${formatBytes(result.outputBytes)}`);
+      setNotice([
+        `${result.completed}개 저장 완료`,
+        result.failed ? `${result.failed}개 실패` : null,
+        result.cancelled ? `${result.cancelled}개 취소` : null,
+        result.workerRestarts ? `Worker ${result.workerRestarts}회 복구` : null,
+        `결과 ${formatBytes(result.outputBytes)}`,
+      ].filter(Boolean).join(" · "));
     } catch (error) {
       const message = String(error);
-      setAssets((current) => current.map((asset) => asset.status === "queued" || asset.status === "processing" ? { ...asset, status: "failed", error: message } : asset));
+      setAssets((current) => current.map((asset) => asset.status === "queued" || asset.status === "processing" || asset.status === "retrying" ? { ...asset, status: "failed", error: message } : asset));
       setNotice(`배경 제거를 완료하지 못했습니다: ${message}`);
     } finally {
       setIsProcessing(false);
+      setIsCancelling(false);
+    }
+  };
+
+  const cancelProcessing = async () => {
+    if (!isProcessing || isCancelling || !isTauri()) return;
+    setIsCancelling(true);
+    try {
+      const accepted = await invoke<boolean>("cancel_batch");
+      setNotice(accepted ? "현재 파일을 마친 뒤 나머지 작업을 취소합니다." : "취소할 작업이 없습니다.");
+      if (!accepted) setIsCancelling(false);
+    } catch (error) {
+      setIsCancelling(false);
+      setNotice(`취소 요청을 보내지 못했습니다: ${String(error)}`);
     }
   };
 
@@ -544,7 +596,7 @@ function App() {
       <footer className="actionbar">
         <div className="estimate">
           <span className="estimate-label">{isProcessing ? "처리 중" : lastOutputBytes === null ? "예상 결과" : "결과"}</span>
-          <strong>{assets.length ? `${isProcessing ? batchCompleted : assets.filter((asset) => asset.status === "done").length} / ${assets.length}개` : "이미지를 추가해주세요"}</strong>
+          <strong>{assets.length ? `${isProcessing ? batchCompleted : assets.filter((asset) => asset.status === "done").length} / ${isProcessing ? batchTotal : assets.length}개` : "이미지를 추가해주세요"}</strong>
           {assets.length > 0 && <span className="muted">{
             lastOutputBytes !== null
               ? `${formatBytes(totalBytes)} → ${formatBytes(lastOutputBytes)} 저장`
@@ -555,11 +607,22 @@ function App() {
                   : `${formatBytes(totalBytes)} 원본 · 로컬에서만 처리`
           }</span>}
         </div>
-        <button className="run-button" disabled={!assets.length || isProcessing} onClick={processAssets}>
-          <span className="run-icon"><Icon name="sparkle" /></span>
-          <span>{isProcessing ? `${batchCompleted} / ${assets.length} 처리 중…` : `${assets.length || ""}개 배경 지우고 저장`}</span>
-          <Icon name="chevron" size={16} />
-        </button>
+        <div className="action-buttons">
+          {!isProcessing && retryableAssets.length > 0 && (
+            <button className="retry-button" onClick={() => void processAssets(retryableAssets)}>
+              <Icon name="rotateRight" size={15} />실패·취소 {retryableAssets.length}개 재시도
+            </button>
+          )}
+          <button
+            className={`run-button ${isProcessing ? "cancel" : ""}`}
+            disabled={isProcessing ? isCancelling : !assets.length}
+            onClick={() => isProcessing ? void cancelProcessing() : void processAssets(assets)}
+          >
+            <span className="run-icon"><Icon name={isProcessing ? "stop" : "sparkle"} /></span>
+            <span>{isProcessing ? isCancelling ? "취소 요청됨…" : `${batchCompleted} / ${batchTotal} 처리 중 · 취소` : `${assets.length || ""}개 배경 지우고 저장`}</span>
+            {!isProcessing && <Icon name="chevron" size={16} />}
+          </button>
+        </div>
       </footer>
 
       {isDragging && (

@@ -53,6 +53,10 @@ Tauri Core (Rust)
 
 현재 batch는 순차 처리한다. 이는 session 재사용과 메모리 상한을 우선 확인하기 위한 선택이며, 병렬도는 모델·provider별 benchmark 후 bounded concurrency로 확장한다.
 
+동시에 두 batch가 시작되지 않도록 원자적 실행 상태를 관리한다. 취소 요청은 현재 인코딩 중인 파일을 안전하게 완료한 뒤 남은 항목을 `cancelled`로 전환한다. 실패·취소 항목 재시도는 전체 목록의 원래 순번을 유지하므로 `{seq:03}` 결과가 첫 실행과 달라지지 않는다.
+
+worker 표준 입출력이 끊기거나 protocol 응답이 손상되면 해당 요청에 한해 프로세스를 새로 만들고 한 번 재전송한다. 첫 worker가 atomic rename까지 마친 뒤 응답 전에 종료된 경우에는 예약 출력 파일의 존재와 크기를 확인해 성공으로 회수한다. 두 번째 통신도 실패하면 해당 항목만 실패시키고 다음 항목에서 새 worker를 시작한다.
+
 ## 5. 검증 범위
 
 - Rust 단위 테스트: resize 비율, 확대 방지, 기존 alpha 결합, 모델 입력 layout·정규화, 모델 hash, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌
@@ -69,9 +73,10 @@ Tauri Core (Rust)
 
 1. 대표 이미지 golden set으로 U2Net, BiRefNet 계열의 품질·속도·메모리 benchmark
 2. Windows DirectML/Windows ML과 macOS CoreML provider packaging
-3. 취소·재시도, worker crash 복구, SQLite queue 영속화
-4. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
-5. 서명된 Windows/macOS installer와 updater 검증
+3. SQLite queue 영속화와 앱 재시작 복구
+4. 현재 추론까지 즉시 중단하는 강제 취소 option과 `.partial` 정리 검증
+5. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
+6. 서명된 Windows/macOS installer와 updater 검증
 
 ## 참고 구현
 

@@ -9,6 +9,8 @@ pub struct ProcessItem {
     pub path: String,
     pub rotation: u16,
     #[serde(default)]
+    pub sequence: Option<usize>,
+    #[serde(default)]
     pub exif: Option<crate::metadata::ExifSummary>,
 }
 
@@ -103,8 +105,10 @@ pub enum BatchItemStatus {
     ModelDownloading,
     Queued,
     Processing,
+    RetryingWorker,
     Completed,
     Failed,
+    Cancelled,
 }
 
 #[derive(Debug, Serialize)]
@@ -112,6 +116,8 @@ pub enum BatchItemStatus {
 pub struct ProcessedItemResult {
     pub asset_id: String,
     pub success: bool,
+    pub cancelled: bool,
+    pub attempts: u8,
     pub output_path: Option<String>,
     pub output_bytes: Option<u64>,
     pub duration_ms: u128,
@@ -123,6 +129,8 @@ pub struct ProcessedItemResult {
 pub struct BatchResult {
     pub completed: usize,
     pub failed: usize,
+    pub cancelled: usize,
+    pub worker_restarts: usize,
     pub output_bytes: u64,
     pub items: Vec<ProcessedItemResult>,
 }

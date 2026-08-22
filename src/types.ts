@@ -1,4 +1,4 @@
-export type AssetStatus = "ready" | "queued" | "processing" | "done" | "failed";
+export type AssetStatus = "ready" | "queued" | "processing" | "retrying" | "done" | "failed" | "cancelled";
 
 export interface ImageAsset {
   id: string;
@@ -13,6 +13,7 @@ export interface ImageAsset {
   previewUrl?: string;
   resultPreviewUrl?: string;
   outputPath?: string;
+  outputBytes?: number;
   error?: string;
   rotation: 0 | 90 | 180 | 270;
 }
@@ -61,10 +62,11 @@ export interface ProcessItem {
   id: string;
   path: string;
   rotation: number;
+  sequence?: number;
   exif?: ExifSummary;
 }
 
-export type BatchProgressStatus = "modelDownloading" | "queued" | "processing" | "completed" | "failed";
+export type BatchProgressStatus = "modelDownloading" | "queued" | "processing" | "retryingWorker" | "completed" | "failed" | "cancelled";
 
 export interface BatchProgress {
   assetId: string;
@@ -78,6 +80,8 @@ export interface BatchProgress {
 export interface ProcessedItemResult {
   assetId: string;
   success: boolean;
+  cancelled: boolean;
+  attempts: number;
   outputPath: string | null;
   outputBytes: number | null;
   durationMs: number;
@@ -87,6 +91,8 @@ export interface ProcessedItemResult {
 export interface BatchResult {
   completed: number;
   failed: number;
+  cancelled: number;
+  workerRestarts: number;
   outputBytes: number;
   items: ProcessedItemResult[];
 }
