@@ -1,5 +1,7 @@
 mod engine;
+mod metadata;
 mod model;
+mod naming;
 mod protocol;
 pub mod worker;
 
@@ -15,7 +17,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::{GenericImageView, ImageFormat, ImageReader};
 use protocol::{
     BatchItemStatus, BatchProgress, BatchResult, ExportPlan, OutputLocation, OutputSettings,
-    ProcessItem, ProcessedItemResult, ResizeMode, WorkerRequest, WorkerResponse,
+    PlannedOutput, ProcessItem, ProcessedItemResult, ResizeMode, WorkerRequest, WorkerResponse,
     WORKER_PROTOCOL_VERSION,
 };
 use serde::Serialize;
@@ -35,6 +37,7 @@ struct ImageAsset {
     extension: String,
     width: Option<u32>,
     height: Option<u32>,
+    exif: metadata::ExifSummary,
 }
 
 #[tauri::command]
@@ -95,6 +98,14 @@ fn push_supported_file(path: PathBuf, files: &mut Vec<ImageAsset>, seen: &mut Ha
     let mut hasher = DefaultHasher::new();
     path_string.hash(&mut hasher);
 
+    let exif = metadata::read_exif_summary(&canonical);
+    let dimensions = dimensions.map(|(width, height)| {
+        if matches!(exif.orientation, 5..=8) {
+            (height, width)
+        } else {
+            (width, height)
+        }
+    });
     files.push(ImageAsset {
         id: format!("asset-{:016x}", hasher.finish()),
         name: canonical
@@ -107,6 +118,7 @@ fn push_supported_file(path: PathBuf, files: &mut Vec<ImageAsset>, seen: &mut Ha
         extension,
         width: dimensions.map(|value| value.0),
         height: dimensions.map(|value| value.1),
+        exif,
     });
 }
 
@@ -122,10 +134,12 @@ fn load_preview_blocking(path: &Path) -> Result<String, String> {
         return Err("파일을 찾을 수 없습니다.".to_owned());
     }
 
-    let source = ImageReader::open(path)
+    let mut source = ImageReader::open(path)
         .map_err(|error| format!("이미지를 열 수 없습니다: {error}"))?
         .decode()
         .map_err(|error| format!("이미지를 해석할 수 없습니다: {error}"))?;
+    let exif = metadata::read_exif_summary(path);
+    metadata::apply_orientation(&mut source, exif.orientation);
     let (width, height) = source.dimensions();
     let preview = if width > MAX_PREVIEW_EDGE || height > MAX_PREVIEW_EDGE {
         source.thumbnail(MAX_PREVIEW_EDGE, MAX_PREVIEW_EDGE)
@@ -150,20 +164,79 @@ fn get_model_status(app: AppHandle) -> Result<model::ModelStatus, String> {
 }
 
 #[tauri::command]
-fn prepare_export_plan(paths: Vec<String>, settings: OutputSettings) -> Result<ExportPlan, String> {
+async fn prepare_export_plan(
+    items: Vec<ProcessItem>,
+    settings: OutputSettings,
+) -> Result<ExportPlan, String> {
+    tauri::async_runtime::spawn_blocking(move || prepare_export_plan_blocking(items, settings))
+        .await
+        .map_err(|error| format!("출력 예상 작업을 실행하지 못했습니다: {error}"))?
+}
+
+fn prepare_export_plan_blocking(
+    items: Vec<ProcessItem>,
+    settings: OutputSettings,
+) -> Result<ExportPlan, String> {
     validate_settings(&settings)?;
     let mut reserved = HashSet::new();
-    let sample_outputs = paths
+    let planned_outputs = items
         .iter()
-        .take(5)
-        .map(|path| plan_output_path(Path::new(path), &settings, &mut reserved))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect();
+        .enumerate()
+        .map(|(index, item)| {
+            plan_output_path(
+                Path::new(&item.path),
+                &settings,
+                &mut reserved,
+                index + 1,
+                item.exif.as_ref(),
+            )
+            .map(|path| PlannedOutput {
+                asset_id: item.id.clone(),
+                path: path.to_string_lossy().into_owned(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let total_input_bytes = items
+        .iter()
+        .filter_map(|item| Path::new(&item.path).metadata().ok())
+        .map(|metadata| metadata.len())
+        .sum::<u64>();
+    let mut sampled_input_bytes = 0_u64;
+    let mut sampled_output_bytes = 0_u64;
+    let mut estimate_sample_count = 0_usize;
+    for item in items.iter().take(3) {
+        let path = Path::new(&item.path);
+        let Ok(input_bytes) = path.metadata().map(|metadata| metadata.len()) else {
+            continue;
+        };
+        let Ok(output_bytes) = engine::estimate_output_size(path, item.rotation, &settings) else {
+            continue;
+        };
+        sampled_input_bytes = sampled_input_bytes.saturating_add(input_bytes);
+        sampled_output_bytes = sampled_output_bytes.saturating_add(output_bytes);
+        estimate_sample_count += 1;
+    }
+    let estimated_output_bytes = if sampled_input_bytes > 0 {
+        Some(
+            ((sampled_output_bytes as f64 / sampled_input_bytes as f64) * total_input_bytes as f64)
+                .round() as u64,
+        )
+    } else {
+        None
+    };
+    let estimated_savings_percent = estimated_output_bytes.and_then(|estimated| {
+        (total_input_bytes > 0)
+            .then_some((1.0 - estimated as f64 / total_input_bytes as f64) * 100.0)
+    });
+    let warnings = naming_warnings(&items, &settings);
+
     Ok(ExportPlan {
-        item_count: paths.len(),
-        sample_outputs,
+        item_count: items.len(),
+        planned_outputs,
+        estimated_output_bytes,
+        estimated_savings_percent,
+        estimate_sample_count,
+        warnings,
     })
 }
 
@@ -205,8 +278,14 @@ fn process_batch_blocking(
 
     let mut reserved = HashSet::new();
     let mut requests = Vec::with_capacity(total);
-    for item in &items {
-        let output_path = plan_output_path(Path::new(&item.path), &settings, &mut reserved)?;
+    for (index, item) in items.iter().enumerate() {
+        let output_path = plan_output_path(
+            Path::new(&item.path),
+            &settings,
+            &mut reserved,
+            index + 1,
+            item.exif.as_ref(),
+        )?;
         requests.push(WorkerRequest {
             protocol_version: WORKER_PROTOCOL_VERSION,
             job_id: item.id.clone(),
@@ -340,17 +419,26 @@ fn plan_output_path(
     source: &Path,
     settings: &OutputSettings,
     reserved: &mut HashSet<String>,
+    sequence: usize,
+    cached_exif: Option<&metadata::ExifSummary>,
 ) -> Result<PathBuf, String> {
-    let stem = source
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("image");
-    let base_name = format!(
-        "{}{}{}",
-        sanitize_filename_fragment(&settings.prefix),
-        sanitize_filename_fragment(stem),
-        sanitize_filename_fragment(&settings.suffix)
-    );
+    let loaded_exif;
+    let exif = if let Some(exif) = cached_exif {
+        exif
+    } else {
+        loaded_exif = metadata::read_exif_summary(source);
+        &loaded_exif
+    };
+    let base_name = naming::render_name_template(
+        &settings.name_template,
+        &naming::NamingContext {
+            source,
+            sequence,
+            prefix: &settings.prefix,
+            suffix: &settings.suffix,
+            metadata: exif,
+        },
+    )?;
     let parent = source.parent().unwrap_or_else(|| Path::new("."));
     let output_dir = match settings.output_location {
         OutputLocation::Subfolder => parent.join("Removed Background"),
@@ -374,6 +462,49 @@ fn plan_output_path(
     Err("사용 가능한 출력 파일명을 만들지 못했습니다.".to_owned())
 }
 
+fn naming_warnings(items: &[ProcessItem], settings: &OutputSettings) -> Vec<String> {
+    let needs_taken = settings.name_template.contains("{taken:");
+    let needs_camera = settings.name_template.contains("{camera}");
+    let needs_lens = settings.name_template.contains("{lens}");
+    if !needs_taken && !needs_camera && !needs_lens {
+        return Vec::new();
+    }
+
+    let mut missing_taken = 0;
+    let mut missing_camera = 0;
+    let mut missing_lens = 0;
+    for item in items {
+        let loaded_exif;
+        let exif = if let Some(exif) = item.exif.as_ref() {
+            exif
+        } else {
+            loaded_exif = metadata::read_exif_summary(Path::new(&item.path));
+            &loaded_exif
+        };
+        missing_taken += usize::from(needs_taken && exif.taken_at.is_none());
+        missing_camera += usize::from(needs_camera && exif.camera.is_none());
+        missing_lens += usize::from(needs_lens && exif.lens.is_none());
+    }
+
+    let mut warnings = Vec::new();
+    if missing_taken > 0 {
+        warnings.push(format!(
+            "촬영일이 없는 {missing_taken}개 파일은 undated로 저장됩니다."
+        ));
+    }
+    if missing_camera > 0 {
+        warnings.push(format!(
+            "카메라 정보가 없는 {missing_camera}개 파일은 unknown-camera로 저장됩니다."
+        ));
+    }
+    if missing_lens > 0 {
+        warnings.push(format!(
+            "렌즈 정보가 없는 {missing_lens}개 파일은 unknown-lens로 저장됩니다."
+        ));
+    }
+    warnings
+}
+
 fn validate_settings(settings: &OutputSettings) -> Result<(), String> {
     if !(1..=100).contains(&settings.webp_quality) {
         return Err("WebP 화질은 1에서 100 사이여야 합니다.".to_owned());
@@ -384,26 +515,29 @@ fn validate_settings(settings: &OutputSettings) -> Result<(), String> {
     if !matches!(settings.resize_mode, ResizeMode::Original) && settings.resize_value == 0 {
         return Err("변경할 이미지 크기는 0보다 커야 합니다.".to_owned());
     }
+    if matches!(settings.resize_mode, ResizeMode::Percent) && settings.resize_value > 1_000 {
+        return Err("비율은 안전을 위해 1,000% 이하여야 합니다.".to_owned());
+    }
+    if matches!(settings.resize_mode, ResizeMode::LongEdge) && settings.resize_value > 32_768 {
+        return Err("긴 변은 안전을 위해 32,768px 이하여야 합니다.".to_owned());
+    }
     if matches!(settings.output_location, OutputLocation::Custom)
         && settings.output_directory.trim().is_empty()
     {
         return Err("저장할 폴더를 선택해주세요.".to_owned());
     }
+    let sample_metadata = metadata::ExifSummary::default();
+    naming::render_name_template(
+        &settings.name_template,
+        &naming::NamingContext {
+            source: Path::new("image.jpg"),
+            sequence: 1,
+            prefix: &settings.prefix,
+            suffix: &settings.suffix,
+            metadata: &sample_metadata,
+        },
+    )?;
     Ok(())
-}
-
-fn sanitize_filename_fragment(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| match character {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
-            _ if character.is_control() => '_',
-            _ => character,
-        })
-        .collect::<String>()
-        .trim()
-        .trim_end_matches('.')
-        .to_owned()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -439,17 +573,24 @@ mod tests {
             output_directory: String::new(),
             prefix: String::new(),
             suffix: "_bg".to_owned(),
+            name_template: naming::DEFAULT_NAME_TEMPLATE.to_owned(),
         }
     }
 
     #[test]
     fn filename_fragments_replace_cross_platform_forbidden_characters() {
-        assert_eq!(sanitize_filename_fragment("2026:08/22*"), "2026_08_22_");
+        assert_eq!(
+            naming::sanitize_filename_fragment("2026:08/22*"),
+            "2026_08_22_"
+        );
     }
 
     #[test]
     fn filename_fragments_remove_trailing_dots_and_spaces() {
-        assert_eq!(sanitize_filename_fragment("portrait...  "), "portrait");
+        assert_eq!(
+            naming::sanitize_filename_fragment("portrait...  "),
+            "portrait"
+        );
     }
 
     #[test]
@@ -469,8 +610,8 @@ mod tests {
         let existing = temp_dir.join("portrait_bg.png");
         std::fs::write(&existing, b"existing").expect("create collision fixture");
 
-        let output =
-            plan_output_path(&source, &settings(), &mut HashSet::new()).expect("plan output");
+        let output = plan_output_path(&source, &settings(), &mut HashSet::new(), 1, None)
+            .expect("plan output");
         assert_eq!(
             output.file_name().and_then(|value| value.to_str()),
             Some("portrait_bg (2).png")
@@ -478,5 +619,55 @@ mod tests {
 
         std::fs::remove_file(existing).expect("remove fixture");
         std::fs::remove_dir(temp_dir).expect("remove test directory");
+    }
+
+    #[test]
+    fn output_planning_applies_sequence_template_before_collision_suffix() {
+        let mut dynamic = settings();
+        dynamic.name_template = "{seq:03}_{name}{suffix}".to_owned();
+        let output = plan_output_path(
+            Path::new("portrait.jpg"),
+            &dynamic,
+            &mut HashSet::new(),
+            7,
+            None,
+        )
+        .expect("plan templated output");
+        assert_eq!(
+            output.file_name().and_then(|value| value.to_str()),
+            Some("007_portrait_bg.png")
+        );
+    }
+
+    #[test]
+    fn invalid_name_template_is_rejected_before_processing() {
+        let mut invalid = settings();
+        invalid.name_template = "{unknown}".to_owned();
+        assert!(validate_settings(&invalid).is_err());
+    }
+
+    #[test]
+    fn export_plan_estimates_bytes_without_creating_output_files() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("clearcut-estimate-{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).expect("create estimate directory");
+        let source = temp_dir.join("sample.png");
+        image::RgbaImage::from_pixel(64, 32, image::Rgba([120, 80, 40, 255]))
+            .save(&source)
+            .expect("save estimate fixture");
+        let items = vec![ProcessItem {
+            id: "estimate-1".to_owned(),
+            path: source.to_string_lossy().into_owned(),
+            rotation: 0,
+            exif: None,
+        }];
+
+        let plan = prepare_export_plan_blocking(items, settings()).expect("prepare export plan");
+        assert_eq!(plan.estimate_sample_count, 1);
+        assert!(plan.estimated_output_bytes.is_some_and(|bytes| bytes > 0));
+        assert!(!temp_dir.join("sample_bg.png").exists());
+
+        std::fs::remove_file(source).expect("remove estimate fixture");
+        std::fs::remove_dir(temp_dir).expect("remove estimate directory");
     }
 }

@@ -322,12 +322,20 @@ select { cursor: pointer; }
 .path-picker { justify-content: space-between; width: 100%; height: 34px; gap: 7px; margin-top: 8px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); font-size: 10px; }
 .path-picker span { flex: 1; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .naming-section .setting-label { margin: 0; }
+.live-badge { padding: 3px 6px; color: var(--accent); border-radius: 5px; background: var(--accent-soft); font-size: 8.5px; font-weight: 700; }
 .name-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 10px; }
 .name-grid label span { display: block; margin: 0 0 5px 2px; color: var(--ink-faint); font-size: 9px; }
+.template-field { display: block; margin-top: 10px; }
+.template-field > span { display: block; margin: 0 0 5px 2px; color: var(--ink-faint); font-size: 9px; }
+.template-field input { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9.5px; }
+.token-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.token-row button { padding: 5px 7px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: 8.5px; }
+.token-row button:hover { color: var(--accent); border-color: #cfc4ff; background: var(--accent-soft); }
 .name-preview { margin-top: 9px; padding: 9px 10px; border-radius: 8px; background: var(--surface-muted); }
 .name-preview span, .name-preview strong { display: block; }
 .name-preview span { margin-bottom: 4px; color: var(--ink-faint); font-size: 8.5px; }
 .name-preview strong { overflow: hidden; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.setting-warning { margin: 7px 1px 0; color: #9a681b; font-size: 8.8px; line-height: 1.4; }
 .advanced-row { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 15px 16px; background: white; font-size: 10.5px; font-weight: 600; }
 .coming-soon { padding: 3px 6px; color: var(--ink-faint); border-radius: 5px; background: var(--surface-muted); font-size: 8.5px; }
 

@@ -14,7 +14,10 @@ use ort::{
     value::Tensor,
 };
 
-use crate::protocol::{OutputFormat, OutputSettings, ResizeMode, WorkerRequest};
+use crate::{
+    metadata,
+    protocol::{OutputFormat, OutputSettings, ResizeMode, WorkerRequest},
+};
 
 const INPUT_WIDTH: u32 = 320;
 const INPUT_HEIGHT: u32 = 320;
@@ -54,12 +57,15 @@ impl InferenceEngine {
     pub fn process(&mut self, request: &WorkerRequest) -> Result<u64, String> {
         let input_path = Path::new(&request.input_path);
         let output_path = Path::new(&request.output_path);
+        validate_output_extension(output_path, request.settings.format)?;
         if output_path.exists() {
             return Err("안전을 위해 기존 출력 파일을 덮어쓰지 않았습니다.".to_owned());
         }
 
-        let source = image::open(input_path)
+        let mut source = image::open(input_path)
             .map_err(|error| format!("입력 이미지를 열지 못했습니다: {error}"))?;
+        let exif = metadata::read_exif_summary(input_path);
+        metadata::apply_orientation(&mut source, exif.orientation);
         let mask = self.infer_mask(&source)?;
         let mut composed = apply_alpha(source, &mask);
         composed = rotate(composed, request.rotation)?;
@@ -112,6 +118,52 @@ impl InferenceEngine {
     }
 }
 
+fn validate_output_extension(path: &Path, format: OutputFormat) -> Result<(), String> {
+    let actual = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase);
+    if actual.as_deref() != Some(format.extension()) {
+        return Err(format!(
+            "출력 형식과 파일 확장자가 다릅니다: 형식={}, 경로={}",
+            format.extension(),
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn estimate_output_size(
+    input_path: &Path,
+    rotation: u16,
+    settings: &OutputSettings,
+) -> Result<u64, String> {
+    const MAX_ESTIMATE_EDGE: u32 = 1200;
+
+    let mut source = image::open(input_path)
+        .map_err(|error| format!("예상 용량용 이미지를 열지 못했습니다: {error}"))?;
+    let exif = metadata::read_exif_summary(input_path);
+    metadata::apply_orientation(&mut source, exif.orientation);
+    let source = rotate(source, rotation)?;
+    let (width, height) = source.dimensions();
+    let (target_width, target_height) = target_dimensions(width, height, settings);
+    let target_long_edge = target_width.max(target_height);
+    let sample_scale = if target_long_edge > MAX_ESTIMATE_EDGE {
+        f64::from(MAX_ESTIMATE_EDGE) / f64::from(target_long_edge)
+    } else {
+        1.0
+    };
+    let sample_width = (f64::from(target_width) * sample_scale).round().max(1.0) as u32;
+    let sample_height = (f64::from(target_height) * sample_scale).round().max(1.0) as u32;
+    let sample = source.resize_exact(sample_width, sample_height, ResizeFilter::Lanczos3);
+    let mut sample_settings = settings.clone();
+    sample_settings.resize_mode = ResizeMode::Original;
+    let sample_bytes = encode(&sample, &sample_settings)?.len() as f64;
+    let sample_pixels = f64::from(sample_width) * f64::from(sample_height);
+    let target_pixels = f64::from(target_width) * f64::from(target_height);
+    Ok((sample_bytes * target_pixels / sample_pixels).round() as u64)
+}
+
 fn prepare_input(source: &DynamicImage) -> Vec<f32> {
     let resized = source
         .resize_exact(INPUT_WIDTH, INPUT_HEIGHT, ResizeFilter::Lanczos3)
@@ -155,19 +207,32 @@ fn rotate(image: DynamicImage, rotation: u16) -> Result<DynamicImage, String> {
 
 fn resize(image: DynamicImage, settings: &OutputSettings) -> DynamicImage {
     let (width, height) = image.dimensions();
-    let target = match settings.resize_mode {
-        ResizeMode::Original => return image,
+    let target = target_dimensions(width, height, settings);
+    if target == (width, height) {
+        return image;
+    }
+    image.resize_exact(target.0, target.1, ResizeFilter::Lanczos3)
+}
+
+fn target_dimensions(width: u32, height: u32, settings: &OutputSettings) -> (u32, u32) {
+    match settings.resize_mode {
+        ResizeMode::Original => (width, height),
         ResizeMode::Percent => {
             let scale = settings.resize_value as f64 / 100.0;
-            (
+            let target = (
                 (f64::from(width) * scale).round().max(1.0) as u32,
                 (f64::from(height) * scale).round().max(1.0) as u32,
-            )
+            );
+            if settings.prevent_upscale && (target.0 > width || target.1 > height) {
+                (width, height)
+            } else {
+                target
+            }
         }
         ResizeMode::LongEdge => {
             let long_edge = width.max(height);
             if settings.prevent_upscale && long_edge <= settings.resize_value {
-                return image;
+                return (width, height);
             }
             let scale = settings.resize_value as f64 / f64::from(long_edge);
             (
@@ -175,12 +240,6 @@ fn resize(image: DynamicImage, settings: &OutputSettings) -> DynamicImage {
                 (f64::from(height) * scale).round().max(1.0) as u32,
             )
         }
-    };
-
-    if settings.prevent_upscale && (target.0 > width || target.1 > height) {
-        image
-    } else {
-        image.resize_exact(target.0, target.1, ResizeFilter::Lanczos3)
     }
 }
 
@@ -259,6 +318,7 @@ mod tests {
             output_directory: String::new(),
             prefix: String::new(),
             suffix: "_bg".to_owned(),
+            name_template: crate::naming::DEFAULT_NAME_TEMPLATE.to_owned(),
         }
     }
 
@@ -300,5 +360,11 @@ mod tests {
         for channel in 0..3 {
             assert!((input[channel * plane] - expected[channel]).abs() < 1.0e-5);
         }
+    }
+
+    #[test]
+    fn output_extension_must_match_the_selected_encoder() {
+        assert!(validate_output_extension(Path::new("result.webp"), OutputFormat::Webp).is_ok());
+        assert!(validate_output_extension(Path::new("result.png"), OutputFormat::Webp).is_err());
     }
 }

@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+kamadak-exif = "0.6.1"
 ndarray = "0.17"
 ort = "=2.0.0-rc.13"
 serde = { version = "1", features = ["derive"] }

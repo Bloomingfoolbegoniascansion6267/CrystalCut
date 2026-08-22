@@ -2,7 +2,7 @@ import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useSta
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { BatchProgress, BatchResult, ImageAsset, ModelStatus, OutputFormat, OutputSettings } from "./types";
+import type { BatchProgress, BatchResult, ExportPlan, ImageAsset, ModelStatus, OutputFormat, OutputSettings } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS: OutputSettings = {
   outputDirectory: "",
   prefix: "",
   suffix: "_bg",
+  nameTemplate: "{prefix}{name}{suffix}",
 };
 
 const isTauri = () => Boolean(window.__TAURI_INTERNALS__);
@@ -62,12 +63,18 @@ function App() {
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [viewMode, setViewMode] = useState<"original" | "result" | "compare">("original");
   const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
+  const [exportPlan, setExportPlan] = useState<ExportPlan | null>(null);
+  const [isEstimating, setIsEstimating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
   const totalBytes = useMemo(() => assets.reduce((sum, asset) => sum + asset.sizeBytes, 0), [assets]);
   const effectiveViewMode = selected?.resultPreviewUrl ? viewMode : "original";
+  const planKey = useMemo(() => JSON.stringify({
+    items: assets.map(({ path, rotation }) => ({ path, rotation })),
+    settings,
+  }), [assets, settings]);
 
   const addAssets = useCallback((incoming: ImageAsset[]) => {
     if (!incoming.length) return;
@@ -150,6 +157,41 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!isTauri() || !assets.length || isProcessing) {
+      if (!assets.length) setExportPlan(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setIsEstimating(true);
+      void invoke<ExportPlan>("prepare_export_plan", {
+        items: assets.map((asset) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, exif: asset.exif })),
+        settings,
+      })
+        .then((plan) => {
+          if (!cancelled) setExportPlan(plan);
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setExportPlan(null);
+            setNotice(`출력 설정을 확인해주세요: ${String(error)}`);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setIsEstimating(false);
+        });
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [planKey, isProcessing]);
+
+  useEffect(() => {
+    setLastOutputBytes(null);
+  }, [planKey]);
+
+  useEffect(() => {
     if (!selected || selected.previewUrl || !isTauri()) return;
     let cancelled = false;
     invoke<string>("load_preview", { path: selected.path })
@@ -209,6 +251,7 @@ function App() {
         extension: file.name.split(".").pop()?.toLowerCase() ?? "",
         width: null,
         height: null,
+        exif: { takenAt: null, camera: null, lens: null, orientation: 1 },
         status: "ready",
         previewUrl: URL.createObjectURL(file),
         rotation: 0,
@@ -270,7 +313,7 @@ function App() {
     setAssets((current) => current.map((asset) => ({ ...asset, status: "queued", outputPath: undefined, resultPreviewUrl: undefined, error: undefined })));
     try {
       const result = await invoke<BatchResult>("process_batch", {
-        items: assets.map((asset) => ({ id: asset.id, path: asset.path, rotation: asset.rotation })),
+        items: assets.map((asset) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, exif: asset.exif })),
         settings,
       });
       setModelStatus((current) => current ? { ...current, installed: true } : current);
@@ -285,6 +328,20 @@ function App() {
       setIsProcessing(false);
     }
   };
+
+  const appendNameToken = (token: string) => {
+    setSettings((current) => ({ ...current, nameTemplate: `${current.nameTemplate}${token}` }));
+  };
+  const previewOutputName = exportPlan?.plannedOutputs.find((output) => output.assetId === selectedId)?.path.split(/[\\/]/).pop()
+    ?? `${settings.prefix}${selected?.name.replace(/\.[^.]+$/, "") || "image"}${settings.suffix}.${settings.format}`;
+  const estimateText = exportPlan?.estimatedOutputBytes == null
+    ? null
+    : `${formatBytes(exportPlan.estimatedOutputBytes)} 예상`;
+  const savingsText = exportPlan?.estimatedSavingsPercent == null
+    ? null
+    : exportPlan.estimatedSavingsPercent >= 0
+      ? `${Math.round(exportPlan.estimatedSavingsPercent)}% 감소 예상`
+      : `${Math.round(Math.abs(exportPlan.estimatedSavingsPercent))}% 증가 예상`;
 
   const setFormat = (format: OutputFormat) => setSettings((current) => ({ ...current, format }));
 
@@ -394,6 +451,8 @@ function App() {
               <span>{formatDimensions(selected.width, selected.height)}</span>
               <span>{selected.extension.toUpperCase()}</span>
               {selected.rotation !== 0 && <span>{selected.rotation}° 회전</span>}
+              {selected.exif.takenAt && <span title="EXIF 촬영일">{selected.exif.takenAt}</span>}
+              {selected.exif.camera && <span title={selected.exif.lens ?? "EXIF 카메라"}>{selected.exif.camera}</span>}
               <span className={`file-status ${selected.status}`}>{STATUS_LABEL[selected.status]}</span>
             </div>
           )}
@@ -437,7 +496,7 @@ function App() {
             </select>
             {settings.resizeMode !== "original" && (
               <div className="input-with-unit">
-                <input type="number" min="1" value={settings.resizeValue} onChange={(e) => setSettings({ ...settings, resizeValue: Number(e.target.value) })} />
+                <input type="number" min="1" max={settings.resizeMode === "percent" ? 1000 : 32768} value={settings.resizeValue} onChange={(e) => setSettings({ ...settings, resizeValue: Number(e.target.value) })} />
                 <span>{settings.resizeMode === "percent" ? "%" : "px"}</span>
               </div>
             )}
@@ -459,12 +518,23 @@ function App() {
           </section>
 
           <section className="setting-section naming-section">
-            <div className="label-row"><label className="setting-label">파일 이름</label><button className="text-button" disabled>EXIF 규칙</button></div>
+            <div className="label-row"><label className="setting-label" htmlFor="name-template">파일 이름</label><span className="live-badge">동적 규칙</span></div>
             <div className="name-grid">
               <label><span>앞에 붙이기</span><input type="text" value={settings.prefix} placeholder="예: cut_" onChange={(e) => setSettings({ ...settings, prefix: e.target.value })} /></label>
               <label><span>뒤에 붙이기</span><input type="text" value={settings.suffix} placeholder="예: _bg" onChange={(e) => setSettings({ ...settings, suffix: e.target.value })} /></label>
             </div>
-            <div className="name-preview"><span>미리보기</span><strong>{settings.prefix}{selected?.name.replace(/\.[^.]+$/, "") || "image"}{settings.suffix}.{settings.format}</strong></div>
+            <label className="template-field" htmlFor="name-template">
+              <span>템플릿</span>
+              <input id="name-template" type="text" value={settings.nameTemplate} spellCheck={false} onChange={(e) => setSettings({ ...settings, nameTemplate: e.target.value })} />
+            </label>
+            <div className="token-row" aria-label="파일 이름 토큰 추가">
+              <button type="button" onClick={() => appendNameToken("{taken:yyMMdd_HHmmss}")}>촬영일</button>
+              <button type="button" onClick={() => appendNameToken("{seq:03}")}>순번</button>
+              <button type="button" onClick={() => appendNameToken("{camera}")}>카메라</button>
+              <button type="button" onClick={() => appendNameToken("{lens}")}>렌즈</button>
+            </div>
+            <div className="name-preview"><span>{isEstimating ? "계산 중" : "미리보기"}</span><strong>{previewOutputName}</strong></div>
+            {exportPlan?.warnings[0] && <p className="setting-warning">{exportPlan.warnings[0]}</p>}
           </section>
 
           <button className="advanced-row" disabled><span>가장자리 및 고급 옵션</span><span className="coming-soon">다음 단계</span></button>
@@ -473,9 +543,17 @@ function App() {
 
       <footer className="actionbar">
         <div className="estimate">
-          <span className="estimate-label">{isProcessing ? "처리 중" : "결과"}</span>
+          <span className="estimate-label">{isProcessing ? "처리 중" : lastOutputBytes === null ? "예상 결과" : "결과"}</span>
           <strong>{assets.length ? `${isProcessing ? batchCompleted : assets.filter((asset) => asset.status === "done").length} / ${assets.length}개` : "이미지를 추가해주세요"}</strong>
-          {assets.length > 0 && <span className="muted">{lastOutputBytes === null ? `${formatBytes(totalBytes)} 원본 · 로컬에서만 처리` : `${formatBytes(totalBytes)} → ${formatBytes(lastOutputBytes)} 저장`}</span>}
+          {assets.length > 0 && <span className="muted">{
+            lastOutputBytes !== null
+              ? `${formatBytes(totalBytes)} → ${formatBytes(lastOutputBytes)} 저장`
+              : isEstimating
+                ? `${formatBytes(totalBytes)} 원본 · 용량 계산 중…`
+                : estimateText
+                  ? `${formatBytes(totalBytes)} → ${estimateText}${savingsText ? ` · ${savingsText}` : ""}`
+                  : `${formatBytes(totalBytes)} 원본 · 로컬에서만 처리`
+          }</span>}
         </div>
         <button className="run-button" disabled={!assets.length || isProcessing} onClick={processAssets}>
           <span className="run-icon"><Icon name="sparkle" /></span>

@@ -47,11 +47,15 @@ Tauri Core (Rust)
 
 각 항목은 `ready → queued → processing → done/failed` 상태를 갖는다. Rust core가 `batch-progress` event를 보내면 UI가 진행률과 현재 파일을 갱신한다. 완료 항목을 선택하면 결과 파일에서 새 미리보기를 만들고 원본·결과·비교 탭을 즉시 사용할 수 있다.
 
+출력 설정이 바뀌면 450ms debounce 후 최대 3개 파일을 실제 선택 encoder로 축소 인코딩해 전체 예상 용량과 원본 대비 증감률을 계산한다. 이는 foreground alpha를 만들기 전의 표본 추정치이므로 UI에서 항상 “예상”으로 표시하고, 처리가 끝나면 실제 저장 용량으로 교체한다.
+
+파일명은 `{taken:yyMMdd_HHmmss}`, `{seq:03}`, `{camera}`, `{lens}` 등의 token을 조합한다. EXIF 누락값은 고정 fallback으로 바꾸고 금지 문자, 제어 문자, Windows 예약 이름을 정리한 뒤 경로 충돌을 검사한다. GPS 필드는 추출 대상에서 제외한다. EXIF orientation 1–8은 미리보기와 실제 추론 입력에 먼저 반영한다.
+
 현재 batch는 순차 처리한다. 이는 session 재사용과 메모리 상한을 우선 확인하기 위한 선택이며, 병렬도는 모델·provider별 benchmark 후 bounded concurrency로 확장한다.
 
 ## 5. 검증 범위
 
-- Rust 단위 테스트: resize 비율, 확대 방지, 기존 alpha 결합, 모델 입력 layout·정규화, 모델 hash, 파일명 및 경로 충돌
+- Rust 단위 테스트: resize 비율, 확대 방지, 기존 alpha 결합, 모델 입력 layout·정규화, 모델 hash, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌
 - TypeScript production build
 - 공식 U-2-Net 테스트 사진을 사용한 worker 스모크 테스트
   - 400×267 PNG 입력
@@ -65,10 +69,9 @@ Tauri Core (Rust)
 
 1. 대표 이미지 golden set으로 U2Net, BiRefNet 계열의 품질·속도·메모리 benchmark
 2. Windows DirectML/Windows ML과 macOS CoreML provider packaging
-3. EXIF 촬영일·camera field를 지원하는 파일명 template parser
-4. 실제 encoder sample 기반 예상 용량과 절감률 표시
-5. 취소·재시도, worker crash 복구, SQLite queue 영속화
-6. 서명된 Windows/macOS installer와 updater 검증
+3. 취소·재시도, worker crash 복구, SQLite queue 영속화
+4. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
+5. 서명된 Windows/macOS installer와 updater 검증
 
 ## 참고 구현
 

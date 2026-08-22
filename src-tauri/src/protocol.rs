@@ -8,6 +8,8 @@ pub struct ProcessItem {
     pub id: String,
     pub path: String,
     pub rotation: u16,
+    #[serde(default)]
+    pub exif: Option<crate::metadata::ExifSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +26,8 @@ pub struct OutputSettings {
     pub output_directory: String,
     pub prefix: String,
     pub suffix: String,
+    #[serde(default = "crate::naming::default_name_template")]
+    pub name_template: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -127,5 +131,16 @@ pub struct BatchResult {
 #[serde(rename_all = "camelCase")]
 pub struct ExportPlan {
     pub item_count: usize,
-    pub sample_outputs: Vec<String>,
+    pub planned_outputs: Vec<PlannedOutput>,
+    pub estimated_output_bytes: Option<u64>,
+    pub estimated_savings_percent: Option<f64>,
+    pub estimate_sample_count: usize,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannedOutput {
+    pub asset_id: String,
+    pub path: String,
 }

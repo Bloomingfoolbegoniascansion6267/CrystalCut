@@ -8,12 +8,20 @@ export interface ImageAsset {
   extension: string;
   width: number | null;
   height: number | null;
+  exif: ExifSummary;
   status: AssetStatus;
   previewUrl?: string;
   resultPreviewUrl?: string;
   outputPath?: string;
   error?: string;
   rotation: 0 | 90 | 180 | 270;
+}
+
+export interface ExifSummary {
+  takenAt: string | null;
+  camera: string | null;
+  lens: string | null;
+  orientation: number;
 }
 
 export type OutputFormat = "png" | "webp";
@@ -32,17 +40,28 @@ export interface OutputSettings {
   outputDirectory: string;
   prefix: string;
   suffix: string;
+  nameTemplate: string;
 }
 
 export interface ExportPlan {
   itemCount: number;
-  sampleOutputs: string[];
+  plannedOutputs: PlannedOutput[];
+  estimatedOutputBytes: number | null;
+  estimatedSavingsPercent: number | null;
+  estimateSampleCount: number;
+  warnings: string[];
+}
+
+export interface PlannedOutput {
+  assetId: string;
+  path: string;
 }
 
 export interface ProcessItem {
   id: string;
   path: string;
   rotation: number;
+  exif?: ExifSummary;
 }
 
 export type BatchProgressStatus = "modelDownloading" | "queued" | "processing" | "completed" | "failed";
