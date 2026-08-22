@@ -1,7 +1,7 @@
 # Clearcut 수동 객체 선택·마스크 보정·환경설정 구현 계획
 
 - 기준일: 2026-08-22
-- 상태: 구현 순서 확정, promptable segmentation 모델은 benchmark 후 확정
+- 상태: 환경설정 shell 완료, 수동 mask 편집 기반 구현 예정, promptable segmentation 모델은 benchmark 후 확정
 - 원칙: 자동 처리는 한 번의 클릭으로 유지하고 수동 편집은 파일별 opt-in으로 제공
 
 ## 1. 제품 동작 결정
@@ -112,7 +112,7 @@ ClosePreviewSession(sessionId)
 
 ## 7. 구현 순서와 완료 조건
 
-### A. 환경설정 shell과 저장 계약
+### A. 환경설정 shell과 저장 계약 — 완료
 
 - 톱니바퀴 modal, focus/keyboard 동작, 일반·모델·저장 공간·진단 기본 화면
 - `app_preferences` schema migration, 기본값, reset, 손상된 값 fallback

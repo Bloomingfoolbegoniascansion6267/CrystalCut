@@ -26,18 +26,41 @@ pub struct ModelStatus {
     pub installed: bool,
     pub expected_bytes: u64,
     pub path: Option<String>,
+    pub installed_bytes: Option<u64>,
+    pub can_delete: bool,
     pub purpose: &'static str,
 }
 
 pub fn status(app: &AppHandle) -> Result<ModelStatus, String> {
     let path = find_verified_model(app)?;
+    let managed_path = installed_model_path(app)?;
     Ok(ModelStatus {
         id: MODEL_ID,
         installed: path.is_some(),
         expected_bytes: MODEL_BYTES,
+        installed_bytes: path
+            .as_ref()
+            .and_then(|value| value.metadata().ok())
+            .map(|metadata| metadata.len()),
+        can_delete: path.as_ref().is_some_and(|value| value == &managed_path),
         path: path.map(|value| value.to_string_lossy().into_owned()),
         purpose: "빠른 로컬 처리 및 end-to-end 검증",
     })
+}
+
+pub fn remove_default_model(app: &AppHandle) -> Result<ModelStatus, String> {
+    let model_path = installed_model_path(app)?;
+    let partial_path = model_path.with_extension("onnx.partial");
+    for path in [&model_path, &partial_path] {
+        if path.is_file() {
+            fs::remove_file(path)
+                .map_err(|error| format!("설치된 모델을 삭제하지 못했습니다: {error}"))?;
+        }
+    }
+    if let Some(directory) = model_path.parent() {
+        let _ = fs::remove_dir(directory);
+    }
+    status(app)
 }
 
 pub fn ensure_default_model(app: &AppHandle) -> Result<PathBuf, String> {
@@ -46,6 +69,10 @@ pub fn ensure_default_model(app: &AppHandle) -> Result<PathBuf, String> {
     }
 
     let model_path = installed_model_path(app)?;
+    if model_path.is_file() {
+        fs::remove_file(&model_path)
+            .map_err(|error| format!("손상된 모델 파일을 교체하지 못했습니다: {error}"))?;
+    }
     let model_dir = model_path
         .parent()
         .ok_or_else(|| "모델 저장 폴더를 계산하지 못했습니다.".to_owned())?;
@@ -104,8 +131,7 @@ fn find_verified_model(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     }
 
     let installed = installed_model_path(app)?;
-    if installed.is_file() {
-        verify_model(&installed)?;
+    if installed.is_file() && verify_model(&installed).is_ok() {
         return Ok(Some(installed));
     }
 

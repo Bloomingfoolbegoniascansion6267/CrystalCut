@@ -14,7 +14,7 @@ pub struct ProcessItem {
     pub exif: Option<crate::metadata::ExifSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputSettings {
     pub format: OutputFormat,
@@ -32,7 +32,26 @@ pub struct OutputSettings {
     pub name_template: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+impl Default for OutputSettings {
+    fn default() -> Self {
+        Self {
+            format: OutputFormat::Png,
+            webp_quality: 82,
+            webp_lossless: false,
+            png_effort: 6,
+            resize_mode: ResizeMode::Original,
+            resize_value: 2048,
+            prevent_upscale: true,
+            output_location: OutputLocation::Subfolder,
+            output_directory: String::new(),
+            prefix: String::new(),
+            suffix: "_bg".to_owned(),
+            name_template: crate::naming::default_name_template(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     Png,
@@ -48,7 +67,7 @@ impl OutputFormat {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ResizeMode {
     Original,
@@ -56,7 +75,7 @@ pub enum ResizeMode {
     LongEdge,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum OutputLocation {
     Subfolder,

@@ -64,9 +64,13 @@ worker 표준 입출력이 끊기거나 protocol 응답이 손상되면 해당 �
 
 앱 시작 시 원본 경로와 파일 크기, 완료 결과 경로를 다시 검사한다. 사라진 원본은 목록에서 제외하고, 변경된 원본·실행 중 종료된 항목·사라진 결과는 `interrupted`로 복구해 미완료 재시도 대상으로 제공한다. 완료 결과가 남아 있으면 다시 처리하지 않고 결과 미리보기를 복원한다. UI의 작업 비우기는 SQLite snapshot만 제거하며 원본과 결과 파일은 삭제하지 않는다.
 
+SQLite schema v2는 작업 snapshot과 분리된 `app_preferences` table을 추가한다. 톱니바퀴 환경설정에서 새 작업의 기본 출력 recipe와 재시작 복구 여부를 저장하며, 전역 기본값 변경은 이미 목록에 들어온 작업을 자동 변경하지 않는다. schema v1 DB는 작업 table을 보존한 채 v2로 migration하고 손상된 환경설정 JSON은 권장 기본값으로 fallback한다.
+
+환경설정 modal은 focus trap, Esc 닫기와 호출 버튼 focus 복귀를 지원한다. 일반, AI 모델·저장 공간, 개인정보, 진단 영역을 제공하며 모델 설치·삭제는 batch와 같은 실행 잠금을 사용한다. 앱 version, worker protocol, OS/architecture, DB 크기와 앱 데이터 경로는 실제 Tauri command에서 읽는다. 아직 검증하지 않은 GPU provider나 EXIF/ICC 보존 option은 활성 control로 노출하지 않는다.
+
 ## 5. 검증 범위
 
-- Rust 단위 테스트 26개: resize 비율, 확대 방지, 기존 alpha 결합, 모델 입력 layout·정규화, 모델 hash·TLS provider, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌, SQLite migration·snapshot round trip·중단/완료 결과 복구
+- Rust 단위 테스트 28개: resize 비율, 확대 방지, 기존 alpha 결합, 모델 입력 layout·정규화, 모델 hash·TLS provider, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌, SQLite v1→v2 migration·환경설정 fallback·snapshot round trip·중단/완료 결과 복구
 - TypeScript production build
 - 공식 U-2-Net 테스트 사진을 사용한 worker 스모크 테스트
   - 400×267 PNG 입력
@@ -78,15 +82,14 @@ worker 표준 입출력이 끊기거나 protocol 응답이 손상되면 해당 �
 
 ## 6. 다음 우선순위
 
-1. 동작하는 환경설정 shell과 전역 `AppPreferences` 저장 계약
-2. Canvas 유지/지우기 brush, Undo/Redo와 correction mask 저장
-3. promptable segmentation 및 자동 배경 제거 모델의 품질·속도·메모리 benchmark와 물체 단위 대상 선택
-4. Windows DirectML/Windows ML과 macOS CoreML provider packaging
-5. 선택 파일 자동 미리보기와 최종 export 결과 일치 검증
-6. 현재 추론까지 즉시 중단하는 강제 취소 option과 `.partial` 정리 검증
-7. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
-8. 대규모 목록 virtual scroll과 SQLite delta 저장 최적화
-9. 서명된 Windows/macOS installer와 updater 검증
+1. Canvas 유지/지우기 brush, Undo/Redo와 correction mask 저장
+2. promptable segmentation 및 자동 배경 제거 모델의 품질·속도·메모리 benchmark와 물체 단위 대상 선택
+3. Windows DirectML/Windows ML과 macOS CoreML provider packaging
+4. 선택 파일 자동 미리보기와 최종 export 결과 일치 검증
+5. 현재 추론까지 즉시 중단하는 강제 취소 option과 `.partial` 정리 검증
+6. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
+7. 대규모 목록 virtual scroll과 SQLite delta 저장 최적화
+8. 서명된 Windows/macOS installer와 updater 검증
 
 ## 참고 구현
 

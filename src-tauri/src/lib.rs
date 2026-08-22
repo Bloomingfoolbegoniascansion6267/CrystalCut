@@ -285,6 +285,57 @@ fn get_model_status(app: AppHandle) -> Result<model::ModelStatus, String> {
     model::status(&app)
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppDiagnostics {
+    app_version: String,
+    worker_protocol_version: u16,
+    operating_system: &'static str,
+    architecture: &'static str,
+    app_data_directory: String,
+    database_bytes: u64,
+}
+
+#[tauri::command]
+fn get_app_diagnostics(app: AppHandle) -> Result<AppDiagnostics, String> {
+    Ok(AppDiagnostics {
+        app_version: app.package_info().version.to_string(),
+        worker_protocol_version: WORKER_PROTOCOL_VERSION,
+        operating_system: std::env::consts::OS,
+        architecture: std::env::consts::ARCH,
+        app_data_directory: workspace::app_data_directory(&app)?,
+        database_bytes: workspace::database_size(&app)?,
+    })
+}
+
+#[tauri::command]
+async fn install_model(
+    app: AppHandle,
+    controller: State<'_, BatchController>,
+) -> Result<model::ModelStatus, String> {
+    let controller = controller.inner().clone();
+    controller.begin()?;
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        model::ensure_default_model(&app)?;
+        model::status(&app)
+    })
+    .await;
+    controller.finish();
+    outcome.map_err(|error| format!("모델 설치 작업을 실행하지 못했습니다: {error}"))?
+}
+
+#[tauri::command]
+fn delete_model(
+    app: AppHandle,
+    controller: State<'_, BatchController>,
+) -> Result<model::ModelStatus, String> {
+    let controller = controller.inner().clone();
+    controller.begin()?;
+    let outcome = model::remove_default_model(&app);
+    controller.finish();
+    outcome
+}
+
 #[tauri::command]
 async fn prepare_export_plan(
     items: Vec<ProcessItem>,
@@ -411,6 +462,30 @@ async fn clear_workspace(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || workspace::clear(&app))
         .await
         .map_err(|error| format!("작업 공간 초기화를 실행하지 못했습니다: {error}"))?
+}
+
+#[tauri::command]
+async fn load_app_preferences(app: AppHandle) -> Result<workspace::AppPreferences, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::load_preferences(&app))
+        .await
+        .map_err(|error| format!("환경설정 복구를 실행하지 못했습니다: {error}"))?
+}
+
+#[tauri::command]
+async fn save_app_preferences(
+    app: AppHandle,
+    preferences: workspace::AppPreferences,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::save_preferences(&app, preferences))
+        .await
+        .map_err(|error| format!("환경설정 저장을 실행하지 못했습니다: {error}"))?
+}
+
+#[tauri::command]
+async fn reset_app_preferences(app: AppHandle) -> Result<workspace::AppPreferences, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::reset_preferences(&app))
+        .await
+        .map_err(|error| format!("환경설정 초기화를 실행하지 못했습니다: {error}"))?
 }
 
 fn process_batch_blocking(
@@ -801,12 +876,18 @@ pub fn run() {
             inspect_paths,
             load_preview,
             get_model_status,
+            get_app_diagnostics,
+            install_model,
+            delete_model,
             prepare_export_plan,
             process_batch,
             cancel_batch,
             load_workspace,
             save_workspace,
-            clear_workspace
+            clear_workspace,
+            load_app_preferences,
+            save_app_preferences,
+            reset_app_preferences
         ])
         .run(tauri::generate_context!())
         .expect("error while running Clearcut");

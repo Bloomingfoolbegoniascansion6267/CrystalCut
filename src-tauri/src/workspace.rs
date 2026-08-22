@@ -9,7 +9,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::{metadata::ExifSummary, protocol::OutputSettings};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const DATABASE_FILE: &str = "workspace.sqlite3";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +89,22 @@ pub struct RestoredWorkspace {
     pub saved_at_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AppPreferences {
+    pub default_settings: OutputSettings,
+    pub restore_workspace: bool,
+}
+
+impl Default for AppPreferences {
+    fn default() -> Self {
+        Self {
+            default_settings: OutputSettings::default(),
+            restore_workspace: true,
+        }
+    }
+}
+
 pub fn save(app: &AppHandle, snapshot: WorkspaceSnapshot) -> Result<(), String> {
     let mut connection = open(app)?;
     save_to_connection(&mut connection, &snapshot)
@@ -111,6 +127,48 @@ pub fn clear(app: &AppHandle) -> Result<(), String> {
     transaction
         .commit()
         .map_err(|error| format!("작업 목록 삭제를 확정하지 못했습니다: {error}"))
+}
+
+pub fn load_preferences(app: &AppHandle) -> Result<AppPreferences, String> {
+    let connection = open(app)?;
+    load_preferences_from_connection(&connection)
+}
+
+pub fn save_preferences(app: &AppHandle, preferences: AppPreferences) -> Result<(), String> {
+    crate::validate_settings(&preferences.default_settings)?;
+    let connection = open(app)?;
+    save_preferences_to_connection(&connection, &preferences)
+}
+
+pub fn reset_preferences(app: &AppHandle) -> Result<AppPreferences, String> {
+    let preferences = AppPreferences::default();
+    let connection = open(app)?;
+    save_preferences_to_connection(&connection, &preferences)?;
+    Ok(preferences)
+}
+
+pub fn database_size(app: &AppHandle) -> Result<u64, String> {
+    let path = database_path(app)?;
+    let mut bytes = path.metadata().map_or(0, |metadata| metadata.len());
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = Path::new(&format!("{}{suffix}", path.to_string_lossy())).to_path_buf();
+        bytes = bytes.saturating_add(sidecar.metadata().map_or(0, |metadata| metadata.len()));
+    }
+    Ok(bytes)
+}
+
+pub fn app_data_directory(app: &AppHandle) -> Result<String, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| format!("앱 데이터 폴더를 찾지 못했습니다: {error}"))
+}
+
+fn database_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|directory| directory.join(DATABASE_FILE))
+        .map_err(|error| format!("앱 데이터 폴더를 찾지 못했습니다: {error}"))
 }
 
 fn open(app: &AppHandle) -> Result<Connection, String> {
@@ -137,7 +195,7 @@ fn open(app: &AppHandle) -> Result<Connection, String> {
 }
 
 fn migrate(connection: &Connection) -> Result<(), String> {
-    let version = connection
+    let mut version = connection
         .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
         .map_err(|error| format!("작업 목록 schema 버전을 읽지 못했습니다: {error}"))?;
     if version > SCHEMA_VERSION {
@@ -175,7 +233,58 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                  COMMIT;",
             )
             .map_err(|error| format!("작업 목록 schema를 만들지 못했습니다: {error}"))?;
+        version = 1;
     }
+    if version == 1 {
+        connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE TABLE IF NOT EXISTS app_preferences (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    preferences_json TEXT NOT NULL,
+                    updated_at_ms INTEGER NOT NULL
+                 );
+                 PRAGMA user_version = 2;
+                 COMMIT;",
+            )
+            .map_err(|error| format!("환경설정 schema를 만들지 못했습니다: {error}"))?;
+    }
+    Ok(())
+}
+
+fn load_preferences_from_connection(connection: &Connection) -> Result<AppPreferences, String> {
+    let stored = connection
+        .query_row(
+            "SELECT preferences_json FROM app_preferences WHERE singleton = 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("환경설정을 읽지 못했습니다: {error}"))?;
+    Ok(stored
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .filter(|preferences: &AppPreferences| {
+            crate::validate_settings(&preferences.default_settings).is_ok()
+        })
+        .unwrap_or_default())
+}
+
+fn save_preferences_to_connection(
+    connection: &Connection,
+    preferences: &AppPreferences,
+) -> Result<(), String> {
+    let preferences_json = serde_json::to_string(preferences)
+        .map_err(|error| format!("환경설정을 직렬화하지 못했습니다: {error}"))?;
+    connection
+        .execute(
+            "INSERT INTO app_preferences(singleton, preferences_json, updated_at_ms)
+             VALUES(1, ?1, ?2)
+             ON CONFLICT(singleton) DO UPDATE SET
+                preferences_json = excluded.preferences_json,
+                updated_at_ms = excluded.updated_at_ms",
+            params![preferences_json, now_ms()],
+        )
+        .map_err(|error| format!("환경설정을 저장하지 못했습니다: {error}"))?;
     Ok(())
 }
 
@@ -188,11 +297,7 @@ fn save_to_connection(
     }
     let settings_json = serde_json::to_string(&snapshot.settings)
         .map_err(|error| format!("출력 설정을 직렬화하지 못했습니다: {error}"))?;
-    let saved_at_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .min(i64::MAX as u128) as i64;
+    let saved_at_ms = now_ms();
     let transaction = connection
         .transaction()
         .map_err(|error| format!("작업 목록 저장 transaction을 시작하지 못했습니다: {error}"))?;
@@ -423,6 +528,10 @@ fn system_time_ms(value: SystemTime) -> Option<i64> {
         .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
 }
 
+fn now_ms() -> i64 {
+    system_time_ms(SystemTime::now()).unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,6 +588,10 @@ mod tests {
     fn migration_and_snapshot_round_trip_preserve_order_and_settings() {
         let mut connection = Connection::open_in_memory().expect("open in-memory database");
         migrate(&connection).expect("migrate database");
+        let schema_version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("read schema version");
+        assert_eq!(schema_version, SCHEMA_VERSION);
         let directory =
             std::env::temp_dir().join(format!("clearcut-workspace-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("create fixture directory");
@@ -558,5 +671,78 @@ mod tests {
 
         std::fs::remove_file(source).expect("remove source fixture");
         std::fs::remove_dir(directory).expect("remove fixture directory");
+    }
+
+    #[test]
+    fn app_preferences_round_trip_and_corruption_fallback() {
+        let connection = Connection::open_in_memory().expect("open in-memory database");
+        migrate(&connection).expect("migrate database");
+        let preferences = AppPreferences {
+            restore_workspace: false,
+            default_settings: OutputSettings {
+                format: OutputFormat::Webp,
+                prefix: "default_".to_owned(),
+                ..OutputSettings::default()
+            },
+        };
+
+        save_preferences_to_connection(&connection, &preferences).expect("save preferences");
+        assert_eq!(
+            load_preferences_from_connection(&connection).expect("load preferences"),
+            preferences
+        );
+
+        connection
+            .execute(
+                "UPDATE app_preferences SET preferences_json = 'not-json' WHERE singleton = 1",
+                [],
+            )
+            .expect("corrupt preferences fixture");
+        assert_eq!(
+            load_preferences_from_connection(&connection).expect("fallback preferences"),
+            AppPreferences::default()
+        );
+    }
+
+    #[test]
+    fn version_one_database_migrates_without_losing_workspace_tables() {
+        let connection = Connection::open_in_memory().expect("open in-memory database");
+        connection
+            .execute_batch(
+                "CREATE TABLE workspace_state (
+                    singleton INTEGER PRIMARY KEY,
+                    settings_json TEXT NOT NULL,
+                    saved_at_ms INTEGER NOT NULL
+                 );
+                 CREATE TABLE workspace_items (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    position INTEGER NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    modified_at_ms INTEGER,
+                    extension TEXT NOT NULL,
+                    width INTEGER,
+                    height INTEGER,
+                    exif_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    rotation INTEGER NOT NULL,
+                    output_path TEXT,
+                    output_bytes INTEGER,
+                    error TEXT
+                 );
+                 PRAGMA user_version = 1;",
+            )
+            .expect("create version one database");
+
+        migrate(&connection).expect("migrate version one database");
+        let schema_version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("read schema version");
+        assert_eq!(schema_version, 2);
+        assert_eq!(
+            load_preferences_from_connection(&connection).expect("load default preferences"),
+            AppPreferences::default()
+        );
     }
 }

@@ -115,5 +115,21 @@ export interface ModelStatus {
   installed: boolean;
   expectedBytes: number;
   path: string | null;
+  installedBytes: number | null;
+  canDelete: boolean;
   purpose: string;
+}
+
+export interface AppPreferences {
+  defaultSettings: OutputSettings;
+  restoreWorkspace: boolean;
+}
+
+export interface AppDiagnostics {
+  appVersion: string;
+  workerProtocolVersion: number;
+  operatingSystem: string;
+  architecture: string;
+  appDataDirectory: string;
+  databaseBytes: number;
 }

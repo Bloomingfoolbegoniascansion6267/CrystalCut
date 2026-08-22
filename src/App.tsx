@@ -2,8 +2,9 @@ import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useSta
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { BatchProgress, BatchResult, ExportPlan, ImageAsset, ModelStatus, OutputFormat, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
+import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, ExportPlan, ImageAsset, ModelStatus, OutputFormat, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
+import SettingsModal from "./SettingsModal";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 
@@ -20,6 +21,11 @@ const DEFAULT_SETTINGS: OutputSettings = {
   prefix: "",
   suffix: "_bg",
   nameTemplate: "{prefix}{name}{suffix}",
+};
+
+const DEFAULT_PREFERENCES: AppPreferences = {
+  defaultSettings: DEFAULT_SETTINGS,
+  restoreWorkspace: true,
 };
 
 const isTauri = () => Boolean(window.__TAURI_INTERNALS__);
@@ -89,7 +95,12 @@ function App() {
   const [isEstimating, setIsEstimating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [isWorkspaceLoaded, setIsWorkspaceLoaded] = useState(!isTauri());
+  const [preferences, setPreferences] = useState<AppPreferences>(DEFAULT_PREFERENCES);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsBusyAction, setSettingsBusyAction] = useState<"save" | "model" | "reset" | null>(null);
+  const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const skipNextWorkspaceSave = useRef(false);
   const workspaceSaveTimer = useRef<number | null>(null);
   const workspaceSaveQueue = useRef<Promise<void>>(Promise.resolve());
@@ -138,30 +149,48 @@ function App() {
     if (!isTauri()) return;
     let disposed = false;
 
-    void invoke<RestoredWorkspace | null>("load_workspace")
-      .then((restored) => {
-        if (disposed || !restored) return;
+    void (async () => {
+      let loadedPreferences = DEFAULT_PREFERENCES;
+      try {
+        loadedPreferences = await invoke<AppPreferences>("load_app_preferences");
+      } catch (error) {
+        if (!disposed) setNotice(`환경설정을 복구하지 못해 기본값을 사용합니다: ${String(error)}`);
+      }
+      if (disposed) return;
+      setPreferences(loadedPreferences);
+
+      if (!loadedPreferences.restoreWorkspace) {
+        setSettings(loadedPreferences.defaultSettings);
+        return;
+      }
+      try {
+        const restored = await invoke<RestoredWorkspace | null>("load_workspace");
+        if (disposed) return;
+        if (!restored) {
+          setSettings(loadedPreferences.defaultSettings);
+          return;
+        }
         setSettings(restored.settings);
         setAssets(restored.items);
         setSelectedId(restored.items[0]?.id ?? null);
         if (restored.items.some((asset) => asset.status === "done")) setViewMode("result");
         if (restored.items.length || restored.missingFiles || restored.interrupted) {
-          const details = [
+          setNotice([
             `저장된 작업 ${restored.items.length}개 복구`,
             restored.interrupted ? `중단 ${restored.interrupted}개` : null,
             restored.missingFiles ? `찾을 수 없는 파일 ${restored.missingFiles}개 제외` : null,
-          ].filter(Boolean).join(" · ");
-          setNotice(details);
+          ].filter(Boolean).join(" · "));
         }
-      })
-      .catch((error) => !disposed && setNotice(`저장된 작업을 복구하지 못했습니다: ${String(error)}`))
-      .finally(() => !disposed && setIsWorkspaceLoaded(true));
+      } catch (error) {
+        if (!disposed) setNotice(`저장된 작업을 복구하지 못했습니다: ${String(error)}`);
+      }
+    })().finally(() => !disposed && setIsWorkspaceLoaded(true));
 
     return () => { disposed = true; };
   }, []);
 
   useEffect(() => {
-    if (!isTauri() || !isWorkspaceLoaded) return;
+    if (!isTauri() || !isWorkspaceLoaded || !preferences.restoreWorkspace) return;
     if (skipNextWorkspaceSave.current) {
       skipNextWorkspaceSave.current = false;
       return;
@@ -180,7 +209,7 @@ function App() {
       window.clearTimeout(timer);
       if (workspaceSaveTimer.current === timer) workspaceSaveTimer.current = null;
     };
-  }, [workspaceKey, isWorkspaceLoaded]);
+  }, [workspaceKey, isWorkspaceLoaded, preferences.restoreWorkspace]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -399,7 +428,7 @@ function App() {
       skipNextWorkspaceSave.current = true;
       setAssets([]);
       setSelectedId(null);
-      setSettings(DEFAULT_SETTINGS);
+      setSettings(preferences.defaultSettings);
       setLastOutputBytes(null);
       setExportPlan(null);
       setBatchCompleted(0);
@@ -450,7 +479,7 @@ function App() {
         const item = resultById.get(asset.id);
         return item?.success ? { ...asset, outputBytes: item.outputBytes ?? undefined } : asset;
       }));
-      setModelStatus((current) => current ? { ...current, installed: true } : current);
+      void invoke<ModelStatus>("get_model_status").then(setModelStatus).catch(() => undefined);
       setLastOutputBytes(retainedOutputBytes + result.outputBytes);
       if (result.completed > 0) setViewMode("result");
       setNotice([
@@ -481,6 +510,102 @@ function App() {
       setIsCancelling(false);
       setNotice(`취소 요청을 보내지 못했습니다: ${String(error)}`);
     }
+  };
+
+  const refreshSettingsData = async () => {
+    if (!isTauri()) return;
+    try {
+      const [nextDiagnostics, nextModelStatus] = await Promise.all([
+        invoke<AppDiagnostics>("get_app_diagnostics"),
+        invoke<ModelStatus>("get_model_status"),
+      ]);
+      setDiagnostics(nextDiagnostics);
+      setModelStatus(nextModelStatus);
+    } catch (error) {
+      setNotice(`진단 정보를 확인하지 못했습니다: ${String(error)}`);
+    }
+  };
+
+  const openSettings = () => {
+    setIsSettingsOpen(true);
+    void refreshSettingsData();
+  };
+
+  const closeSettings = () => {
+    setIsSettingsOpen(false);
+    window.requestAnimationFrame(() => settingsButtonRef.current?.focus());
+  };
+
+  const savePreferences = async (nextPreferences: AppPreferences) => {
+    setSettingsBusyAction("save");
+    try {
+      if (isTauri()) await invoke<void>("save_app_preferences", { preferences: nextPreferences });
+      setPreferences(nextPreferences);
+      if (!assets.length) setSettings(nextPreferences.defaultSettings);
+      setNotice("환경설정을 저장했습니다. 새 작업부터 기본 출력 설정을 적용합니다.");
+    } catch (error) {
+      setNotice(`환경설정을 저장하지 못했습니다: ${String(error)}`);
+      throw error;
+    } finally {
+      setSettingsBusyAction(null);
+    }
+  };
+
+  const resetPreferences = async () => {
+    setSettingsBusyAction("reset");
+    try {
+      const reset = isTauri()
+        ? await invoke<AppPreferences>("reset_app_preferences")
+        : { ...DEFAULT_PREFERENCES, defaultSettings: { ...DEFAULT_SETTINGS } };
+      setPreferences(reset);
+      if (!assets.length) setSettings(reset.defaultSettings);
+      setNotice("환경설정을 권장 기본값으로 초기화했습니다.");
+      return reset;
+    } catch (error) {
+      setNotice(`환경설정을 초기화하지 못했습니다: ${String(error)}`);
+      throw error;
+    } finally {
+      setSettingsBusyAction(null);
+    }
+  };
+
+  const installModelFromSettings = async () => {
+    if (!isTauri()) {
+      setNotice("모델 설치는 Tauri 데스크톱 앱에서 사용할 수 있습니다.");
+      return;
+    }
+    setSettingsBusyAction("model");
+    try {
+      const status = await invoke<ModelStatus>("install_model");
+      setModelStatus(status);
+      setNotice("로컬 AI 모델을 설치하고 검증했습니다.");
+      await refreshSettingsData();
+    } catch (error) {
+      setNotice(`AI 모델을 설치하지 못했습니다: ${String(error)}`);
+    } finally {
+      setSettingsBusyAction(null);
+    }
+  };
+
+  const deleteModelFromSettings = async () => {
+    if (!isTauri() || !window.confirm("설치된 AI 모델을 삭제할까요? 원본과 결과 파일은 유지되며 필요할 때 다시 내려받을 수 있습니다.")) return;
+    setSettingsBusyAction("model");
+    try {
+      const status = await invoke<ModelStatus>("delete_model");
+      setModelStatus(status);
+      setNotice("설치된 AI 모델을 삭제했습니다.");
+      await refreshSettingsData();
+    } catch (error) {
+      setNotice(`AI 모델을 삭제하지 못했습니다: ${String(error)}`);
+    } finally {
+      setSettingsBusyAction(null);
+    }
+  };
+
+  const chooseDefaultOutputDirectory = async () => {
+    if (!isTauri()) return null;
+    const selection = await openDialog({ directory: true, multiple: false });
+    return typeof selection === "string" ? selection : null;
   };
 
   const appendNameToken = (token: string) => {
@@ -521,7 +646,7 @@ function App() {
           </span>
           <button className="button secondary" onClick={addFilesFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="add" />파일 추가</button>
           <button className="button secondary desktop-only" onClick={addFolderFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="folder" />폴더 추가</button>
-          <button className="icon-button" aria-label="환경 설정"><Icon name="settings" /></button>
+          <button ref={settingsButtonRef} className="icon-button" aria-label="환경 설정" aria-haspopup="dialog" aria-expanded={isSettingsOpen} aria-controls="preferences-dialog" onClick={openSettings}><Icon name="settings" /></button>
         </div>
       </header>
 
@@ -735,6 +860,23 @@ function App() {
           <div><span><Icon name="add" size={28} /></span><strong>여기에 놓아 추가</strong><small>파일과 폴더를 함께 처리할 수 있습니다.</small></div>
         </div>
       )}
+
+      <SettingsModal
+        open={isSettingsOpen}
+        preferences={preferences}
+        currentSettings={settings}
+        modelStatus={modelStatus}
+        diagnostics={diagnostics}
+        busyAction={settingsBusyAction}
+        processing={isProcessing}
+        onClose={closeSettings}
+        onSave={savePreferences}
+        onReset={resetPreferences}
+        onInstallModel={installModelFromSettings}
+        onDeleteModel={deleteModelFromSettings}
+        onChooseDefaultDirectory={chooseDefaultOutputDirectory}
+        onRefreshDiagnostics={refreshSettingsData}
+      />
 
       {notice && <button className="toast" onClick={() => setNotice(null)}>{notice}<span>닫기</span></button>}
     </div>
