@@ -73,7 +73,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .model-pill.ready { color: #427854; }
 .model-pill.ready > span { background: #65ad7b; box-shadow: 0 0 0 3px rgba(101, 173, 123, .13); }
 
-.button, .icon-button, .text-button, .run-button, .retry-button, .path-picker, .advanced-row, .add-more {
+.button, .icon-button, .text-button, .run-button, .retry-button, .path-picker, .advanced-row, .add-more, .clear-workspace {
   border: 0;
   cursor: pointer;
 }
@@ -191,14 +191,16 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .status-dot.done { background: #4ca66b; box-shadow: 0 0 0 3px rgba(76, 166, 107, .13); }
 .status-dot.failed { background: var(--danger); box-shadow: 0 0 0 3px rgba(218, 62, 82, .12); }
 .status-dot.cancelled { background: #8f929d; box-shadow: 0 0 0 3px rgba(143, 146, 157, .13); }
+.status-dot.interrupted { background: #d16f45; box-shadow: 0 0 0 3px rgba(209, 111, 69, .13); }
 @keyframes status-pulse { 50% { opacity: .35; transform: scale(.8); } }
+.library-footer-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
 .add-more {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 40px;
   gap: 6px;
-  margin: 8px;
+  margin: 0;
   color: var(--ink-soft);
   border: 1px dashed var(--line-strong);
   border-radius: 10px;
@@ -207,6 +209,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-weight: 600;
 }
 .add-more:hover { color: var(--accent); border-color: #bfb2f7; background: var(--accent-soft); }
+.clear-workspace { display: flex; align-items: center; justify-content: center; height: 40px; gap: 5px; padding: 0 9px; color: var(--ink-faint); border: 1px solid var(--line); border-radius: 10px; background: transparent; font-size: 10px; font-weight: 600; }
+.clear-workspace:hover:not(:disabled) { color: var(--danger); border-color: #f1c4cb; background: #fff4f5; }
 
 .canvas-panel { display: grid; grid-template-rows: 52px minmax(0, 1fr) 38px; background: #eceef1; }
 .canvas-toolbar {
@@ -290,6 +294,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .file-status.done { color: #3c8153; background: #e9f6ed; }
 .file-status.failed { color: var(--danger); background: #fff0f2; }
 .file-status.cancelled { color: #666a75; background: #eceef2; }
+.file-status.interrupted { color: #a64f2d; background: #fff0e9; }
 
 .inspector-header { position: sticky; top: 0; z-index: 2; background: rgba(255,255,255,.96); }
 .text-button { padding: 3px; color: var(--accent); background: transparent; font-size: 10.5px; font-weight: 600; }

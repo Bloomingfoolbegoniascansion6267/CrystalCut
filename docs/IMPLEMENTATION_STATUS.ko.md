@@ -13,6 +13,7 @@ React UI
 Tauri Core (Rust)
   ├─ 파일 검사와 출력 경로 계획
   ├─ 모델 다운로드·SHA-256 검증
+  ├─ SQLite 작업 snapshot·schema migration
   └─ worker 수명·진행 상태 관리
              │ JSONL protocol v1 / stdin·stdout
 동일 실행 파일 --worker
@@ -57,9 +58,13 @@ Tauri Core (Rust)
 
 worker 표준 입출력이 끊기거나 protocol 응답이 손상되면 해당 요청에 한해 프로세스를 새로 만들고 한 번 재전송한다. 첫 worker가 atomic rename까지 마친 뒤 응답 전에 종료된 경우에는 예약 출력 파일의 존재와 크기를 확인해 성공으로 회수한다. 두 번째 통신도 실패하면 해당 항목만 실패시키고 다음 항목에서 새 worker를 시작한다.
 
+작업 목록, 출력 설정, 회전, EXIF 요약과 항목별 처리 결과는 앱 데이터 폴더의 `workspace.sqlite3`에 120ms 단위로 순서대로 자동 저장한다. 미리보기 bitmap과 GPS는 저장하지 않는다. SQLite는 bundled build와 WAL mode를 사용하며, 전체 snapshot을 하나의 transaction으로 교체해 목록과 설정이 서로 다른 시점으로 남지 않게 한다.
+
+앱 시작 시 원본 경로와 파일 크기, 완료 결과 경로를 다시 검사한다. 사라진 원본은 목록에서 제외하고, 변경된 원본·실행 중 종료된 항목·사라진 결과는 `interrupted`로 복구해 미완료 재시도 대상으로 제공한다. 완료 결과가 남아 있으면 다시 처리하지 않고 결과 미리보기를 복원한다. UI의 작업 비우기는 SQLite snapshot만 제거하며 원본과 결과 파일은 삭제하지 않는다.
+
 ## 5. 검증 범위
 
-- Rust 단위 테스트: resize 비율, 확대 방지, 기존 alpha 결합, 모델 입력 layout·정규화, 모델 hash, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌
+- Rust 단위 테스트 25개: resize 비율, 확대 방지, 기존 alpha 결합, 모델 입력 layout·정규화, 모델 hash, EXIF 추출, 동적 이름 template, 파일명 및 경로 충돌, SQLite migration·snapshot round trip·중단/완료 결과 복구
 - TypeScript production build
 - 공식 U-2-Net 테스트 사진을 사용한 worker 스모크 테스트
   - 400×267 PNG 입력
@@ -73,9 +78,9 @@ worker 표준 입출력이 끊기거나 protocol 응답이 손상되면 해당 �
 
 1. 대표 이미지 golden set으로 U2Net, BiRefNet 계열의 품질·속도·메모리 benchmark
 2. Windows DirectML/Windows ML과 macOS CoreML provider packaging
-3. SQLite queue 영속화와 앱 재시작 복구
-4. 현재 추론까지 즉시 중단하는 강제 취소 option과 `.partial` 정리 검증
-5. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
+3. 현재 추론까지 즉시 중단하는 강제 취소 option과 `.partial` 정리 검증
+4. 결과 파일의 촬영일·ICC 보존 및 GPS 제거 정책 구현
+5. 대규모 목록 virtual scroll과 SQLite delta 저장 최적화
 6. 서명된 Windows/macOS installer와 updater 검증
 
 ## 참고 구현

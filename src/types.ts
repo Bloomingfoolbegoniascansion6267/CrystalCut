@@ -1,4 +1,4 @@
-export type AssetStatus = "ready" | "queued" | "processing" | "retrying" | "done" | "failed" | "cancelled";
+export type AssetStatus = "ready" | "queued" | "processing" | "retrying" | "done" | "failed" | "cancelled" | "interrupted";
 
 export interface ImageAsset {
   id: string;
@@ -42,6 +42,19 @@ export interface OutputSettings {
   prefix: string;
   suffix: string;
   nameTemplate: string;
+}
+
+export type PersistedAsset = Omit<ImageAsset, "previewUrl" | "resultPreviewUrl">;
+
+export interface WorkspaceSnapshot {
+  items: PersistedAsset[];
+  settings: OutputSettings;
+}
+
+export interface RestoredWorkspace extends WorkspaceSnapshot {
+  interrupted: number;
+  missingFiles: number;
+  savedAtMs: number;
 }
 
 export interface ExportPlan {

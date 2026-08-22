@@ -4,6 +4,7 @@ mod model;
 mod naming;
 mod protocol;
 pub mod worker;
+mod workspace;
 
 use std::{
     collections::{hash_map::DefaultHasher, HashSet},
@@ -386,6 +387,30 @@ async fn process_batch(
 #[tauri::command]
 fn cancel_batch(controller: State<'_, BatchController>) -> bool {
     controller.request_cancel()
+}
+
+#[tauri::command]
+async fn load_workspace(app: AppHandle) -> Result<Option<workspace::RestoredWorkspace>, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::load(&app))
+        .await
+        .map_err(|error| format!("작업 공간 복구를 실행하지 못했습니다: {error}"))?
+}
+
+#[tauri::command]
+async fn save_workspace(
+    app: AppHandle,
+    snapshot: workspace::WorkspaceSnapshot,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::save(&app, snapshot))
+        .await
+        .map_err(|error| format!("작업 공간 저장을 실행하지 못했습니다: {error}"))?
+}
+
+#[tauri::command]
+async fn clear_workspace(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::clear(&app))
+        .await
+        .map_err(|error| format!("작업 공간 초기화를 실행하지 못했습니다: {error}"))?
 }
 
 fn process_batch_blocking(
@@ -778,7 +803,10 @@ pub fn run() {
             get_model_status,
             prepare_export_plan,
             process_batch,
-            cancel_batch
+            cancel_batch,
+            load_workspace,
+            save_workspace,
+            clear_workspace
         ])
         .run(tauri::generate_context!())
         .expect("error while running Clearcut");

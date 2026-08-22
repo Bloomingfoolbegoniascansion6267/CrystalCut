@@ -17,8 +17,9 @@ Windows와 macOS에서 이미지 배경을 로컬로 제거하고 일괄 변환�
 - 항목별 처리 상태, 전체 진행률, 결과 용량·소요 시간 표시
 - 현재 파일 완료 후 안전하게 중단하는 batch 취소와 실패·취소 항목만 다시 처리하는 재시도
 - worker 통신 종료 시 새 프로세스로 1회 자동 복구하며 완료 직후 응답 손실도 중복 저장 없이 회수
+- SQLite WAL에 작업 목록·출력 설정·처리 상태를 자동 저장하고 앱 재시작 시 파일을 재검증해 복구
 
-U2NetP는 처리 파이프라인과 배포 구조를 빠르게 검증하기 위한 경량 모델입니다. 머리카락·반투명 물체 같은 최종 제품 품질은 BiRefNet 등 후보 모델을 동일 protocol 뒤에서 비교한 후 결정합니다. 앱 재시작 후 queue 복구와 GPU provider는 다음 단계입니다.
+U2NetP는 처리 파이프라인과 배포 구조를 빠르게 검증하기 위한 경량 모델입니다. 머리카락·반투명 물체 같은 최종 제품 품질은 BiRefNet 등 후보 모델을 동일 protocol 뒤에서 비교한 후 결정합니다. GPU provider와 모델 품질 benchmark는 다음 단계입니다.
 
 파일명 템플릿은 `{name}`, `{prefix}`, `{suffix}`, `{taken:yyMMdd_HHmmss}`, `{seq:03}`, `{camera}`, `{lens}`를 지원합니다. 촬영일·카메라·렌즈 정보가 없으면 각각 `undated`, `unknown-camera`, `unknown-lens`를 사용하므로 batch 결과가 임의로 달라지지 않습니다. GPS EXIF는 읽거나 UI에 노출하지 않습니다.
 

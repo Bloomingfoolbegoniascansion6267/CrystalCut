@@ -2,7 +2,7 @@ import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useSta
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { BatchProgress, BatchResult, ExportPlan, ImageAsset, ModelStatus, OutputFormat, OutputSettings } from "./types";
+import type { BatchProgress, BatchResult, ExportPlan, ImageAsset, ModelStatus, OutputFormat, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
@@ -32,7 +32,24 @@ const STATUS_LABEL: Record<ImageAsset["status"], string> = {
   done: "완료",
   failed: "실패",
   cancelled: "취소됨",
+  interrupted: "중단됨",
 };
+
+const toPersistedAsset = (asset: ImageAsset): PersistedAsset => ({
+  id: asset.id,
+  name: asset.name,
+  path: asset.path,
+  sizeBytes: asset.sizeBytes,
+  extension: asset.extension,
+  width: asset.width,
+  height: asset.height,
+  exif: asset.exif,
+  status: asset.status,
+  rotation: asset.rotation,
+  outputPath: asset.outputPath,
+  outputBytes: asset.outputBytes,
+  error: asset.error,
+});
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
   const paths: Record<string, React.ReactNode> = {
@@ -71,15 +88,26 @@ function App() {
   const [exportPlan, setExportPlan] = useState<ExportPlan | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [isWorkspaceLoaded, setIsWorkspaceLoaded] = useState(!isTauri());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const skipNextWorkspaceSave = useRef(false);
+  const workspaceSaveTimer = useRef<number | null>(null);
+  const workspaceSaveQueue = useRef<Promise<void>>(Promise.resolve());
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
   const totalBytes = useMemo(() => assets.reduce((sum, asset) => sum + asset.sizeBytes, 0), [assets]);
   const effectiveViewMode = selected?.resultPreviewUrl ? viewMode : "original";
   const retryableAssets = useMemo(
-    () => assets.filter((asset) => asset.status === "failed" || asset.status === "cancelled"),
+    () => assets.filter((asset) => asset.status === "failed" || asset.status === "cancelled" || asset.status === "interrupted"),
     [assets],
   );
+  const completedOutputBytes = useMemo(
+    () => assets.reduce((sum, asset) => sum + (asset.status === "done" ? asset.outputBytes ?? 0 : 0), 0),
+    [assets],
+  );
+  const displayOutputBytes = lastOutputBytes ?? (completedOutputBytes > 0 ? completedOutputBytes : null);
+  const persistedAssets = useMemo(() => assets.map(toPersistedAsset), [assets]);
+  const workspaceKey = useMemo(() => JSON.stringify({ items: persistedAssets, settings }), [persistedAssets, settings]);
   const planKey = useMemo(() => JSON.stringify({
     items: assets.map(({ path, rotation }) => ({ path, rotation })),
     settings,
@@ -109,6 +137,54 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return;
     let disposed = false;
+
+    void invoke<RestoredWorkspace | null>("load_workspace")
+      .then((restored) => {
+        if (disposed || !restored) return;
+        setSettings(restored.settings);
+        setAssets(restored.items);
+        setSelectedId(restored.items[0]?.id ?? null);
+        if (restored.items.some((asset) => asset.status === "done")) setViewMode("result");
+        if (restored.items.length || restored.missingFiles || restored.interrupted) {
+          const details = [
+            `저장된 작업 ${restored.items.length}개 복구`,
+            restored.interrupted ? `중단 ${restored.interrupted}개` : null,
+            restored.missingFiles ? `찾을 수 없는 파일 ${restored.missingFiles}개 제외` : null,
+          ].filter(Boolean).join(" · ");
+          setNotice(details);
+        }
+      })
+      .catch((error) => !disposed && setNotice(`저장된 작업을 복구하지 못했습니다: ${String(error)}`))
+      .finally(() => !disposed && setIsWorkspaceLoaded(true));
+
+    return () => { disposed = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri() || !isWorkspaceLoaded) return;
+    if (skipNextWorkspaceSave.current) {
+      skipNextWorkspaceSave.current = false;
+      return;
+    }
+    const snapshot: WorkspaceSnapshot = { items: persistedAssets, settings };
+    const timer = window.setTimeout(() => {
+      workspaceSaveTimer.current = null;
+      workspaceSaveQueue.current = workspaceSaveQueue.current
+        .catch(() => undefined)
+        .then(() => invoke<void>("save_workspace", { snapshot }))
+        .catch((error) => setNotice(`작업 상태를 저장하지 못했습니다: ${String(error)}`));
+    }, 120);
+    workspaceSaveTimer.current = timer;
+
+    return () => {
+      window.clearTimeout(timer);
+      if (workspaceSaveTimer.current === timer) workspaceSaveTimer.current = null;
+    };
+  }, [workspaceKey, isWorkspaceLoaded]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
 
     import("@tauri-apps/api/webview").then(async ({ getCurrentWebview }) => {
@@ -117,7 +193,7 @@ function App() {
         if (event.payload.type === "leave") setIsDragging(false);
         if (event.payload.type === "drop") {
           setIsDragging(false);
-          void inspectPaths(event.payload.paths);
+          if (isWorkspaceLoaded) void inspectPaths(event.payload.paths);
         }
       });
       if (disposed) stop();
@@ -128,7 +204,7 @@ function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [inspectPaths]);
+  }, [inspectPaths, isWorkspaceLoaded]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -275,7 +351,7 @@ function App() {
   const handleBrowserDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragging(false);
-    if (isTauri()) return;
+    if (isTauri() || !isWorkspaceLoaded) return;
     const files = Array.from(event.dataTransfer.files);
     const transfer = new DataTransfer();
     files.forEach((file) => transfer.items.add(file));
@@ -307,6 +383,32 @@ function App() {
       setSelectedId(next[0]?.id ?? null);
       return next;
     });
+  };
+
+  const clearWorkspace = async () => {
+    if (isProcessing || !window.confirm("작업 목록과 저장된 설정을 비울까요? 원본과 결과 파일은 삭제되지 않습니다.")) return;
+    if (workspaceSaveTimer.current !== null) {
+      window.clearTimeout(workspaceSaveTimer.current);
+      workspaceSaveTimer.current = null;
+    }
+    try {
+      if (isTauri()) {
+        await workspaceSaveQueue.current.catch(() => undefined);
+        await invoke<void>("clear_workspace");
+      }
+      skipNextWorkspaceSave.current = true;
+      setAssets([]);
+      setSelectedId(null);
+      setSettings(DEFAULT_SETTINGS);
+      setLastOutputBytes(null);
+      setExportPlan(null);
+      setBatchCompleted(0);
+      setBatchTotal(0);
+      setViewMode("original");
+      setNotice("작업 공간을 비웠습니다. 원본과 결과 파일은 그대로 유지됩니다.");
+    } catch (error) {
+      setNotice(`작업 공간을 비우지 못했습니다: ${String(error)}`);
+    }
   };
 
   const chooseOutputDirectory = async () => {
@@ -417,8 +519,8 @@ function App() {
           <span className={`model-pill ${modelStatus?.installed ? "ready" : ""}`} title={modelStatus?.purpose}>
             <span />로컬 AI {modelStatus?.installed ? "준비됨" : "필요 시 설치"}
           </span>
-          <button className="button secondary" onClick={addFilesFromDialog} disabled={isProcessing}><Icon name="add" />파일 추가</button>
-          <button className="button secondary desktop-only" onClick={addFolderFromDialog} disabled={isProcessing}><Icon name="folder" />폴더 추가</button>
+          <button className="button secondary" onClick={addFilesFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="add" />파일 추가</button>
+          <button className="button secondary desktop-only" onClick={addFolderFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="folder" />폴더 추가</button>
           <button className="icon-button" aria-label="환경 설정"><Icon name="settings" /></button>
         </div>
       </header>
@@ -431,7 +533,7 @@ function App() {
           </div>
           <div className="asset-list">
             {assets.length === 0 ? (
-              <div className="library-empty"><Icon name="image" size={24} /><span>이미지를 추가하면<br />여기에 표시됩니다.</span></div>
+              <div className="library-empty"><Icon name="image" size={24} /><span>{isWorkspaceLoaded ? <>이미지를 추가하면<br />여기에 표시됩니다.</> : "저장된 작업 확인 중…"}</span></div>
             ) : assets.map((asset, index) => (
               <button key={asset.id} className={`asset-row ${asset.id === selectedId ? "selected" : ""}`} onClick={() => setSelectedId(asset.id)}>
                 <span className="asset-index">{String(index + 1).padStart(2, "0")}</span>
@@ -445,7 +547,10 @@ function App() {
             ))}
           </div>
           {assets.length > 0 && (
-            <button className="add-more" onClick={addFilesFromDialog}><Icon name="add" size={16} />이미지 더 추가</button>
+            <div className="library-footer-actions">
+              <button className="add-more" onClick={addFilesFromDialog} disabled={isProcessing}><Icon name="add" size={16} />이미지 더 추가</button>
+              <button className="clear-workspace" onClick={() => void clearWorkspace()} disabled={isProcessing}><Icon name="trash" size={15} />작업 비우기</button>
+            </div>
           )}
         </aside>
 
@@ -595,11 +700,11 @@ function App() {
 
       <footer className="actionbar">
         <div className="estimate">
-          <span className="estimate-label">{isProcessing ? "처리 중" : lastOutputBytes === null ? "예상 결과" : "결과"}</span>
+          <span className="estimate-label">{isProcessing ? "처리 중" : displayOutputBytes === null ? "예상 결과" : "결과"}</span>
           <strong>{assets.length ? `${isProcessing ? batchCompleted : assets.filter((asset) => asset.status === "done").length} / ${isProcessing ? batchTotal : assets.length}개` : "이미지를 추가해주세요"}</strong>
           {assets.length > 0 && <span className="muted">{
-            lastOutputBytes !== null
-              ? `${formatBytes(totalBytes)} → ${formatBytes(lastOutputBytes)} 저장`
+            displayOutputBytes !== null
+              ? `${formatBytes(totalBytes)} → ${formatBytes(displayOutputBytes)} 저장`
               : isEstimating
                 ? `${formatBytes(totalBytes)} 원본 · 용량 계산 중…`
                 : estimateText
@@ -610,12 +715,12 @@ function App() {
         <div className="action-buttons">
           {!isProcessing && retryableAssets.length > 0 && (
             <button className="retry-button" onClick={() => void processAssets(retryableAssets)}>
-              <Icon name="rotateRight" size={15} />실패·취소 {retryableAssets.length}개 재시도
+              <Icon name="rotateRight" size={15} />미완료 {retryableAssets.length}개 재시도
             </button>
           )}
           <button
             className={`run-button ${isProcessing ? "cancel" : ""}`}
-            disabled={isProcessing ? isCancelling : !assets.length}
+            disabled={isProcessing ? isCancelling : !assets.length || !isWorkspaceLoaded}
             onClick={() => isProcessing ? void cancelProcessing() : void processAssets(assets)}
           >
             <span className="run-icon"><Icon name={isProcessing ? "stop" : "sparkle"} /></span>
