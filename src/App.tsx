@@ -58,6 +58,8 @@ interface ContextMenuState {
   assetId?: string;
 }
 
+type InspectorMode = "current" | "output";
+
 const DEFAULT_PREFERENCES: AppPreferences = {
   defaultSettings: DEFAULT_SETTINGS,
   restoreWorkspace: true,
@@ -154,6 +156,7 @@ function App() {
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("general");
   const [isLibraryCollapsed, setIsLibraryCollapsed] = useState(false);
   const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
+  const [inspectorMode, setInspectorMode] = useState<InspectorMode>("output");
   const [settingsBusyAction, setSettingsBusyAction] = useState<"save" | "model" | "reset" | null>(null);
   const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -168,6 +171,7 @@ function App() {
   const maskPreviewSnapshot = useRef<{ editBasePreviewUrl?: string; maskPreviewUrl?: string } | null>(null);
   const thumbnailLoads = useRef(new Set<string>());
   const selectionAnchorId = useRef<string | null>(null);
+  const hadSingleInspectorSelection = useRef(false);
 
   useEffect(() => {
     if (!notice) return;
@@ -192,6 +196,17 @@ function App() {
       ? "original"
       : viewMode;
   const previewAsset = selected && previewRecipe ? { ...selected, maskRecipe: previewRecipe } : selected;
+
+  useEffect(() => {
+    const canInspectCurrent = Boolean(selected && !isMultiSelection);
+    if (!canInspectCurrent) {
+      hadSingleInspectorSelection.current = false;
+      setInspectorMode("output");
+    } else if (!hadSingleInspectorSelection.current) {
+      hadSingleInspectorSelection.current = true;
+      setInspectorMode("current");
+    }
+  }, [isMultiSelection, selected?.id]);
   const previewRenderKey = useMemo(() => JSON.stringify({
     processingMode: settings.processingMode,
     resizeMode: settings.resizeMode,
@@ -1366,11 +1381,17 @@ function App() {
 
         <aside className={`inspector-panel ${isInspectorCollapsed ? "collapsed" : ""}`}>
           <div className="inspector-header">
-            <span className="eyebrow">{t("output.title")}</span>
-            <button className="text-button" onClick={resetOutputSettings}>{t("output.reset")}</button>
+            <span className="eyebrow">{t(inspectorMode === "current" ? "common.currentFile" : "output.title")}</span>
+            {inspectorMode === "output" && <button className="text-button" onClick={resetOutputSettings}>{t("output.reset")}</button>}
             <button className="panel-toggle inspector-toggle" onClick={() => setIsInspectorCollapsed((value) => !value)} aria-expanded={!isInspectorCollapsed} aria-label={t(isInspectorCollapsed ? "output.expand" : "output.collapse")} title={t(isInspectorCollapsed ? "output.expand" : "output.collapse")}><Icon name="chevron" size={15} /></button>
           </div>
 
+          <div className="inspector-tabs" role="tablist">
+            <button type="button" role="tab" aria-selected={inspectorMode === "current"} aria-controls="current-file-inspector" className={inspectorMode === "current" ? "active" : ""} onClick={() => setInspectorMode("current")} disabled={!selected || isMultiSelection}>{t("common.currentFile")}</button>
+            <button type="button" role="tab" aria-selected={inspectorMode === "output"} aria-controls="output-inspector" className={inspectorMode === "output" ? "active" : ""} onClick={() => setInspectorMode("output")}>{t("output.title")}</button>
+          </div>
+
+          {inspectorMode === "output" && <div id="output-inspector" className="inspector-tab-panel" role="tabpanel">
           <div className="inspector-group-heading output-control"><span>{t("common.allFiles")}</span><strong>{t("output.outputAndSave")}</strong></div>
 
           <InspectorAccordion title={t("output.preset")} summary={presetSummary}>
@@ -1509,6 +1530,9 @@ function App() {
           </section>
           </InspectorAccordion>
 
+          </div>}
+
+          {inspectorMode === "current" && <div id="current-file-inspector" className="inspector-tab-panel" role="tabpanel">
           {settings.processingMode === "removeBackground" && !isMultiSelection && <div className="inspector-group-heading edit current-file-control"><span>{t("common.currentFile")}</span><strong>{t("selection.title")}</strong></div>}
 
           {settings.processingMode === "removeBackground" && !isMultiSelection && <section className="setting-section mask-summary-section current-file-control">
@@ -1577,6 +1601,7 @@ function App() {
             </div>
             </div>
           )}
+          </div>}
         </aside>
       </main>
 
