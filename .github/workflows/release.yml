@@ -181,7 +181,7 @@ jobs:
           }
           trap cleanup EXIT
 
-          hdiutil attach -readonly -nobrowse -acceptlicense -mountpoint "$mount_dir" "${dmgs[0]}"
+          printf 'Y\n' | hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "${dmgs[0]}" >/dev/null
           mounted=true
           app="$mount_dir/CrystalCut.app"
           if [[ ! -d "$app" ]]; then
