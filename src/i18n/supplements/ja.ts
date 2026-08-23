@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const jaSupplement: MessageCatalog = {
+  "management.exportOriginals": "元画像を書き出す", "management.exportResults": "結果を書き出す", "management.exportingOriginals": "元画像をコピー中…", "management.desktopOnly": "ファイルの書き出しはデスクトップ版で利用できます。", "management.chooseOriginalFolder": "元画像の書き出し先を選択", "management.originalsExported": "元画像{count}件を書き出しました · {size}", "management.exportFailed": "{count}件失敗", "error.originals.export": "選択した元画像を書き出せませんでした。",
   "management.eyebrow": "ファイル管理", "management.selected": "{count}件を選択中", "management.help": "選択内容を確認するか、1件を開いて画像編集に戻ります。", "management.clear": "複数選択を解除", "management.files": "ファイル", "management.pending": "処理待ち", "management.remove": "選択項目を除外", "management.removeConfirm": "選択した{count}件をリストから除外しますか？元画像と出力ファイルは保持されます。", "management.resultReady": "結果あり", "management.resultNeeded": "処理が必要", "management.open": "開く", "management.toolbarHelp": "1件だけ選択すると画像プレビューに戻ります。",
   "notice.filesLoaded": "画像を{count}件読み込みました。",
   "notice.loadFilesFailed": "ファイルを追加できませんでした: {detail}",

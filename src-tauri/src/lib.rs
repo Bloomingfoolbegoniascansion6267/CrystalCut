@@ -26,7 +26,7 @@ use protocol::{
     OutputLocation, OutputSettings, PlannedOutput, ProcessItem, ProcessedItemResult,
     ProcessingMode, ResizeMode, WorkerRequest, WorkerResponse, WORKER_PROTOCOL_VERSION,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use walkdir::WalkDir;
 
@@ -172,6 +172,32 @@ struct ImageAsset {
     width: Option<u32>,
     height: Option<u32>,
     exif: metadata::ExifSummary,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OriginalExportItem {
+    id: String,
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OriginalExportItemResult {
+    asset_id: String,
+    success: bool,
+    output_path: Option<String>,
+    bytes: Option<u64>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OriginalExportResult {
+    exported: usize,
+    failed: usize,
+    bytes: u64,
+    items: Vec<OriginalExportItemResult>,
 }
 
 #[derive(Debug, Serialize)]
@@ -678,6 +704,123 @@ async fn reset_app_preferences(app: AppHandle) -> CommandResult<workspace::AppPr
         .await
         .map_err(|error| CommandError::new("preferences.reset", error))?;
     outcome.map_err(|error| CommandError::new("preferences.reset", error))
+}
+
+#[tauri::command]
+async fn export_originals(
+    items: Vec<OriginalExportItem>,
+    output_directory: String,
+) -> CommandResult<OriginalExportResult> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        export_originals_blocking(items, PathBuf::from(output_directory))
+    })
+    .await
+    .map_err(|error| CommandError::new("originals.export", error))?;
+    outcome.map_err(|error| CommandError::new("originals.export", error))
+}
+
+fn export_originals_blocking(
+    items: Vec<OriginalExportItem>,
+    output_directory: PathBuf,
+) -> Result<OriginalExportResult, String> {
+    if !output_directory.is_dir() {
+        return Err("The selected original export folder is not available.".to_owned());
+    }
+    let mut results = Vec::with_capacity(items.len());
+    let mut exported = 0_usize;
+    let mut bytes = 0_u64;
+
+    for item in items {
+        match copy_original_without_overwrite(Path::new(&item.path), &output_directory) {
+            Ok((output_path, copied_bytes)) => {
+                exported += 1;
+                bytes = bytes.saturating_add(copied_bytes);
+                results.push(OriginalExportItemResult {
+                    asset_id: item.id,
+                    success: true,
+                    output_path: Some(output_path.to_string_lossy().into_owned()),
+                    bytes: Some(copied_bytes),
+                    error: None,
+                });
+            }
+            Err(error) => results.push(OriginalExportItemResult {
+                asset_id: item.id,
+                success: false,
+                output_path: None,
+                bytes: None,
+                error: Some(error),
+            }),
+        }
+    }
+
+    Ok(OriginalExportResult {
+        exported,
+        failed: results.len().saturating_sub(exported),
+        bytes,
+        items: results,
+    })
+}
+
+fn copy_original_without_overwrite(
+    source: &Path,
+    output_directory: &Path,
+) -> Result<(PathBuf, u64), String> {
+    if !source.is_file() {
+        return Err(format!(
+            "Original file is not available: {}",
+            source.display()
+        ));
+    }
+    let stem = source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("Original file name is invalid: {}", source.display()))?;
+    let extension = source.extension().and_then(|value| value.to_str());
+    let mut reader = std::fs::File::open(source)
+        .map_err(|error| format!("Could not open original file {}: {error}", source.display()))?;
+
+    for index in 1..=10_000_u32 {
+        let file_name = match (index, extension) {
+            (1, Some(extension)) => format!("{stem}.{extension}"),
+            (1, None) => stem.to_owned(),
+            (_, Some(extension)) => format!("{stem} ({index}).{extension}"),
+            (_, None) => format!("{stem} ({index})"),
+        };
+        let candidate = output_directory.join(file_name);
+        let mut writer = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Could not create original copy {}: {error}",
+                    candidate.display()
+                ))
+            }
+        };
+        let copied = match std::io::copy(&mut reader, &mut writer) {
+            Ok(copied) => copied,
+            Err(error) => {
+                drop(writer);
+                let _ = std::fs::remove_file(&candidate);
+                return Err(format!(
+                    "Could not copy original file to {}: {error}",
+                    candidate.display()
+                ));
+            }
+        };
+        return Ok((candidate, copied));
+    }
+
+    Err(format!(
+        "Could not find an unused name for {} in {}",
+        source.display(),
+        output_directory.display()
+    ))
 }
 
 #[tauri::command]
@@ -1217,6 +1360,7 @@ pub fn run() {
             load_app_preferences,
             save_app_preferences,
             reset_app_preferences,
+            export_originals,
             reveal_in_file_manager
         ])
         .run(tauri::generate_context!())
@@ -1277,6 +1421,37 @@ mod tests {
 
         std::fs::remove_file(existing).expect("remove fixture");
         std::fs::remove_dir(temp_dir).expect("remove test directory");
+    }
+
+    #[test]
+    fn original_export_copies_bytes_and_never_overwrites() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("crystalcut-original-export-{}", std::process::id()));
+        let source_dir = temp_dir.join("source");
+        let output_dir = temp_dir.join("output");
+        std::fs::create_dir_all(&source_dir).expect("create source directory");
+        std::fs::create_dir_all(&output_dir).expect("create output directory");
+        let source = source_dir.join("portrait.jpg");
+        std::fs::write(&source, b"original-image-bytes").expect("create original fixture");
+        std::fs::write(output_dir.join("portrait.jpg"), b"existing").expect("create collision");
+
+        let (copied, bytes) = copy_original_without_overwrite(&source, &output_dir)
+            .expect("copy original without overwrite");
+        assert_eq!(
+            copied.file_name().and_then(|value| value.to_str()),
+            Some("portrait (2).jpg")
+        );
+        assert_eq!(bytes, 20);
+        assert_eq!(
+            std::fs::read(copied).expect("read copied bytes"),
+            b"original-image-bytes"
+        );
+        assert_eq!(
+            std::fs::read(output_dir.join("portrait.jpg")).expect("read collision"),
+            b"existing"
+        );
+
+        std::fs::remove_dir_all(temp_dir).expect("remove original export fixture");
     }
 
     #[test]

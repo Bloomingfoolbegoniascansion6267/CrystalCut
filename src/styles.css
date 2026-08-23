@@ -278,7 +278,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .selection-manager-stats span, .selection-manager-stats strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .selection-manager-stats span { margin-bottom: 5px; color: var(--ink-faint); font-size: 9.5px; }
 .selection-manager-stats strong { font-size: 12px; font-variant-numeric: tabular-nums; }
-.selection-manager-actions { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.selection-manager-actions { display: flex; justify-content: flex-end; gap: 7px; margin-bottom: 8px; }
 .danger-outline { color: var(--danger); border-color: #efc7ce; background: #fff8f9; }
 .selection-manager-list { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.88); box-shadow: var(--shadow-sm); }
 .selection-manager-row { display: grid; grid-template-columns: 42px minmax(150px, 1fr) auto minmax(90px, auto) auto; align-items: center; min-height: 58px; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--line); }

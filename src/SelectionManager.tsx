@@ -7,7 +7,10 @@ interface SelectionManagerProps {
   onOpenSingle: (assetId: string) => void;
   onClearSelection: () => void;
   onRemoveSelected: () => void;
+  onExportOriginals: () => void;
+  onExportResults: () => void;
   disabled?: boolean;
+  exportingOriginals?: boolean;
 }
 
 export default function SelectionManager({
@@ -15,7 +18,10 @@ export default function SelectionManager({
   onOpenSingle,
   onClearSelection,
   onRemoveSelected,
+  onExportOriginals,
+  onExportResults,
   disabled = false,
+  exportingOriginals = false,
 }: SelectionManagerProps) {
   const { t, formatLocale } = useI18n();
   const totalBytes = assets.reduce((sum, asset) => sum + asset.sizeBytes, 0);
@@ -45,6 +51,8 @@ export default function SelectionManager({
       </div>
 
       <div className="selection-manager-actions">
+        <button className="button secondary compact" type="button" onClick={onExportOriginals} disabled={disabled || exportingOriginals}>{t(exportingOriginals ? "management.exportingOriginals" : "management.exportOriginals")}</button>
+        <button className="button primary compact" type="button" onClick={onExportResults} disabled={disabled}>{t("management.exportResults")}</button>
         <button className="button danger-outline compact" type="button" onClick={onRemoveSelected} disabled={disabled}>{t("management.remove")}</button>
       </div>
 

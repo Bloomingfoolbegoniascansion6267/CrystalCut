@@ -2,7 +2,7 @@ import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, ModelStatus, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
+import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, ModelStatus, OriginalExportResult, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 import SettingsModal, { type SettingsTab } from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
@@ -129,6 +129,7 @@ function App() {
   const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
   const [exportPlan, setExportPlan] = useState<ExportPlan | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
+  const [isExportingOriginals, setIsExportingOriginals] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [isWorkspaceLoaded, setIsWorkspaceLoaded] = useState(!isTauri());
   const [preferences, setPreferences] = useState<AppPreferences>(DEFAULT_PREFERENCES);
@@ -1148,6 +1149,31 @@ function App() {
     removeAssets(selectedAssets.map((asset) => asset.id));
   };
 
+  const exportSelectedOriginals = async () => {
+    if (!selectedAssets.length) return;
+    if (!isTauri()) {
+      setNotice(t("management.desktopOnly"));
+      return;
+    }
+    const outputDirectory = await openDialog({ directory: true, multiple: false, title: t("management.chooseOriginalFolder") });
+    if (typeof outputDirectory !== "string") return;
+    setIsExportingOriginals(true);
+    try {
+      const result = await invoke<OriginalExportResult>("export_originals", {
+        items: selectedAssets.map((asset) => ({ id: asset.id, path: asset.path })),
+        outputDirectory,
+      });
+      setNotice([
+        t("management.originalsExported", { count: result.exported, size: formatBytes(result.bytes, formatLocale) }),
+        result.failed ? t("management.exportFailed", { count: result.failed }) : null,
+      ].filter(Boolean).join(" · "));
+    } catch (error) {
+      setNotice(localizeCommandError(error, t, "error.originals.export"));
+    } finally {
+      setIsExportingOriginals(false);
+    }
+  };
+
   const handleLibraryKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") return;
     event.preventDefault();
@@ -1241,7 +1267,7 @@ function App() {
 
           <div className={`canvas ${selected ? "has-image" : ""} ${isMultiSelection ? "has-selection-manager" : ""}`}>
             {isMultiSelection ? (
-              <SelectionManager assets={selectedAssets} onOpenSingle={openSingleAsset} onClearSelection={clearMultiSelection} onRemoveSelected={removeMultiSelection} disabled={isProcessing} />
+              <SelectionManager assets={selectedAssets} onOpenSingle={openSingleAsset} onClearSelection={clearMultiSelection} onRemoveSelected={removeMultiSelection} onExportOriginals={() => void exportSelectedOriginals()} onExportResults={() => void processAssets(selectedAssets)} disabled={isProcessing || isExportingOriginals} exportingOriginals={isExportingOriginals} />
             ) : selected ? (
               selected.previewUrl ? (
                 <PreviewEditor
@@ -1482,14 +1508,14 @@ function App() {
           )}
           <button
             className={`run-button ${isProcessing ? "cancel" : ""}`}
-            disabled={isProcessing ? isCancelling : !assets.length || !isWorkspaceLoaded}
-            onClick={() => isProcessing ? void cancelProcessing() : void processAssets(assets)}
+            disabled={isProcessing ? isCancelling : !(isMultiSelection ? selectedAssets.length : assets.length) || !isWorkspaceLoaded}
+            onClick={() => isProcessing ? void cancelProcessing() : void processAssets(isMultiSelection ? selectedAssets : assets)}
           >
             <span className="run-icon"><Icon name={isProcessing ? "stop" : "sparkle"} /></span>
             <span>{isProcessing
               ? isCancelling ? t("output.cancelRequest") : t("output.batchProgress", { done: batchCompleted, total: batchTotal })
-              : assets.length
-                ? t(settings.processingMode === "convert" ? "output.runConvert" : "output.runRemove", { count: assets.length })
+              : (isMultiSelection ? selectedAssets.length : assets.length)
+                ? t(settings.processingMode === "convert" ? "output.runConvert" : "output.runRemove", { count: isMultiSelection ? selectedAssets.length : assets.length })
                 : t("output.addImages")}</span>
             {!isProcessing && <Icon name="chevron" size={16} />}
           </button>

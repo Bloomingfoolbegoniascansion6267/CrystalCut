@@ -153,6 +153,21 @@ export interface BatchResult {
   items: ProcessedItemResult[];
 }
 
+export interface OriginalExportItemResult {
+  assetId: string;
+  success: boolean;
+  outputPath: string | null;
+  bytes: number | null;
+  error: string | null;
+}
+
+export interface OriginalExportResult {
+  exported: number;
+  failed: number;
+  bytes: number;
+  items: OriginalExportItemResult[];
+}
+
 export interface ModelStatus {
   id: string;
   installed: boolean;
