@@ -1,6 +1,7 @@
 export type MessageCatalog = Record<string, string>;
 
 export const en: MessageCatalog = {
+  "resize.fileTitle": "Selected file size", "resize.usingGlobal": "Uses output settings", "resize.fileOverride": "File override", "resize.enableOverride": "Set a size for this file", "resize.width": "Width", "resize.height": "Height", "resize.ratioLocked": "Ratio locked", "resize.useGlobal": "Use output settings", "resize.noUpscale": "Don't enlarge this file", "resize.help": "Overrides Resize in Output for this file only. The other side follows the original aspect ratio.", "resize.outputEstimate": "Output dimensions",
   "selection.removeModeOnly": "Available in Remove background mode",
   "metadata.filePolicy": "Output for this file", "metadata.usingGlobal": "Uses output settings", "metadata.fileOverride": "File override", "metadata.useGlobal": "Use global settings", "metadata.filePolicyHelp": "Change a checkbox to use a separate output policy for this file.",
   "inspector.currentScope": "Changes here affect only the selected file.", "inspector.outputScope": "These settings apply to every file in the work list.", "edge.selectedTitle": "Selected file edge detection",
@@ -32,6 +33,7 @@ export const en: MessageCatalog = {
 };
 
 export const ko: MessageCatalog = {
+  "resize.fileTitle": "선택 파일 크기", "resize.usingGlobal": "출력 설정 따름", "resize.fileOverride": "파일별 설정", "resize.enableOverride": "이 파일만 크기 지정", "resize.width": "가로", "resize.height": "세로", "resize.ratioLocked": "비율 잠금", "resize.useGlobal": "출력 설정 사용", "resize.noUpscale": "이 파일 확대하지 않기", "resize.help": "이 파일에만 출력 설정의 크기 변경보다 우선 적용됩니다. 반대쪽 길이는 원본 비율에 맞춰 자동 계산됩니다.", "resize.outputEstimate": "출력 크기",
   "selection.removeModeOnly": "배경 제거 모드에서 사용 가능",
   "metadata.filePolicy": "이 파일의 출력 정책", "metadata.usingGlobal": "출력 설정 따름", "metadata.fileOverride": "파일별 설정", "metadata.useGlobal": "전역 설정 사용", "metadata.filePolicyHelp": "체크 항목을 바꾸면 이 파일에만 별도 출력 정책이 적용됩니다.",
   "inspector.currentScope": "이 탭의 변경 사항은 현재 선택한 파일에만 적용됩니다.", "inspector.outputScope": "이 탭의 설정은 작업 목록의 모든 파일에 적용됩니다.", "edge.selectedTitle": "선택 파일 가장자리 감지",

@@ -601,6 +601,22 @@ select:disabled { color: var(--ink-faint); background-color: var(--surface-muted
 .current-removal-control.is-disabled { opacity: .55; background: #f1f2f4; }
 .advanced-row.current-removal-control:disabled { opacity: .55; color: var(--ink-faint); background: #f1f2f4; }
 .advanced-row.current-removal-control:disabled:hover { color: var(--ink-faint); background: #f1f2f4; }
+.file-resize-section { background: linear-gradient(180deg, #fff, #faf9ff) !important; }
+.file-resize-heading .setting-label { margin: 0; }
+.file-resize-master { margin-top: 10px; }
+.file-resize-controls { margin-top: 11px; padding: 11px; border: 1px solid #ded9f5; border-radius: 12px; background: rgba(255,255,255,.82); transition: opacity 160ms ease, border-color 160ms ease, background-color 160ms ease; }
+.file-resize-controls.is-disabled { opacity: .48; border-color: var(--line); background: var(--surface-muted); }
+.file-resize-controls.is-disabled button { cursor: default; }
+.resize-axis-picker button { min-width: 0; }
+.file-resize-value-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 9px; }
+.file-resize-value-row .input-with-unit { margin: 0; }
+.ratio-lock { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 8px; color: var(--accent-dark); border: 1px solid #ddd6fa; border-radius: 8px; background: var(--accent-soft); font-size: 9.5px; font-weight: 700; white-space: nowrap; }
+.file-resize-result { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; padding: 8px 9px; border-radius: 8px; background: var(--surface-muted); font-size: 10.5px; }
+.file-resize-result span { color: var(--ink-faint); }
+.file-resize-result strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.file-resize-reset { width: 100%; min-height: 32px; margin-top: 10px; color: var(--accent-dark); border: 1px solid #d9d1fa; border-radius: 9px; background: white; font-size: 10.5px; font-weight: 700; cursor: pointer; }
+.file-resize-reset:hover:not(:disabled) { border-color: #bfb2f7; background: var(--accent-soft); }
+.file-resize-reset:disabled { color: var(--ink-faint); border-color: var(--line); background: var(--surface-muted); cursor: default; }
 .inspector-group-heading { padding: 11px 16px 9px; color: var(--ink-soft); border-bottom: 1px solid var(--line); background: #f7f8fa; }
 .inspector-group-heading span, .inspector-group-heading strong { display: block; }
 .inspector-group-heading span { margin-bottom: 3px; color: var(--ink-faint); font-size: 10px; font-weight: 700; letter-spacing: .035em; }

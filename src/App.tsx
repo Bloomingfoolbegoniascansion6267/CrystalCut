@@ -2,7 +2,7 @@ import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, MetadataOutputPolicy, ModelStatus, OriginalExportResult, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
+import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, MetadataOutputPolicy, ModelStatus, OriginalExportResult, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, ResizeOverride, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 import SettingsModal, { type SettingsTab } from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
@@ -126,6 +126,7 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
     stop: <rect x="7" y="7" width="10" height="10" rx="2" />,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z" /></>,
     brush: <><path d="m14.5 4.5 5 5L10 19H5v-5z" /><path d="m12.5 6.5 5 5" /></>,
+    link: <><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" /><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1" /></>,
   };
 
   return (
@@ -232,6 +233,12 @@ function App() {
         ? "original"
         : viewMode;
   const previewAsset = selected && previewRecipe ? { ...selected, maskRecipe: previewRecipe } : selected;
+  const selectedPreviewSettings = useMemo(() => selected?.resizeOverride ? {
+    ...settings,
+    resizeMode: selected.resizeOverride.axis,
+    resizeValue: selected.resizeOverride.value,
+    preventUpscale: selected.resizeOverride.preventUpscale,
+  } : settings, [selected?.resizeOverride, settings]);
   const switchInspectorMode = useCallback((nextMode: InspectorMode) => {
     if (nextMode === inspectorMode) return;
     const panel = inspectorPanelRef.current;
@@ -262,15 +269,15 @@ function App() {
   }, [settings.processingMode]);
   const previewRenderKey = useMemo(() => JSON.stringify({
     processingMode: settings.processingMode,
-    resizeMode: settings.resizeMode,
-    resizeValue: settings.resizeValue,
-    preventUpscale: settings.preventUpscale,
+    resizeMode: selectedPreviewSettings.resizeMode,
+    resizeValue: selectedPreviewSettings.resizeValue,
+    preventUpscale: selectedPreviewSettings.preventUpscale,
     edgeSettings: selected?.edgeSettings,
   }), [
     settings.processingMode,
-    settings.resizeMode,
-    settings.resizeValue,
-    settings.preventUpscale,
+    selectedPreviewSettings.resizeMode,
+    selectedPreviewSettings.resizeValue,
+    selectedPreviewSettings.preventUpscale,
     selected?.edgeSettings,
   ]);
   const retryableAssets = useMemo(
@@ -483,7 +490,7 @@ function App() {
       setIsEstimating(true);
       void invoke<ExportPlan>("prepare_export_plan", {
         items: assets.map((asset, index) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, sequence: index + 1, exif: asset.exif, maskRecipe: asset.maskRecipe, edgeSettings: asset.edgeSettings, metadataPolicy: asset.metadataPolicy, resizeOverride: asset.resizeOverride })),
-        settings,
+        settings: selectedPreviewSettings,
       })
         .then((plan) => {
           if (!cancelled) setExportPlan(plan);
@@ -558,7 +565,7 @@ function App() {
       });
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [isMaskEditing, selected?.id, selected?.path, selected?.rotation, previewRecipe, previewRenderKey, maskPreviewRefreshToken]);
+  }, [isMaskEditing, selected?.id, selected?.path, selected?.rotation, previewRecipe, previewRenderKey, maskPreviewRefreshToken, selectedPreviewSettings]);
 
   useEffect(() => {
     if (!selected?.outputPath || selected.resultPreviewUrl || !isTauri()) return;
@@ -697,6 +704,55 @@ function App() {
       error: undefined,
     } : asset));
   }, [selected, selectedId]);
+
+  const updateSelectedResizeOverride = useCallback((patch: Partial<ResizeOverride>) => {
+    if (!selectedId || !selected) return;
+    const rotated = selected.rotation === 90 || selected.rotation === 270;
+    const sourceWidth = (rotated ? selected.height : selected.width) ?? DEFAULT_SETTINGS.resizeValue;
+    const sourceHeight = (rotated ? selected.width : selected.height) ?? DEFAULT_SETTINGS.resizeValue;
+    const base = selected.resizeOverride ?? {
+      axis: "width" as const,
+      value: sourceWidth,
+      preventUpscale: settings.preventUpscale,
+    };
+    let resizeOverride = { ...base, ...patch };
+    if (patch.axis && patch.axis !== base.axis) {
+      const scale = base.value / Math.max(1, base.axis === "width" ? sourceWidth : sourceHeight);
+      resizeOverride = {
+        ...resizeOverride,
+        value: Math.max(1, Math.min(32_768, Math.round((patch.axis === "width" ? sourceWidth : sourceHeight) * scale))),
+      };
+    }
+    resizeOverride.value = Math.max(1, Math.min(32_768, Math.round(resizeOverride.value)));
+    setAssets((current) => current.map((asset) => asset.id === selectedId ? {
+      ...asset,
+      resizeOverride,
+      status: "ready",
+      outputPath: undefined,
+      outputBytes: undefined,
+      resultPreviewUrl: undefined,
+      editBasePreviewUrl: undefined,
+      maskPreviewUrl: undefined,
+      error: undefined,
+    } : asset));
+    if (settings.processingMode === "removeBackground") setMaskPreviewStatus("updating");
+  }, [selected, selectedId, settings.preventUpscale, settings.processingMode]);
+
+  const resetSelectedResizeOverride = useCallback(() => {
+    if (!selectedId) return;
+    setAssets((current) => current.map((asset) => asset.id === selectedId ? {
+      ...asset,
+      resizeOverride: null,
+      status: "ready",
+      outputPath: undefined,
+      outputBytes: undefined,
+      resultPreviewUrl: undefined,
+      editBasePreviewUrl: undefined,
+      maskPreviewUrl: undefined,
+      error: undefined,
+    } : asset));
+    if (settings.processingMode === "removeBackground") setMaskPreviewStatus("updating");
+  }, [selectedId, settings.processingMode]);
 
   const updateSelectedMetadata = useCallback((patch: Partial<ImageAsset["exif"]>) => {
     if (!selectedId) return;
@@ -1111,6 +1167,26 @@ function App() {
         : selectedMetadataPolicy.preservePrompt
           ? t("metadata.withPrompt")
           : t("metadata.safe");
+  const selectedRotated = selected?.rotation === 90 || selected?.rotation === 270;
+  const selectedSourceWidth = selected ? (selectedRotated ? selected.height : selected.width) : null;
+  const selectedSourceHeight = selected ? (selectedRotated ? selected.width : selected.height) : null;
+  const selectedResizeOverride = selected?.resizeOverride ?? null;
+  const selectedOutputDimensions = selected && selectedSourceWidth && selectedSourceHeight && selectedResizeOverride
+    ? (() => {
+        const sourceAxis = selectedResizeOverride.axis === "width" ? selectedSourceWidth : selectedSourceHeight;
+        const requestedScale = selectedResizeOverride.value / sourceAxis;
+        const scale = selectedResizeOverride.preventUpscale && requestedScale > 1
+          ? 1
+          : Math.min(requestedScale, 32_768 / Math.max(selectedSourceWidth, selectedSourceHeight));
+        return {
+          width: Math.max(1, Math.round(selectedSourceWidth * scale)),
+          height: Math.max(1, Math.round(selectedSourceHeight * scale)),
+        };
+      })()
+    : null;
+  const selectedResizeSummary = selectedResizeOverride
+    ? `${t(selectedResizeOverride.axis === "width" ? "resize.width" : "resize.height")} · ${selectedResizeOverride.value.toLocaleString(formatLocale)}px`
+    : `${t("resize.usingGlobal")} · ${resizeSummary}`;
   const selectedEstimatedOutputBytes = selected?.outputBytes
     ?? (selected && exportPlan?.estimatedOutputBytes != null && totalBytes > 0
       ? Math.max(1, Math.round(selected.sizeBytes * exportPlan.estimatedOutputBytes / totalBytes))
@@ -1943,6 +2019,33 @@ function App() {
             </div>
             </div>
           )}
+
+          {selected && <InspectorAccordion title={t("resize.fileTitle")} summary={selectedResizeSummary} defaultOpen>
+            <section className="setting-section file-resize-section">
+              <div className="label-row file-resize-heading">
+                <span className="setting-label">{t("resize.fileTitle")}</span>
+                <span className={`scope-badge ${selectedResizeOverride ? "" : "neutral"}`}>{t(selectedResizeOverride ? "resize.fileOverride" : "resize.usingGlobal")}</span>
+              </div>
+              <label className="check-row file-resize-master"><input type="checkbox" checked={Boolean(selectedResizeOverride)} onChange={(event) => event.target.checked ? updateSelectedResizeOverride({}) : resetSelectedResizeOverride()} /><span><Icon name="check" size={13} /></span>{t("resize.enableOverride")}</label>
+              <div className={`file-resize-controls ${selectedResizeOverride ? "" : "is-disabled"}`} aria-disabled={!selectedResizeOverride}>
+                <div className="segmented resize-axis-picker" aria-label={t("resize.fileTitle")}>
+                  <button type="button" className={selectedResizeOverride?.axis === "width" ? "active" : ""} onClick={() => updateSelectedResizeOverride({ axis: "width" })} disabled={!selectedResizeOverride}>{t("resize.width")}</button>
+                  <button type="button" className={selectedResizeOverride?.axis === "height" ? "active" : ""} onClick={() => updateSelectedResizeOverride({ axis: "height" })} disabled={!selectedResizeOverride}>{t("resize.height")}</button>
+                </div>
+                <div className="file-resize-value-row">
+                  <div className="input-with-unit">
+                    <input type="number" min="1" max="32768" inputMode="numeric" value={selectedResizeOverride?.value ?? ""} onChange={(event) => updateSelectedResizeOverride({ value: Number(event.target.value) || 1 })} disabled={!selectedResizeOverride} aria-label={t(selectedResizeOverride?.axis === "height" ? "resize.height" : "resize.width")} />
+                    <span>px</span>
+                  </div>
+                  <span className="ratio-lock"><Icon name="link" size={13} />{t("resize.ratioLocked")}</span>
+                </div>
+                {selectedOutputDimensions && <div className="file-resize-result"><span>{t("resize.outputEstimate")}</span><strong>{formatDimensions(selectedOutputDimensions.width, selectedOutputDimensions.height, formatLocale, t("format.unknownDimensions"))}</strong></div>}
+                <label className={`check-row ${selectedResizeOverride ? "" : "disabled"}`}><input type="checkbox" checked={selectedResizeOverride?.preventUpscale ?? settings.preventUpscale} onChange={(event) => updateSelectedResizeOverride({ preventUpscale: event.target.checked })} disabled={!selectedResizeOverride} /><span><Icon name="check" size={13} /></span>{t("resize.noUpscale")}</label>
+              </div>
+              <p className="setting-help">{t("resize.help")}</p>
+              <button type="button" className="file-resize-reset" onClick={resetSelectedResizeOverride} disabled={!selectedResizeOverride}>{t("resize.useGlobal")}</button>
+            </section>
+          </InspectorAccordion>}
 
           {selected && <InspectorAccordion title={t("metadata.fileValues")} summary={selectedMetadataSummary}>
             <section className="setting-section metadata-section current-metadata-section">

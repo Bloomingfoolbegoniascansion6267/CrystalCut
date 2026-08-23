@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const jaSupplement: MessageCatalog = {
+  "resize.fileTitle": "選択ファイルのサイズ", "resize.usingGlobal": "出力設定を使用", "resize.fileOverride": "ファイル別設定", "resize.enableOverride": "このファイルだけサイズを指定", "resize.width": "幅", "resize.height": "高さ", "resize.ratioLocked": "縦横比を固定", "resize.useGlobal": "出力設定に戻す", "resize.noUpscale": "このファイルを拡大しない", "resize.help": "このファイルだけ「出力」のサイズ設定より優先します。もう一辺は元の縦横比から自動計算されます。", "resize.outputEstimate": "出力サイズ",
   "editor.source.manualLabel": "手動で塗る",
   "library.reorderHint": "ファイルをドラッグして並べ替えます。Altキーと矢印キーでも移動できます。順序は処理と連番ファイル名に反映されます。", "library.dragHandle": "ドラッグして並べ替え", "library.draggingMany": "{count}件を移動中", "library.reorderMoved": "{count}件を{position}番目に移動しました。", "library.moveUp": "上へ移動", "library.moveDown": "下へ移動", "library.moveTop": "一番上へ移動", "library.moveBottom": "一番下へ移動",
   "editor.chooseSource": "選択方法を選ぶ", "editor.recommended": "おすすめ", "editor.source.autoDescription": "AIが最初にメインの被写体を検出します。", "editor.source.autoUseCase": "ほとんどの写真向け · 残す／消すブラシで微調整できます。", "editor.source.samDescription": "含める場所と除外する場所を示すと、AIが対象を選択します。", "editor.source.samUseCase": "複雑な写真や被写体が複数ある場合に最適です。", "editor.source.manualDescription": "空の選択範囲から、残す部分だけを直接塗ります。", "editor.source.manualUseCase": "細かな作業や自動検出が難しい画像に最適です。", "editor.changeSourceConfirm": "選択方法を変更すると、現在のブラシ操作が消去されます。続けますか？", "editor.keepArea": "残す", "editor.removeArea": "消す", "editor.eraseArea": "消去",

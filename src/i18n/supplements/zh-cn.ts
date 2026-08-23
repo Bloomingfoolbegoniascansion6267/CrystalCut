@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const zhCNSupplement: MessageCatalog = {
+  "resize.fileTitle": "所选文件尺寸", "resize.usingGlobal": "使用输出设置", "resize.fileOverride": "单独设置", "resize.enableOverride": "单独设置此文件尺寸", "resize.width": "宽度", "resize.height": "高度", "resize.ratioLocked": "锁定比例", "resize.useGlobal": "改用输出设置", "resize.noUpscale": "不放大此文件", "resize.help": "仅此文件优先于“输出”中的尺寸设置，另一边会按原始比例自动计算。", "resize.outputEstimate": "输出尺寸",
   "editor.source.manualLabel": "手动涂抹",
   "library.reorderHint": "拖动文件可调整顺序，也可使用 Alt 和方向键移动。顺序会影响处理和文件编号。", "library.dragHandle": "拖动调整顺序", "library.draggingMany": "正在移动 {count} 个文件", "library.reorderMoved": "已将 {count} 个文件移到第 {position} 位。", "library.moveUp": "上移", "library.moveDown": "下移", "library.moveTop": "移到顶部", "library.moveBottom": "移到底部",
   "editor.chooseSource": "选择选区方式", "editor.recommended": "推荐", "editor.source.autoDescription": "AI 会先识别主要对象。", "editor.source.autoUseCase": "适合大多数照片 · 可用保留或移除画笔修正。", "editor.source.samDescription": "标记要包含或排除的位置，AI 会选中对应对象。", "editor.source.samUseCase": "适合复杂场景或多个对象。", "editor.source.manualDescription": "从空选区开始，只涂抹要保留的区域。", "editor.source.manualUseCase": "适合精细处理或难以自动识别的图片。", "editor.changeSourceConfirm": "切换选区方式会清除当前画笔标记。是否继续？", "editor.keepArea": "保留", "editor.removeArea": "移除", "editor.eraseArea": "擦除",

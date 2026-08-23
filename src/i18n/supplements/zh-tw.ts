@@ -50,4 +50,7 @@ export const toTraditionalChinese = (catalog: MessageCatalog): MessageCatalog =>
   Object.entries(catalog).map(([id, value]) => [id, localize(value)]),
 );
 
-export const zhTWSupplement: MessageCatalog = toTraditionalChinese(zhCNSupplement);
+export const zhTWSupplement: MessageCatalog = {
+  ...toTraditionalChinese(zhCNSupplement),
+  "resize.fileTitle": "所選檔案尺寸", "resize.usingGlobal": "使用輸出設定", "resize.fileOverride": "個別設定", "resize.enableOverride": "個別設定此檔案尺寸", "resize.width": "寬度", "resize.height": "高度", "resize.ratioLocked": "鎖定比例", "resize.useGlobal": "改用輸出設定", "resize.noUpscale": "不放大此檔案", "resize.help": "僅此檔案優先於「輸出」中的尺寸設定，另一邊會依原始比例自動計算。", "resize.outputEstimate": "輸出尺寸",
+};
