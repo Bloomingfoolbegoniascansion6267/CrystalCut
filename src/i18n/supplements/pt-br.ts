@@ -1,6 +1,8 @@
 import type { MessageCatalog } from "../messages";
 
 export const ptBRSupplement: MessageCatalog = {
+  "editor.source.manualLabel": "Pintar manualmente",
+  "editor.chooseSource": "Escolher método de seleção", "editor.recommended": "Recomendado", "editor.source.autoDescription": "A IA encontra primeiro o objeto principal.", "editor.source.autoUseCase": "Ideal para a maioria das fotos · ajuste com Manter ou Remover.", "editor.source.samDescription": "Marque o que incluir ou excluir e a IA selecionará o objeto.", "editor.source.samUseCase": "Ideal para cenas complexas ou vários objetos.", "editor.source.manualDescription": "Comece sem seleção e pinte apenas a área que deseja manter.", "editor.source.manualUseCase": "Ideal para trabalhos precisos ou imagens difíceis.", "editor.changeSourceConfirm": "Alterar o método apagará as marcações atuais do pincel. Continuar?", "editor.keepArea": "Manter", "editor.removeArea": "Remover", "editor.eraseArea": "Apagar",
   "selection.removeModeOnly": "Disponível no modo Remover fundo",
   "metadata.filePolicy": "Saída deste arquivo", "metadata.usingGlobal": "Usa as configurações de saída", "metadata.fileOverride": "Ajuste do arquivo", "metadata.useGlobal": "Usar configurações globais", "metadata.filePolicyHelp": "Altere uma opção para aplicar uma política de saída exclusiva a este arquivo.",
   "inspector.currentScope": "As alterações desta aba afetam apenas o arquivo selecionado.", "inspector.outputScope": "Estas configurações se aplicam a todos os arquivos da lista.", "edge.selectedTitle": "Detecção de bordas do arquivo selecionado",

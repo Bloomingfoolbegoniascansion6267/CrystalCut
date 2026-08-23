@@ -1,6 +1,8 @@
 import type { MessageCatalog } from "../messages";
 
 export const frSupplement: MessageCatalog = {
+  "editor.source.manualLabel": "Peindre manuellement",
+  "editor.chooseSource": "Choisir une méthode", "editor.recommended": "Recommandé", "editor.source.autoDescription": "L’IA détecte d’abord le sujet principal.", "editor.source.autoUseCase": "Idéal pour la plupart des photos · retouchez avec Garder ou Retirer.", "editor.source.samDescription": "Marquez les zones à inclure ou exclure pour que l’IA sélectionne l’objet.", "editor.source.samUseCase": "Idéal pour les scènes chargées ou plusieurs objets.", "editor.source.manualDescription": "Partez d’une sélection vide et peignez uniquement la zone à garder.", "editor.source.manualUseCase": "Idéal pour les retouches précises ou les images difficiles.", "editor.changeSourceConfirm": "Changer de méthode effacera les marques de pinceau actuelles. Continuer ?", "editor.keepArea": "Garder", "editor.removeArea": "Retirer", "editor.eraseArea": "Effacer",
   "selection.removeModeOnly": "Disponible en mode Détourage",
   "metadata.filePolicy": "Sortie de ce fichier", "metadata.usingGlobal": "Suit les réglages de sortie", "metadata.fileOverride": "Réglage du fichier", "metadata.useGlobal": "Utiliser les réglages globaux", "metadata.filePolicyHelp": "Modifiez une option pour appliquer une politique de sortie propre à ce fichier.",
   "inspector.currentScope": "Les modifications de cet onglet ne concernent que le fichier sélectionné.", "inspector.outputScope": "Ces réglages s’appliquent à tous les fichiers de la liste.", "edge.selectedTitle": "Détection des contours du fichier sélectionné",

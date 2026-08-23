@@ -71,6 +71,9 @@ export default function PreviewEditor({
   const { t } = useI18n();
   const stageRef = useRef<HTMLDivElement>(null);
   const imageGroupRef = useRef<HTMLDivElement>(null);
+  const sourceCardRef = useRef<HTMLDivElement>(null);
+  const sourceTriggerRef = useRef<HTMLButtonElement>(null);
+  const sourceOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [stageSize, setStageSize] = useState<Size>({ width: 0, height: 0 });
   const [sourceSize, setSourceSize] = useState<Size>({ width: asset.width ?? 1, height: asset.height ?? 1 });
   const [zoom, setZoom] = useState<number | null>(null);
@@ -81,6 +84,7 @@ export default function PreviewEditor({
   const [activeStroke, setActiveStroke] = useState<BrushStroke | null>(null);
   const activeStrokeRef = useRef<BrushStroke | null>(null);
   const [redoStack, setRedoStack] = useState<BrushStroke[]>([]);
+  const [isSourcePickerOpen, setIsSourcePickerOpen] = useState(false);
   const pointerAction = useRef<null | {
     type: "pan" | "stroke";
     pointerId: number;
@@ -109,8 +113,18 @@ export default function PreviewEditor({
     setRedoStack([]);
     setActiveStroke(null);
     setTool("pan");
+    setIsSourcePickerOpen(false);
     activeStrokeRef.current = null;
   }, [asset.id, asset.width, asset.height]);
+
+  useEffect(() => {
+    if (!isSourcePickerOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!sourceCardRef.current?.contains(event.target as Node)) setIsSourcePickerOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [isSourcePickerOpen]);
 
   const rotated = asset.rotation === 90 || asset.rotation === 270;
   const orientedSize = useMemo<Size>(() => rotated
@@ -180,15 +194,49 @@ export default function PreviewEditor({
   }, [asset.maskRecipe, onMaskChange, redoStack]);
 
   const selectSource = (source: SelectionSource) => {
+    if (source === selectionSource) {
+      setIsSourcePickerOpen(false);
+      sourceTriggerRef.current?.focus();
+      return;
+    }
+    if (asset.maskRecipe.strokes.length > 0 && !window.confirm(t("editor.changeSourceConfirm"))) return;
     setRedoStack([]);
     setTool("pan");
+    setIsSourcePickerOpen(false);
     if (source === "automatic") {
-      onMaskChange({ ...asset.maskRecipe, mode: "automatic" });
+      onMaskChange({ mode: "automatic", strokes: [] });
+      sourceTriggerRef.current?.focus();
       return;
     }
     const nextMode: MaskMode = source === "sam" ? "sam" : "manual";
-    const sourceChanged = sourceForMode(asset.maskRecipe.mode) !== source;
-    onMaskChange({ mode: nextMode, strokes: sourceChanged ? [] : asset.maskRecipe.strokes });
+    onMaskChange({ mode: nextMode, strokes: [] });
+    sourceTriggerRef.current?.focus();
+  };
+
+  const openSourcePicker = (focusSelected = false) => {
+    setIsSourcePickerOpen(true);
+    if (focusSelected) {
+      requestAnimationFrame(() => sourceOptionRefs.current.find((option) => option?.dataset.source === selectionSource)?.focus());
+    }
+  };
+
+  const handleSourceOptionKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setIsSourcePickerOpen(false);
+      sourceTriggerRef.current?.focus();
+      return;
+    }
+    const lastIndex = sourceOptionRefs.current.length - 1;
+    const nextIndex = event.key === "ArrowDown" ? Math.min(lastIndex, index + 1)
+      : event.key === "ArrowUp" ? Math.max(0, index - 1)
+        : event.key === "Home" ? 0
+          : event.key === "End" ? lastIndex
+            : null;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    sourceOptionRefs.current[nextIndex]?.focus();
   };
 
   const selectBrush = (mode: BrushMode) => {
@@ -282,9 +330,16 @@ export default function PreviewEditor({
     transform: `translate(-50%, -50%) rotate(${asset.rotation}deg)`,
   };
 
-  const sourceLabel = t(selectionSource === "automatic" ? "editor.source.auto" : selectionSource === "sam" ? "editor.source.sam" : "editor.source.empty");
-  const keepLabel = t(selectionSource === "sam" ? "editor.include" : "editor.keep");
-  const removeLabel = t(selectionSource === "sam" ? "editor.exclude" : "editor.remove");
+  const sourceLabel = t(selectionSource === "automatic" ? "editor.source.auto" : selectionSource === "sam" ? "editor.source.sam" : "editor.source.manualLabel");
+  const sourceIcon = selectionSource === "automatic" ? "✦" : selectionSource === "sam" ? "◎" : "✎";
+  const sourceDescriptionKey = selectionSource === "automatic" ? "editor.source.autoDescription" : selectionSource === "sam" ? "editor.source.samDescription" : "editor.source.manualDescription";
+  const keepLabel = t(selectionSource === "sam" ? "editor.include" : "editor.keepArea");
+  const removeLabel = t(selectionSource === "sam" ? "editor.exclude" : selectionSource === "manual" ? "editor.eraseArea" : "editor.removeArea");
+  const sourceOptions: Array<{ source: SelectionSource; icon: string; labelKey: string; descriptionKey: string; useCaseKey: string; recommended?: boolean }> = [
+    { source: "automatic", icon: "✦", labelKey: "editor.source.auto", descriptionKey: "editor.source.autoDescription", useCaseKey: "editor.source.autoUseCase", recommended: true },
+    { source: "sam", icon: "◎", labelKey: "editor.source.sam", descriptionKey: "editor.source.samDescription", useCaseKey: "editor.source.samUseCase" },
+    { source: "manual", icon: "✎", labelKey: "editor.source.manualLabel", descriptionKey: "editor.source.manualDescription", useCaseKey: "editor.source.manualUseCase" },
+  ];
 
   return (
     <div
@@ -337,16 +392,62 @@ export default function PreviewEditor({
 
       {viewMode === "result" && resultUrl && <span className={`preview-kind-label ${showingEditPreview ? "draft" : "saved"}`}>{resultLabel}</span>}
       {viewMode === "compare" && resultUrl && <><span className="compare-label left">{t("common.original")}</span><span className="compare-label right">{resultLabel}</span></>}
+      {!editing && viewMode !== "compare" && <span className="selection-mode-badge"><span aria-hidden="true">{sourceIcon}</span>{sourceLabel}</span>}
       {(editing || previewStatus === "updating" || previewStatus === "error") && <div className={`mask-preview-status ${previewStatus === "error" ? "error" : previewStatus}`} role="status" aria-live="polite" title={previewError ?? undefined}>{previewStatus === "updating" && <span className="spinner" />}{t(previewStatus === "updating" ? "editor.previewUpdating" : previewStatus === "error" ? "editor.previewError" : previewStatus === "current" ? "editor.previewCurrent" : "editor.previewReady")}</div>}
 
       {editing && (
         <>
-          <div className="editor-source-card" onPointerDown={(event) => event.stopPropagation()}>
-            <label htmlFor="mask-selection-source">{t("editor.selectionSource")}</label>
-            <select id="mask-selection-source" value={selectionSource} onChange={(event) => selectSource(event.target.value as SelectionSource)}>
-              <option value="automatic">{t("editor.source.auto")}</option><option value="sam">{t("editor.source.sam")}</option><option value="manual">{t("editor.source.manual")}</option>
-            </select>
-            <small>{t(selectionSource === "sam" ? "editor.samHelp" : selectionSource === "manual" ? "editor.manualHelp" : "editor.autoHelp")}</small>
+          <div ref={sourceCardRef} className="editor-source-card" onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+            <span className="editor-source-label">{t("editor.selectionSource")}</span>
+            <button
+              ref={sourceTriggerRef}
+              type="button"
+              className={`editor-source-trigger ${isSourcePickerOpen ? "open" : ""}`}
+              aria-haspopup="listbox"
+              aria-expanded={isSourcePickerOpen}
+              onClick={() => isSourcePickerOpen ? setIsSourcePickerOpen(false) : openSourcePicker()}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  openSourcePicker(true);
+                }
+                if (event.key === "Escape" && isSourcePickerOpen) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setIsSourcePickerOpen(false);
+                }
+              }}
+            >
+              <span className={`editor-source-icon source-${selectionSource}`} aria-hidden="true">{sourceIcon}</span>
+              <span className="editor-source-trigger-copy"><strong>{sourceLabel}</strong><small>{t(sourceDescriptionKey)}</small></span>
+              <span className="editor-source-chevron" aria-hidden="true">⌄</span>
+            </button>
+            {isSourcePickerOpen && (
+              <div className="editor-source-popover" role="listbox" aria-label={t("editor.chooseSource")}>
+                <div className="editor-source-popover-heading">{t("editor.chooseSource")}</div>
+                {sourceOptions.map((option, index) => (
+                  <button
+                    key={option.source}
+                    ref={(element) => { sourceOptionRefs.current[index] = element; }}
+                    type="button"
+                    role="option"
+                    aria-selected={selectionSource === option.source}
+                    data-source={option.source}
+                    className={`editor-source-option ${selectionSource === option.source ? "selected" : ""}`}
+                    onClick={() => selectSource(option.source)}
+                    onKeyDown={(event) => handleSourceOptionKeyDown(event, index)}
+                  >
+                    <span className={`editor-source-icon source-${option.source}`} aria-hidden="true">{option.icon}</span>
+                    <span className="editor-source-option-copy">
+                      <span className="editor-source-option-title"><strong>{t(option.labelKey)}</strong>{option.recommended && <em>{t("editor.recommended")}</em>}</span>
+                      <span>{t(option.descriptionKey)}</span>
+                      <small>{t(option.useCaseKey)}</small>
+                    </span>
+                    <span className="editor-source-check" aria-hidden="true">{selectionSource === option.source ? "✓" : ""}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="editor-commit-actions" onPointerDown={(event) => event.stopPropagation()}><button className="editor-cancel" onClick={onCancel}>{t("common.cancel")}</button><button className="editor-apply" onClick={onApply} disabled={previewStatus === "updating"}>{t("editor.apply")}</button></div>
           <div className="editor-toolrail" aria-label={t("editor.tools")} onPointerDown={(event) => event.stopPropagation()}>

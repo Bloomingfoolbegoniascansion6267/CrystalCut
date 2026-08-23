@@ -1,6 +1,8 @@
 import type { MessageCatalog } from "../messages";
 
 export const esSupplement: MessageCatalog = {
+  "editor.source.manualLabel": "Pintar manualmente",
+  "editor.chooseSource": "Elegir método de selección", "editor.recommended": "Recomendado", "editor.source.autoDescription": "La IA detecta primero el objeto principal.", "editor.source.autoUseCase": "Ideal para la mayoría de fotos · retoca con Conservar o Quitar.", "editor.source.samDescription": "Marca qué incluir o excluir y la IA seleccionará ese objeto.", "editor.source.samUseCase": "Ideal para escenas complejas o varios objetos.", "editor.source.manualDescription": "Empieza sin selección y pinta solo la zona que quieras conservar.", "editor.source.manualUseCase": "Ideal para trabajos precisos o imágenes difíciles.", "editor.changeSourceConfirm": "Al cambiar el método se borrarán las marcas de pincel actuales. ¿Continuar?", "editor.keepArea": "Conservar", "editor.removeArea": "Quitar", "editor.eraseArea": "Borrar",
   "selection.removeModeOnly": "Disponible en el modo Quitar fondo",
   "metadata.filePolicy": "Salida de este archivo", "metadata.usingGlobal": "Usa ajustes de salida", "metadata.fileOverride": "Ajuste del archivo", "metadata.useGlobal": "Usar ajustes globales", "metadata.filePolicyHelp": "Cambia una opción para aplicar una política de salida propia a este archivo.",
   "inspector.currentScope": "Los cambios de esta pestaña solo afectan al archivo seleccionado.", "inspector.outputScope": "Estos ajustes se aplican a todos los archivos de la lista.", "edge.selectedTitle": "Detección de bordes del archivo seleccionado",
