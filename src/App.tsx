@@ -6,6 +6,7 @@ import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSe
 import { formatBytes, formatDimensions } from "./lib/format";
 import SettingsModal, { type SettingsTab } from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
+import SelectionManager from "./SelectionManager";
 import appIconUrl from "../assets/app-icon.svg";
 import { useI18n } from "./i18n/I18nProvider";
 import type { LanguagePreference } from "./i18n/locale";
@@ -109,6 +110,7 @@ function App() {
   const { t, formatLocale, setLanguagePreference } = useI18n();
   const [assets, setAssets] = useState<ImageAsset[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [settings, setSettings] = useState<OutputSettings>(DEFAULT_SETTINGS);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -147,6 +149,7 @@ function App() {
   const maskPreviewRevision = useRef(0);
   const maskPreviewSnapshot = useRef<{ editBasePreviewUrl?: string; maskPreviewUrl?: string } | null>(null);
   const thumbnailLoads = useRef(new Set<string>());
+  const selectionAnchorId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!notice) return;
@@ -155,6 +158,9 @@ function App() {
   }, [notice]);
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedAssets = useMemo(() => assets.filter((asset) => selectedIdSet.has(asset.id)), [assets, selectedIdSet]);
+  const isMultiSelection = selectedAssets.length > 1;
   const contextAsset = contextMenu?.assetId ? assets.find((asset) => asset.id === contextMenu.assetId) ?? null : null;
   const totalBytes = useMemo(() => assets.reduce((sum, asset) => sum + asset.sizeBytes, 0), [assets]);
   const previewRecipe = isMaskEditing ? maskDraft ?? selected?.maskRecipe : selected?.maskRecipe;
@@ -206,6 +212,8 @@ function App() {
       return [...current, ...unique];
     });
     setSelectedId((current) => current ?? incoming[0].id);
+    setSelectedIds((current) => current.length ? current : [incoming[0].id]);
+    if (!selectionAnchorId.current) selectionAnchorId.current = incoming[0].id;
     setNotice(t("notice.filesLoaded", { count: incoming.length }));
   }, [t]);
 
@@ -276,6 +284,8 @@ function App() {
         setAssets(restored.items);
         preloadThumbnails(restored.items);
         setSelectedId(restored.items[0]?.id ?? null);
+        setSelectedIds(restored.items[0] ? [restored.items[0].id] : []);
+        selectionAnchorId.current = restored.items[0]?.id ?? null;
         if (restored.items.some((asset) => asset.status === "done")) setViewMode("result");
         if (restored.items.length || restored.missingFiles || restored.interrupted) {
           setNotice([
@@ -636,14 +646,23 @@ function App() {
     };
   }, [contextMenu]);
 
-  const removeAsset = (assetId: string) => {
-    setAssets((current) => {
-      const removedIndex = current.findIndex((asset) => asset.id === assetId);
-      const next = current.filter((asset) => asset.id !== assetId);
-      if (selectedId === assetId) setSelectedId(next[Math.min(Math.max(removedIndex, 0), next.length - 1)]?.id ?? null);
-      return next;
-    });
+  const removeAssets = (assetIds: string[]) => {
+    const removing = new Set(assetIds);
+    const removedIndex = assets.findIndex((asset) => removing.has(asset.id));
+    const next = assets.filter((asset) => !removing.has(asset.id));
+    const retainedSelection = selectedIds.filter((id) => !removing.has(id));
+    const adjacent = next[Math.min(Math.max(removedIndex, 0), Math.max(0, next.length - 1))] ?? null;
+    const nextActiveId = selectedId && !removing.has(selectedId)
+      ? selectedId
+      : retainedSelection.at(-1) ?? adjacent?.id ?? null;
+    const nextSelection = retainedSelection.length ? retainedSelection : nextActiveId ? [nextActiveId] : [];
+    setAssets(next);
+    setSelectedIds(nextSelection);
+    setSelectedId(nextActiveId);
+    if (!selectionAnchorId.current || removing.has(selectionAnchorId.current)) selectionAnchorId.current = nextActiveId;
   };
+
+  const removeAsset = (assetId: string) => removeAssets([assetId]);
 
   const removeSelected = () => {
     if (selectedId) removeAsset(selectedId);
@@ -663,6 +682,8 @@ function App() {
       skipNextWorkspaceSave.current = true;
       setAssets([]);
       setSelectedId(null);
+      setSelectedIds([]);
+      selectionAnchorId.current = null;
       setSettings(preferences.defaultSettings);
       setLastOutputBytes(null);
       setExportPlan(null);
@@ -688,7 +709,9 @@ function App() {
       && !asset.maskRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length));
     if (incompleteManual) {
       setPendingMaskEditId(incompleteManual.id);
+      setSelectedIds([incompleteManual.id]);
       setSelectedId(incompleteManual.id);
+      selectionAnchorId.current = incompleteManual.id;
       setNotice(t("notice.paintKeepFirst", { name: incompleteManual.name }));
       return;
     }
@@ -1018,7 +1041,9 @@ function App() {
   const openAssetContextMenu = (event: ReactMouseEvent<HTMLButtonElement>, assetId: string) => {
     event.preventDefault();
     event.stopPropagation();
+    if (!selectedIdSet.has(assetId)) setSelectedIds([assetId]);
     setSelectedId(assetId);
+    selectionAnchorId.current = assetId;
     setContextMenu({
       x: Math.min(event.clientX, window.innerWidth - 220),
       y: Math.min(event.clientY, window.innerHeight - 300),
@@ -1078,6 +1103,60 @@ function App() {
     tabs[nextIndex].click();
   };
 
+  const selectAssetFromList = (event: ReactMouseEvent<HTMLButtonElement>, assetId: string) => {
+    const toggle = event.ctrlKey || event.metaKey;
+    const range = event.shiftKey;
+    const anchorId = selectionAnchorId.current ?? selectedId ?? assetId;
+    let nextSelection: string[];
+
+    if (range) {
+      const anchorIndex = assets.findIndex((asset) => asset.id === anchorId);
+      const targetIndex = assets.findIndex((asset) => asset.id === assetId);
+      const start = Math.min(anchorIndex < 0 ? targetIndex : anchorIndex, targetIndex);
+      const end = Math.max(anchorIndex < 0 ? targetIndex : anchorIndex, targetIndex);
+      const rangeIds = assets.slice(start, end + 1).map((asset) => asset.id);
+      nextSelection = toggle ? [...new Set([...selectedIds, ...rangeIds])] : rangeIds;
+    } else if (toggle) {
+      nextSelection = selectedIdSet.has(assetId)
+        ? selectedIds.filter((id) => id !== assetId)
+        : [...selectedIds, assetId];
+      selectionAnchorId.current = assetId;
+    } else {
+      nextSelection = [assetId];
+      selectionAnchorId.current = assetId;
+    }
+
+    setSelectedIds(nextSelection);
+    setSelectedId(nextSelection.includes(assetId) ? assetId : nextSelection.at(-1) ?? null);
+  };
+
+  const openSingleAsset = (assetId: string) => {
+    setSelectedIds([assetId]);
+    setSelectedId(assetId);
+    selectionAnchorId.current = assetId;
+  };
+
+  const clearMultiSelection = () => {
+    const retained = selectedId ?? selectedAssets.at(-1)?.id ?? null;
+    setSelectedIds(retained ? [retained] : []);
+    setSelectedId(retained);
+    selectionAnchorId.current = retained;
+  };
+
+  const removeMultiSelection = () => {
+    if (!selectedAssets.length || isProcessing || !window.confirm(t("management.removeConfirm", { count: selectedAssets.length }))) return;
+    removeAssets(selectedAssets.map((asset) => asset.id));
+  };
+
+  const handleLibraryKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") return;
+    event.preventDefault();
+    const allIds = assets.map((asset) => asset.id);
+    setSelectedIds(allIds);
+    setSelectedId((current) => current ?? allIds[0] ?? null);
+    selectionAnchorId.current = selectedId ?? allIds[0] ?? null;
+  };
+
   return (
     <div
       className={`app ${isLibraryCollapsed ? "library-collapsed" : ""} ${isInspectorCollapsed ? "inspector-collapsed" : ""}`}
@@ -1111,11 +1190,11 @@ function App() {
             {assets.length > 0 && <span className="muted">{formatBytes(totalBytes, formatLocale)}</span>}
             <button className="panel-toggle" onClick={() => setIsLibraryCollapsed((value) => !value)} aria-expanded={!isLibraryCollapsed} aria-label={t(isLibraryCollapsed ? "library.expand" : "library.collapse")} title={t(isLibraryCollapsed ? "library.expand" : "library.collapse")}><Icon name="chevron" size={15} /></button>
           </div>
-          <div className="asset-list">
+          <div className="asset-list" role="listbox" aria-multiselectable="true" tabIndex={assets.length ? 0 : undefined} onKeyDown={handleLibraryKeyDown}>
             {assets.length === 0 ? (
               <div className="library-empty"><Icon name="image" size={24} /><span>{t(isWorkspaceLoaded ? "library.empty" : "library.loading")}</span></div>
             ) : assets.map((asset, index) => (
-              <button key={asset.id} className={`asset-row ${asset.id === selectedId ? "selected" : ""}`} onClick={() => setSelectedId(asset.id)} onContextMenu={(event) => openAssetContextMenu(event, asset.id)}>
+              <button key={asset.id} className={`asset-row ${selectedIdSet.has(asset.id) ? "selected" : ""} ${asset.id === selectedId ? "active" : ""}`} role="option" aria-selected={selectedIdSet.has(asset.id)} onClick={(event) => selectAssetFromList(event, asset.id)} onContextMenu={(event) => openAssetContextMenu(event, asset.id)}>
                 <span className="asset-index">{String(index + 1).padStart(2, "0")}</span>
                 <span className="asset-thumb">{asset.thumbnailUrl || asset.previewUrl ? <img src={asset.thumbnailUrl ?? asset.previewUrl} alt="" /> : <Icon name="image" size={16} />}</span>
                 <span className="asset-copy">
@@ -1136,6 +1215,7 @@ function App() {
 
         <section className="canvas-panel">
           <div className="canvas-toolbar">
+            {isMultiSelection ? <div className="multi-selection-toolbar"><strong>{t("management.selected", { count: selectedAssets.length })}</strong><span>{t("management.toolbarHelp")}</span></div> : <>
             <div className="view-tabs" role="tablist" aria-label={t("preview.mode")}>
               <button className={effectiveViewMode === "original" ? "active" : ""} onClick={() => setViewMode("original")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "original"}>{t("common.original")}</button>
               <button className={effectiveViewMode === "result" ? "active" : ""} onClick={() => hasResultView ? setViewMode("result") : setNotice(t("notice.previewNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "result"} aria-disabled={!hasResultView}>{t("common.preview")}</button>
@@ -1156,10 +1236,13 @@ function App() {
               <span className="divider" />
               <button className="icon-button danger-hover" aria-label={t("preview.removeFromList")} title={t("preview.removeFromList")} onClick={removeSelected} disabled={!selected}><Icon name="trash" /></button>
             </div>
+            </>}
           </div>
 
-          <div className={`canvas ${selected ? "has-image" : ""}`}>
-            {selected ? (
+          <div className={`canvas ${selected ? "has-image" : ""} ${isMultiSelection ? "has-selection-manager" : ""}`}>
+            {isMultiSelection ? (
+              <SelectionManager assets={selectedAssets} onOpenSingle={openSingleAsset} onClearSelection={clearMultiSelection} onRemoveSelected={removeMultiSelection} disabled={isProcessing} />
+            ) : selected ? (
               selected.previewUrl ? (
                 <PreviewEditor
                   asset={previewAsset ?? selected}
@@ -1187,7 +1270,7 @@ function App() {
             )}
           </div>
 
-          {selected && (
+          {selected && !isMultiSelection && (
             <div className="file-info-bar">
               <span><strong>{selected.name}</strong></span>
               <span>{formatDimensions(selected.width, selected.height, formatLocale, t("format.unknownDimensions"))}</span>

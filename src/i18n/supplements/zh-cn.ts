@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const zhCNSupplement: MessageCatalog = {
+  "management.eyebrow": "文件管理", "management.selected": "已选择 {count} 个文件", "management.help": "检查所选文件，或打开单个文件返回图片编辑。", "management.clear": "取消多选", "management.files": "文件", "management.pending": "待处理", "management.remove": "移除所选项", "management.removeConfirm": "从列表中移除所选的 {count} 个文件？原图和结果文件会保留。", "management.resultReady": "结果已就绪", "management.resultNeeded": "需要处理", "management.open": "打开", "management.toolbarHelp": "只选择一个文件即可返回图片预览。",
   "notice.filesLoaded": "已加载 {count} 张图片。", "notice.loadFilesFailed": "无法添加文件：{detail}",
   "notice.preferencesFallback": "无法恢复设置，已使用推荐默认值。", "notice.workspaceRestored": "已恢复 {count} 个任务", "notice.workspaceInterrupted": "{count} 个已中断", "notice.workspaceMissing": "已排除 {count} 个缺失文件", "notice.workspaceRestoreFailed": "无法恢复已保存的工作区。", "notice.workspaceSaveFailed": "无法保存工作区状态。",
   "notice.modelsPreparing": "正在准备本地 AI 模型。每个模型只需下载一次。", "notice.processingFailed": "处理失败。", "notice.userCancelled": "已取消。", "notice.outputInvalid": "请检查输出设置：{detail}", "notice.previewFailed": "无法生成预览。", "notice.maskPreviewFailed": "无法更新蒙版预览。", "notice.resultPreviewFailed": "无法加载结果预览。", "notice.folderDesktopOnly": "文件夹选择仅适用于桌面版。",

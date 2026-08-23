@@ -180,6 +180,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .asset-row:hover { background: var(--surface-muted); }
 .asset-row.selected { border-color: #d9d1fb; background: var(--accent-soft); }
+.asset-row.selected.active { border-color: #a99af1; box-shadow: inset 3px 0 0 var(--accent); }
+.asset-list:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .asset-index { color: var(--ink-faint); font-size: 10.5px; font-variant-numeric: tabular-nums; text-align: center; }
 .asset-thumb {
   display: grid;
@@ -240,6 +242,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .view-tabs button.active { color: var(--ink); background: white; box-shadow: 0 1px 3px rgba(30, 33, 42, .12); }
 .view-tabs button[aria-disabled="true"] { color: #9a9da5; cursor: help; opacity: .72; }
 .canvas-actions { display: flex; align-items: center; gap: 2px; }
+.multi-selection-toolbar { display: flex; align-items: baseline; min-width: 0; gap: 10px; }
+.multi-selection-toolbar strong { font-size: 12px; }
+.multi-selection-toolbar span { overflow: hidden; color: var(--ink-faint); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-actions .icon-button { width: 31px; height: 31px; }
 .preview-backgrounds { display: flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-muted); }
 .background-swatch { width: 17px; height: 17px; padding: 0; border: 1px solid #c8cad1; border-radius: 5px; cursor: pointer; }
@@ -262,6 +267,29 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   background-size: 18px 18px;
 }
 .canvas.has-image { padding: 22px; }
+.canvas.has-selection-manager { display: block; overflow: auto; padding: 24px; }
+.selection-manager { width: min(920px, 100%); min-height: 100%; margin: 0 auto; color: var(--ink); }
+.selection-manager-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
+.selection-manager-header h1 { margin: 5px 0 4px; font-size: 20px; letter-spacing: -.035em; }
+.selection-manager-header p { margin: 0; color: var(--ink-soft); font-size: 11px; }
+.selection-manager-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); overflow: hidden; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.82); box-shadow: var(--shadow-sm); }
+.selection-manager-stats div { min-width: 0; padding: 12px; border-right: 1px solid var(--line); }
+.selection-manager-stats div:last-child { border-right: 0; }
+.selection-manager-stats span, .selection-manager-stats strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selection-manager-stats span { margin-bottom: 5px; color: var(--ink-faint); font-size: 9.5px; }
+.selection-manager-stats strong { font-size: 12px; font-variant-numeric: tabular-nums; }
+.selection-manager-actions { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.danger-outline { color: var(--danger); border-color: #efc7ce; background: #fff8f9; }
+.selection-manager-list { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.88); box-shadow: var(--shadow-sm); }
+.selection-manager-row { display: grid; grid-template-columns: 42px minmax(150px, 1fr) auto minmax(90px, auto) auto; align-items: center; min-height: 58px; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+.selection-manager-row:last-child { border-bottom: 0; }
+.selection-manager-thumb { display: grid; width: 42px; height: 42px; overflow: hidden; place-items: center; color: var(--ink-faint); border: 1px solid var(--line); border-radius: 8px; background: var(--surface-muted); }
+.selection-manager-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.selection-manager-copy { min-width: 0; }
+.selection-manager-copy strong, .selection-manager-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selection-manager-copy strong { margin-bottom: 4px; font-size: 11.5px; }
+.selection-manager-copy small, .selection-manager-result { color: var(--ink-faint); font-size: 10px; }
+.selection-manager-row > button { padding: 6px 9px; color: var(--accent-dark); border: 1px solid #d9d1fb; border-radius: 7px; background: var(--accent-soft); font-size: 10px; font-weight: 700; cursor: pointer; }
 .drop-card {
   width: min(440px, 82%);
   padding: 46px 30px 38px;
@@ -634,6 +662,11 @@ select:disabled { color: var(--ink-faint); background-color: var(--surface-muted
 @keyframes modal-rise { from { opacity: 0; transform: translateY(8px) scale(.992); } }
 
 @media (max-width: 1080px) {
+  .selection-manager-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .selection-manager-stats div:nth-child(3) { border-right: 0; }
+  .selection-manager-stats div:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
+  .selection-manager-row { grid-template-columns: 42px minmax(120px, 1fr) auto auto; }
+  .selection-manager-result { display: none; }
   .app { --library-width: 190px; --inspector-width: 250px; }
   .app.library-collapsed { --library-width: 52px; }
   .app.inspector-collapsed { --inspector-width: 52px; }
