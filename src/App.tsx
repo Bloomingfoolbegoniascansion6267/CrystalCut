@@ -1,7 +1,7 @@
 import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, MetadataOutputPolicy, ModelStatus, OriginalExportResult, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, ResizeOverride, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 import SettingsModal, { type SettingsTab } from "./SettingsModal";
@@ -15,6 +15,7 @@ import { localizeCommandError } from "./i18n/errors";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const TOAST_DURATION_MS = 5000;
+const AUTO_OPEN_OUTPUT_FOLDER_LIMIT = 3;
 
 const DEFAULT_SETTINGS: OutputSettings = {
   processingMode: "removeBackground",
@@ -907,6 +908,25 @@ function App() {
     if (selection) setSettings((current) => ({ ...current, outputDirectory: selection }));
   };
 
+  const openSavedOutputDirectories = async (directories: string[]) => {
+    if (!directories.length || !isTauri()) return;
+    try {
+      let shouldOpen = true;
+      if (directories.length > AUTO_OPEN_OUTPUT_FOLDER_LIMIT) {
+        shouldOpen = await confirmDialog(t("dialog.openManyOutputFolders", { count: directories.length }), {
+          title: t("dialog.openOutputFoldersTitle"),
+          kind: "warning",
+          okLabel: t("dialog.openOutputFolders"),
+          cancelLabel: t("common.cancel"),
+        });
+      }
+      if (!shouldOpen) return;
+      await invoke<void>("open_directories", { paths: directories });
+    } catch {
+      setNotice(t("notice.openOutputFoldersFailed"));
+    }
+  };
+
   const processAssets = async (targets: ImageAsset[]) => {
     if (!targets.length) return;
     const incompleteManual = settings.processingMode === "removeBackground" && targets.find((asset) => (asset.maskRecipe.mode === "manual" || asset.maskRecipe.mode === "sam")
@@ -964,6 +984,7 @@ function App() {
         result.workerRestarts ? t("notice.workerRecovered", { count: result.workerRestarts }) : null,
         t("notice.outputResult", { size: formatBytes(result.outputBytes, formatLocale) }),
       ].filter(Boolean).join(" · "));
+      await openSavedOutputDirectories(result.outputDirectories);
     } catch (error) {
       const message = localizeCommandError(error, t, "error.batch.run");
       setAssets((current) => current.map((asset) => asset.status === "queued" || asset.status === "processing" || asset.status === "retrying" ? { ...asset, status: "failed", error: message } : asset));
@@ -1728,7 +1749,7 @@ function App() {
                 onPointerCancel={(event) => finishLibraryDrag(event, false)}
               >
                 <span className="asset-order-cell"><span className="asset-index">{String(index + 1).padStart(2, "0")}</span><span className="asset-reorder-grip" title={t("library.dragHandle")} aria-hidden="true"><i /><i /><i /><i /><i /><i /></span></span>
-                <span className="asset-thumb">{asset.thumbnailUrl || asset.previewUrl ? <img src={asset.thumbnailUrl ?? asset.previewUrl} alt="" draggable={false} /> : <Icon name="image" size={16} />}</span>
+                <span className="asset-thumb">{asset.thumbnailUrl || asset.previewUrl ? <img src={asset.thumbnailUrl ?? asset.previewUrl} alt="" draggable={false} style={{ transform: `rotate(${asset.rotation}deg)` }} /> : <Icon name="image" size={16} />}</span>
                 <span className="asset-copy">
                   <strong title={asset.name}>{asset.name}</strong>
                   <small>{formatDimensions(asset.width, asset.height, formatLocale, t("format.unknownDimensions"))} · {formatBytes(asset.sizeBytes, formatLocale)}</small>
@@ -1739,7 +1760,7 @@ function App() {
             {libraryDropAtEnd && <div className="library-drop-marker end" aria-hidden="true" />}
           </div>
           <div className="sr-only" role="status" aria-live="polite">{libraryAnnouncement}</div>
-          {libraryDragVisual && libraryDragLead && <div className="library-drag-ghost" style={{ left: libraryDragVisual.clientX + 12, top: libraryDragVisual.clientY + 12 }} aria-hidden="true"><span className="asset-thumb">{libraryDragLead.thumbnailUrl || libraryDragLead.previewUrl ? <img src={libraryDragLead.thumbnailUrl ?? libraryDragLead.previewUrl} alt="" draggable={false} /> : <Icon name="image" size={16} />}</span><strong>{libraryDragVisual.draggedIds.length > 1 ? t("library.draggingMany", { count: libraryDragVisual.draggedIds.length }) : libraryDragLead.name}</strong></div>}
+          {libraryDragVisual && libraryDragLead && <div className="library-drag-ghost" style={{ left: libraryDragVisual.clientX + 12, top: libraryDragVisual.clientY + 12 }} aria-hidden="true"><span className="asset-thumb">{libraryDragLead.thumbnailUrl || libraryDragLead.previewUrl ? <img src={libraryDragLead.thumbnailUrl ?? libraryDragLead.previewUrl} alt="" draggable={false} style={{ transform: `rotate(${libraryDragLead.rotation}deg)` }} /> : <Icon name="image" size={16} />}</span><strong>{libraryDragVisual.draggedIds.length > 1 ? t("library.draggingMany", { count: libraryDragVisual.draggedIds.length }) : libraryDragLead.name}</strong></div>}
           {assets.length > 0 && (
             <div className="library-footer-actions">
               <button className="add-more" onClick={addFilesFromDialog} disabled={isProcessing}><Icon name="add" size={16} />{t("app.addMore")}</button>

@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const jaSupplement: MessageCatalog = {
+  "dialog.openOutputFoldersTitle": "出力フォルダーを開きますか？", "dialog.openManyOutputFolders": "結果は{count}個のフォルダーに保存されました。すべて開くと多くのウィンドウが表示される場合があります。今すぐ開きますか？", "dialog.openOutputFolders": "フォルダーを開く", "notice.openOutputFoldersFailed": "ファイルは保存されましたが、出力フォルダーを開けませんでした。",
   "resize.fileTitle": "選択ファイルのサイズ", "resize.usingGlobal": "出力設定を使用", "resize.fileOverride": "ファイル別設定", "resize.enableOverride": "このファイルだけサイズを指定", "resize.width": "幅", "resize.height": "高さ", "resize.ratioLocked": "縦横比を固定", "resize.useGlobal": "出力設定に戻す", "resize.noUpscale": "このファイルを拡大しない", "resize.help": "このファイルだけ「出力」のサイズ設定より優先します。もう一辺は元の縦横比から自動計算されます。", "resize.outputEstimate": "出力サイズ",
   "editor.source.manualLabel": "手動で塗る",
   "library.reorderHint": "ファイルをドラッグして並べ替えます。Altキーと矢印キーでも移動できます。順序は処理と連番ファイル名に反映されます。", "library.dragHandle": "ドラッグして並べ替え", "library.draggingMany": "{count}件を移動中", "library.reorderMoved": "{count}件を{position}番目に移動しました。", "library.moveUp": "上へ移動", "library.moveDown": "下へ移動", "library.moveTop": "一番上へ移動", "library.moveBottom": "一番下へ移動",

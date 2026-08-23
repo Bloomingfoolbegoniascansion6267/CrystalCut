@@ -230,7 +230,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   border-radius: 8px;
   background: linear-gradient(145deg, #f0f1f4, #fafbfc);
 }
-.asset-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.asset-thumb img { width: 100%; height: 100%; object-fit: cover; transform-origin: center; transition: transform 160ms ease; }
 .asset-copy { min-width: 0; }
 .asset-copy strong, .asset-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asset-copy strong { margin-bottom: 4px; font-size: 11.5px; font-weight: 600; }
@@ -320,7 +320,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .selection-manager-row { display: grid; grid-template-columns: 42px minmax(150px, 1fr) auto minmax(90px, auto) auto; align-items: center; min-height: 58px; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
 .selection-manager-row:last-child { border-bottom: 0; }
 .selection-manager-thumb { display: grid; width: 42px; height: 42px; overflow: hidden; place-items: center; color: var(--ink-faint); border: 1px solid var(--line); border-radius: 8px; background: var(--surface-muted); }
-.selection-manager-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.selection-manager-thumb img { width: 100%; height: 100%; object-fit: cover; transform-origin: center; transition: transform 160ms ease; }
 .selection-manager-copy { min-width: 0; }
 .selection-manager-copy strong, .selection-manager-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .selection-manager-copy strong { margin-bottom: 4px; font-size: 11.5px; }

@@ -52,5 +52,6 @@ export const toTraditionalChinese = (catalog: MessageCatalog): MessageCatalog =>
 
 export const zhTWSupplement: MessageCatalog = {
   ...toTraditionalChinese(zhCNSupplement),
+  "dialog.openOutputFoldersTitle": "開啟輸出資料夾？", "dialog.openManyOutputFolders": "結果已儲存到 {count} 個資料夾。全部開啟可能會顯示許多視窗。要現在開啟嗎？", "dialog.openOutputFolders": "開啟資料夾", "notice.openOutputFoldersFailed": "檔案已儲存，但無法開啟輸出資料夾。",
   "resize.fileTitle": "所選檔案尺寸", "resize.usingGlobal": "使用輸出設定", "resize.fileOverride": "個別設定", "resize.enableOverride": "個別設定此檔案尺寸", "resize.width": "寬度", "resize.height": "高度", "resize.ratioLocked": "鎖定比例", "resize.useGlobal": "改用輸出設定", "resize.noUpscale": "不放大此檔案", "resize.help": "僅此檔案優先於「輸出」中的尺寸設定，另一邊會依原始比例自動計算。", "resize.outputEstimate": "輸出尺寸",
 };

@@ -173,6 +173,7 @@ export interface BatchResult {
   cancelled: number;
   workerRestarts: number;
   outputBytes: number;
+  outputDirectories: string[];
   items: ProcessedItemResult[];
 }
 

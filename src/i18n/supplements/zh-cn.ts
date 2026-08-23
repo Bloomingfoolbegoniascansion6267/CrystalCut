@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const zhCNSupplement: MessageCatalog = {
+  "dialog.openOutputFoldersTitle": "打开输出文件夹？", "dialog.openManyOutputFolders": "结果已保存到 {count} 个文件夹。全部打开可能会显示较多窗口。是否现在打开？", "dialog.openOutputFolders": "打开文件夹", "notice.openOutputFoldersFailed": "文件已保存，但无法打开输出文件夹。",
   "resize.fileTitle": "所选文件尺寸", "resize.usingGlobal": "使用输出设置", "resize.fileOverride": "单独设置", "resize.enableOverride": "单独设置此文件尺寸", "resize.width": "宽度", "resize.height": "高度", "resize.ratioLocked": "锁定比例", "resize.useGlobal": "改用输出设置", "resize.noUpscale": "不放大此文件", "resize.help": "仅此文件优先于“输出”中的尺寸设置，另一边会按原始比例自动计算。", "resize.outputEstimate": "输出尺寸",
   "editor.source.manualLabel": "手动涂抹",
   "library.reorderHint": "拖动文件可调整顺序，也可使用 Alt 和方向键移动。顺序会影响处理和文件编号。", "library.dragHandle": "拖动调整顺序", "library.draggingMany": "正在移动 {count} 个文件", "library.reorderMoved": "已将 {count} 个文件移到第 {position} 位。", "library.moveUp": "上移", "library.moveDown": "下移", "library.moveTop": "移到顶部", "library.moveBottom": "移到底部",

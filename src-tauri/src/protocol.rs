@@ -268,6 +268,7 @@ pub struct BatchResult {
     pub cancelled: usize,
     pub worker_restarts: usize,
     pub output_bytes: u64,
+    pub output_directories: Vec<String>,
     pub items: Vec<ProcessedItemResult>,
 }
 

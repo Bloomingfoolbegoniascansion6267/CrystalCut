@@ -853,32 +853,91 @@ fn reveal_in_file_manager(path: String) -> Result<(), String> {
         return Err("파일 또는 폴더를 찾을 수 없습니다.".to_owned());
     }
 
+    let directory = if target.is_dir() {
+        target.clone()
+    } else {
+        target
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .ok_or_else(|| "The file does not have a parent folder.".to_owned())?
+            .to_path_buf()
+    };
+
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
 
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        Command::new("explorer.exe")
-            .arg(format!("/select,{}", target.display()))
+        let mut explorer = Command::new("explorer.exe");
+        if target.is_dir() {
+            explorer.arg(&directory);
+        } else {
+            explorer.arg("/select,").arg(&target);
+        }
+        explorer
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|error| format!("파일 탐색기를 열지 못했습니다: {error}"))?;
     }
 
     #[cfg(target_os = "macos")]
-    Command::new("open")
-        .arg("-R")
-        .arg(&target)
-        .spawn()
-        .map_err(|error| format!("Finder를 열지 못했습니다: {error}"))?;
+    {
+        let mut finder = Command::new("open");
+        if target.is_dir() {
+            finder.arg(&directory);
+        } else {
+            finder.arg("-R").arg(&target);
+        }
+        finder
+            .spawn()
+            .map_err(|error| format!("Finder를 열지 못했습니다: {error}"))?;
+    }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     Command::new("xdg-open")
-        .arg(target.parent().unwrap_or(&target))
+        .arg(&directory)
         .spawn()
         .map_err(|error| format!("파일 관리자를 열지 못했습니다: {error}"))?;
 
     Ok(())
+}
+
+#[tauri::command]
+fn open_directories(paths: Vec<String>) -> Result<(), String> {
+    let mut opened = HashSet::new();
+    for path in paths {
+        let directory = PathBuf::from(path);
+        if !directory.is_dir() {
+            return Err(format!(
+                "The output folder is not available: {}",
+                directory.display()
+            ));
+        }
+        if opened.insert(directory.clone()) {
+            reveal_in_file_manager(directory.to_string_lossy().into_owned())?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_output_directories(results: &[ProcessedItemResult]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut directories = Vec::new();
+    for result in results.iter().filter(|result| result.success) {
+        let Some(parent) = result
+            .output_path
+            .as_deref()
+            .and_then(|path| Path::new(path).parent())
+            .filter(|parent| !parent.as_os_str().is_empty())
+        else {
+            continue;
+        };
+        let directory = parent.to_path_buf();
+        if seen.insert(directory.clone()) {
+            directories.push(directory.to_string_lossy().into_owned());
+        }
+    }
+    directories
 }
 
 fn process_batch_blocking(
@@ -1107,6 +1166,7 @@ fn process_batch_blocking(
         ));
     }
 
+    let output_directories = collect_output_directories(&results);
     Ok(BatchResult {
         completed: results.iter().filter(|item| item.success).count(),
         failed: results
@@ -1116,6 +1176,7 @@ fn process_batch_blocking(
         cancelled: results.iter().filter(|item| item.cancelled).count(),
         worker_restarts,
         output_bytes: results.iter().filter_map(|item| item.output_bytes).sum(),
+        output_directories,
         items: results,
     })
 }
@@ -1393,7 +1454,8 @@ pub fn run() {
             save_app_preferences,
             reset_app_preferences,
             export_originals,
-            reveal_in_file_manager
+            reveal_in_file_manager,
+            open_directories
         ])
         .run(tauri::generate_context!())
         .expect("error while running CrystalCut");
@@ -1409,6 +1471,37 @@ mod tests {
             output_location: OutputLocation::SameFolder,
             ..OutputSettings::default()
         }
+    }
+
+    #[test]
+    fn batch_result_lists_each_successful_output_folder_once() {
+        let root = std::env::temp_dir().join("crystalcut-output-folders");
+        let first_directory = root.join("first");
+        let second_directory = root.join("second");
+        let make_result = |asset_id: &str, path: PathBuf, success: bool| ProcessedItemResult {
+            asset_id: asset_id.to_owned(),
+            success,
+            cancelled: false,
+            attempts: 1,
+            output_path: Some(path.to_string_lossy().into_owned()),
+            output_bytes: Some(10),
+            duration_ms: 1,
+            error: None,
+        };
+        let results = vec![
+            make_result("one", first_directory.join("one.png"), true),
+            make_result("two", first_directory.join("two.png"), true),
+            make_result("three", second_directory.join("three.png"), true),
+            make_result("failed", root.join("ignored.png"), false),
+        ];
+
+        assert_eq!(
+            collect_output_directories(&results),
+            vec![
+                first_directory.to_string_lossy().into_owned(),
+                second_directory.to_string_lossy().into_owned(),
+            ]
+        );
     }
 
     #[test]

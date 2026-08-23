@@ -61,7 +61,7 @@ export default function SelectionManager({
           <article className="selection-manager-row" key={asset.id} role="listitem">
             <span className="selection-manager-thumb">
               {asset.thumbnailUrl || asset.previewUrl
-                ? <img src={asset.thumbnailUrl ?? asset.previewUrl} alt="" />
+                ? <img src={asset.thumbnailUrl ?? asset.previewUrl} alt="" style={{ transform: `rotate(${asset.rotation}deg)` }} />
                 : <span aria-hidden="true">◇</span>}
             </span>
             <span className="selection-manager-copy">
