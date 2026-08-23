@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const jaSupplement: MessageCatalog = {
+  "metadata.filePolicy": "このファイルの出力設定", "metadata.usingGlobal": "出力設定に従う", "metadata.fileOverride": "ファイル別設定", "metadata.useGlobal": "全体設定を使用", "metadata.filePolicyHelp": "項目を変更すると、このファイルだけに個別の出力設定が適用されます。",
   "inspector.currentScope": "このタブの変更は選択中のファイルだけに適用されます。", "inspector.outputScope": "このタブの設定は作業リスト内のすべてのファイルに適用されます。", "edge.selectedTitle": "選択ファイルのエッジ検出",
   "metadata.editsNotExported": "編集内容は作業に保存されますが、現在の出力にはメタデータが含まれません。", "metadata.editsExported": "編集した値は現在の出力ポリシーに従って新しいファイルに含まれます。", "metadata.reviewPolicy": "出力ポリシーを確認",
   "settings.privacy.originalSafe": "元画像は変更しません", "settings.privacy.originalSafeHelp": "選択した項目だけを出力用に再構成し、元ファイルは一切変更しません。",

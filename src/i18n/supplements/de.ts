@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const deSupplement: MessageCatalog = {
+  "metadata.filePolicy": "Ausgabe für diese Datei", "metadata.usingGlobal": "Nutzt Ausgabeeinstellungen", "metadata.fileOverride": "Dateieinstellung", "metadata.useGlobal": "Globale Einstellungen nutzen", "metadata.filePolicyHelp": "Ändern Sie eine Option, um für diese Datei eine eigene Ausgaberichtlinie zu verwenden.",
   "inspector.currentScope": "Änderungen hier gelten nur für die ausgewählte Datei.", "inspector.outputScope": "Diese Einstellungen gelten für alle Dateien in der Arbeitsliste.", "edge.selectedTitle": "Kantenerkennung der ausgewählten Datei",
   "metadata.editsNotExported": "Änderungen bleiben im Auftrag, Metadaten werden derzeit aber nicht ausgegeben.", "metadata.editsExported": "Bearbeitete Werte werden gemäß der aktuellen Ausgaberichtlinie übernommen.", "metadata.reviewPolicy": "Ausgaberichtlinie prüfen",
   "settings.privacy.originalSafe": "Originale bleiben unverändert", "settings.privacy.originalSafeHelp": "Nur ausgewählte Felder werden neu geschrieben; die Quelldatei wird nie verändert.",

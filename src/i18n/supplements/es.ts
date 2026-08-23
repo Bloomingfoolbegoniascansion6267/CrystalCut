@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const esSupplement: MessageCatalog = {
+  "metadata.filePolicy": "Salida de este archivo", "metadata.usingGlobal": "Usa ajustes de salida", "metadata.fileOverride": "Ajuste del archivo", "metadata.useGlobal": "Usar ajustes globales", "metadata.filePolicyHelp": "Cambia una opción para aplicar una política de salida propia a este archivo.",
   "inspector.currentScope": "Los cambios de esta pestaña solo afectan al archivo seleccionado.", "inspector.outputScope": "Estos ajustes se aplican a todos los archivos de la lista.", "edge.selectedTitle": "Detección de bordes del archivo seleccionado",
   "metadata.editsNotExported": "Los cambios se guardan en el trabajo, pero los metadatos no se incluyen en la salida.", "metadata.editsExported": "Los valores editados se incluirán según la política de salida actual.", "metadata.reviewPolicy": "Revisar política de salida",
   "settings.privacy.originalSafe": "Los originales no cambian", "settings.privacy.originalSafeHelp": "Solo se reconstruyen los campos elegidos; el archivo de origen nunca se modifica.",

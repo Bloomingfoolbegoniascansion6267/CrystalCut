@@ -2,7 +2,7 @@ import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, ModelStatus, OriginalExportResult, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
+import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, MetadataOutputPolicy, ModelStatus, OriginalExportResult, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 import SettingsModal, { type SettingsTab } from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
@@ -670,6 +670,43 @@ function App() {
     } : asset));
   }, [selectedId]);
 
+  const updateSelectedMetadataPolicy = useCallback((patch: Partial<MetadataOutputPolicy>) => {
+    if (!selectedId) return;
+    setAssets((current) => current.map((asset) => {
+      if (asset.id !== selectedId) return asset;
+      const base = asset.metadataPolicy ?? {
+        preserveMetadata: settings.preserveMetadata,
+        preserveGps: settings.preserveGps,
+        preservePrompt: settings.preservePrompt,
+      };
+      const metadataPolicy = { ...base, ...patch };
+      if (!metadataPolicy.preserveMetadata) {
+        metadataPolicy.preserveGps = false;
+        metadataPolicy.preservePrompt = false;
+      }
+      return {
+        ...asset,
+        metadataPolicy,
+        status: "ready",
+        outputPath: undefined,
+        outputBytes: undefined,
+        error: undefined,
+      };
+    }));
+  }, [selectedId, settings.preserveGps, settings.preserveMetadata, settings.preservePrompt]);
+
+  const resetSelectedMetadataPolicy = useCallback(() => {
+    if (!selectedId) return;
+    setAssets((current) => current.map((asset) => asset.id === selectedId ? {
+      ...asset,
+      metadataPolicy: null,
+      status: "ready",
+      outputPath: undefined,
+      outputBytes: undefined,
+      error: undefined,
+    } : asset));
+  }, [selectedId]);
+
   useEffect(() => {
     setIsMaskEditing(false);
     setMaskDraft(null);
@@ -1016,6 +1053,20 @@ function App() {
       : settings.preserveGps
         ? t("metadata.withGps")
         : settings.preservePrompt
+          ? t("metadata.withPrompt")
+          : t("metadata.safe");
+  const selectedMetadataPolicy: MetadataOutputPolicy = selected?.metadataPolicy ?? {
+    preserveMetadata: settings.preserveMetadata,
+    preserveGps: settings.preserveGps,
+    preservePrompt: settings.preservePrompt,
+  };
+  const selectedMetadataSummary = !selectedMetadataPolicy.preserveMetadata
+    ? t("metadata.none")
+    : selectedMetadataPolicy.preserveGps && selectedMetadataPolicy.preservePrompt
+      ? t("metadata.gpsAndPrompt")
+      : selectedMetadataPolicy.preserveGps
+        ? t("metadata.withGps")
+        : selectedMetadataPolicy.preservePrompt
           ? t("metadata.withPrompt")
           : t("metadata.safe");
 
@@ -1612,15 +1663,22 @@ function App() {
             </div>
           )}
 
-          {selected && <InspectorAccordion title={t("metadata.fileValues")} summary={metadataSummary}>
+          {selected && <InspectorAccordion title={t("metadata.fileValues")} summary={selectedMetadataSummary}>
             <section className="setting-section metadata-section current-metadata-section">
-              <div className={`metadata-output-bridge ${settings.preserveMetadata ? "active" : "inactive"}`}>
+              <div className={`metadata-output-bridge ${selectedMetadataPolicy.preserveMetadata ? "active" : "inactive"}`}>
                 <div className="label-row">
-                  <label className="check-row"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setMetadataPreservation(event.target.checked)} /><span><Icon name="check" size={13} /></span>{t("output.keepMetadata")}</label>
-                  <span className="scope-badge">{t("common.allFiles")}</span>
+                  <strong className="metadata-policy-title">{t("metadata.filePolicy")}</strong>
+                  <span className={`scope-badge ${selected.metadataPolicy ? "" : "neutral"}`}>{t(selected.metadataPolicy ? "metadata.fileOverride" : "metadata.usingGlobal")}</span>
                 </div>
-                <p>{t(settings.preserveMetadata ? "metadata.editsExported" : "metadata.editsNotExported")}</p>
-                <button type="button" onClick={() => switchInspectorMode("output")}>{t("metadata.reviewPolicy")}</button>
+                <p>{t("metadata.filePolicyHelp")}</p>
+                <label className="check-row metadata-file-master"><input type="checkbox" checked={selectedMetadataPolicy.preserveMetadata} onChange={(event) => updateSelectedMetadataPolicy({ preserveMetadata: event.target.checked })} /><span><Icon name="check" size={13} /></span>{t("output.keepMetadata")}</label>
+                <div className={`metadata-policy-options ${selectedMetadataPolicy.preserveMetadata ? "" : "is-disabled"}`}>
+                  <label className={`check-row ${selectedMetadataPolicy.preserveMetadata ? "" : "disabled"}`}><input type="checkbox" checked={selectedMetadataPolicy.preserveGps} onChange={(event) => updateSelectedMetadataPolicy({ preserveGps: event.target.checked })} disabled={!selectedMetadataPolicy.preserveMetadata} /><span><Icon name="check" size={13} /></span>{t("metadata.keepGps")}</label>
+                  <p className="setting-help flush warning-text">{t("metadata.gpsWarning")}</p>
+                  <label className={`check-row ${selectedMetadataPolicy.preserveMetadata ? "" : "disabled"}`}><input type="checkbox" checked={selectedMetadataPolicy.preservePrompt} onChange={(event) => updateSelectedMetadataPolicy({ preservePrompt: event.target.checked })} disabled={!selectedMetadataPolicy.preserveMetadata} /><span><Icon name="check" size={13} /></span>{t("metadata.keepPrompt")}</label>
+                </div>
+                <p className="metadata-export-state">{t(selectedMetadataPolicy.preserveMetadata ? "metadata.editsExported" : "metadata.editsNotExported")}</p>
+                <div className="metadata-policy-actions"><button type="button" onClick={resetSelectedMetadataPolicy} disabled={!selected.metadataPolicy}>{t("metadata.useGlobal")}</button><button type="button" onClick={() => switchInspectorMode("output")}>{t("metadata.reviewPolicy")}</button></div>
               </div>
               <div className="metadata-editor">
                 <label><span>{t("metadata.takenAt")}</span><input type="text" value={selected.exif.takenAt ?? ""} placeholder="YYYY-MM-DD HH:MM:SS" onChange={(event) => updateSelectedMetadata({ takenAt: event.target.value || null })} /></label>

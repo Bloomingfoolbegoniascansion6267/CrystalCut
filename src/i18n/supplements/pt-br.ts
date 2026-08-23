@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const ptBRSupplement: MessageCatalog = {
+  "metadata.filePolicy": "Saída deste arquivo", "metadata.usingGlobal": "Usa as configurações de saída", "metadata.fileOverride": "Ajuste do arquivo", "metadata.useGlobal": "Usar configurações globais", "metadata.filePolicyHelp": "Altere uma opção para aplicar uma política de saída exclusiva a este arquivo.",
   "inspector.currentScope": "As alterações desta aba afetam apenas o arquivo selecionado.", "inspector.outputScope": "Estas configurações se aplicam a todos os arquivos da lista.", "edge.selectedTitle": "Detecção de bordas do arquivo selecionado",
   "metadata.editsNotExported": "As edições ficam no trabalho, mas os metadados não são incluídos na saída atual.", "metadata.editsExported": "Os valores editados serão incluídos conforme a política de saída atual.", "metadata.reviewPolicy": "Revisar política de saída",
   "settings.privacy.originalSafe": "Os originais não são alterados", "settings.privacy.originalSafeHelp": "Somente os campos escolhidos são recriados; o arquivo de origem nunca é modificado.",

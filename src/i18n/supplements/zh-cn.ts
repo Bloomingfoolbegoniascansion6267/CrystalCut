@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const zhCNSupplement: MessageCatalog = {
+  "metadata.filePolicy": "此文件的输出策略", "metadata.usingGlobal": "跟随输出设置", "metadata.fileOverride": "文件单独设置", "metadata.useGlobal": "使用全局设置", "metadata.filePolicyHelp": "更改选项后，将仅为此文件使用独立的输出策略。",
   "inspector.currentScope": "此标签页的更改仅应用于当前所选文件。", "inspector.outputScope": "此标签页的设置应用于任务列表中的所有文件。", "edge.selectedTitle": "所选文件边缘检测",
   "metadata.editsNotExported": "修改会保留在当前任务中，但输出文件目前不包含元数据。", "metadata.editsExported": "修改后的值将按当前输出策略写入新文件。", "metadata.reviewPolicy": "查看输出策略",
   "settings.privacy.originalSafe": "原图保持不变", "settings.privacy.originalSafeHelp": "仅重新构建所选输出字段，绝不会修改源文件。",

@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const frSupplement: MessageCatalog = {
+  "metadata.filePolicy": "Sortie de ce fichier", "metadata.usingGlobal": "Suit les réglages de sortie", "metadata.fileOverride": "Réglage du fichier", "metadata.useGlobal": "Utiliser les réglages globaux", "metadata.filePolicyHelp": "Modifiez une option pour appliquer une politique de sortie propre à ce fichier.",
   "inspector.currentScope": "Les modifications de cet onglet ne concernent que le fichier sélectionné.", "inspector.outputScope": "Ces réglages s’appliquent à tous les fichiers de la liste.", "edge.selectedTitle": "Détection des contours du fichier sélectionné",
   "metadata.editsNotExported": "Les modifications restent dans le projet, mais les métadonnées sont exclues de la sortie.", "metadata.editsExported": "Les valeurs modifiées seront incluses selon la politique de sortie actuelle.", "metadata.reviewPolicy": "Vérifier la politique de sortie",
   "settings.privacy.originalSafe": "Les originaux restent intacts", "settings.privacy.originalSafeHelp": "Seuls les champs choisis sont recréés ; le fichier source n’est jamais modifié.",
