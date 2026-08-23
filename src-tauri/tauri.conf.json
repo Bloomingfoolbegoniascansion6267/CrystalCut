@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "CrystalCut",
-        "width": 1320,
-        "height": 820,
+        "width": 1440,
+        "height": 900,
         "minWidth": 900,
         "minHeight": 640,
         "resizable": true,

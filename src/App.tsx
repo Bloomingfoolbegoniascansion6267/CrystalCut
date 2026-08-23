@@ -194,11 +194,13 @@ function App() {
     && !previewRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length > 0));
   const hasResultView = previewRecipeReady && Boolean(selected?.resultPreviewUrl || selected?.editBasePreviewUrl);
   const hasMaskView = previewRecipeReady && Boolean(selected?.maskPreviewUrl);
-  const effectiveViewMode: PreviewViewMode = viewMode === "mask" && !hasMaskView
-    ? hasResultView ? "result" : "original"
-    : (viewMode === "result" || viewMode === "compare") && !hasResultView
-      ? "original"
-      : viewMode;
+  const effectiveViewMode: PreviewViewMode = settings.processingMode === "convert"
+    ? "original"
+    : viewMode === "mask" && !hasMaskView
+      ? hasResultView ? "result" : "original"
+      : (viewMode === "result" || viewMode === "compare") && !hasResultView
+        ? "original"
+        : viewMode;
   const previewAsset = selected && previewRecipe ? { ...selected, maskRecipe: previewRecipe } : selected;
   const switchInspectorMode = useCallback((nextMode: InspectorMode) => {
     if (nextMode === inspectorMode) return;
@@ -220,6 +222,13 @@ function App() {
       switchInspectorMode("current");
     }
   }, [isMultiSelection, selected?.id, switchInspectorMode]);
+  useEffect(() => {
+    if (settings.processingMode !== "convert") return;
+    setIsMaskEditing(false);
+    setMaskDraft(null);
+    setViewMode("original");
+    switchInspectorMode("output");
+  }, [settings.processingMode]);
   const previewRenderKey = useMemo(() => JSON.stringify({
     processingMode: settings.processingMode,
     resizeMode: settings.resizeMode,
@@ -1069,6 +1078,13 @@ function App() {
         : selectedMetadataPolicy.preservePrompt
           ? t("metadata.withPrompt")
           : t("metadata.safe");
+  const selectedEstimatedOutputBytes = selected?.outputBytes
+    ?? (selected && exportPlan?.estimatedOutputBytes != null && totalBytes > 0
+      ? Math.max(1, Math.round(selected.sizeBytes * exportPlan.estimatedOutputBytes / totalBytes))
+      : null);
+  const selectedSizeChangePercent = selected && selectedEstimatedOutputBytes != null && selected.sizeBytes > 0
+    ? Math.round((selectedEstimatedOutputBytes / selected.sizeBytes - 1) * 100)
+    : null;
 
   const setFormat = (format: OutputFormat) => setSettings((current) => ({ ...current, format }));
   const setMetadataPreservation = (preserveMetadata: boolean) => setSettings((current) => ({
@@ -1121,6 +1137,7 @@ function App() {
       setIsMaskEditing(false);
       setMaskDraft(null);
       setViewMode("original");
+      switchInspectorMode("output");
     }
   };
 
@@ -1347,6 +1364,10 @@ function App() {
           <span className="brand-mark"><img src={appIconUrl} alt="" /></span>
           <span>CrystalCut</span>
         </div>
+        <div className="top-processing-mode" role="group" aria-label={t("output.processingMode")}>
+          <button type="button" className={`tooltip-host ${settings.processingMode === "removeBackground" ? "active" : ""}`} aria-pressed={settings.processingMode === "removeBackground"} onClick={() => setProcessingMode("removeBackground")}><span>{t("output.removeBackground")}</span><Tooltip side="bottom" align="start">{t("output.removeHelp")}</Tooltip></button>
+          <button type="button" className={`tooltip-host ${settings.processingMode === "convert" ? "active" : ""}`} aria-pressed={settings.processingMode === "convert"} onClick={() => setProcessingMode("convert")}><span>{t("output.convertOnly")}</span><Tooltip side="bottom" align="end">{t("output.convertHelp")}</Tooltip></button>
+        </div>
         <div className="topbar-actions">
           <button className={`model-pill ${modelStatus?.installed ? "ready" : ""}`} title={t("model.openSettings")} onClick={() => openSettings("model")}>
             <span />{t("model.autoRemove")} {t(modelStatus?.installed ? "status.ready" : "model.installWhenNeeded")}
@@ -1392,9 +1413,11 @@ function App() {
             {isMultiSelection ? <div className="multi-selection-toolbar"><strong>{t("management.selected", { count: selectedAssets.length })}</strong><span>{t("management.toolbarHelp")}</span></div> : <>
             <div className="view-tabs" role="tablist" aria-label={t("preview.mode")}>
               <button className={effectiveViewMode === "original" ? "active" : ""} onClick={() => setViewMode("original")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "original"}>{t("common.original")}</button>
+              {settings.processingMode === "removeBackground" && <>
               <button className={effectiveViewMode === "result" ? "active" : ""} onClick={() => hasResultView ? setViewMode("result") : setNotice(t("notice.previewNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "result"} aria-disabled={!hasResultView}>{t("common.preview")}</button>
               <button className={effectiveViewMode === "mask" ? "active" : ""} onClick={() => hasMaskView ? setViewMode("mask") : setNotice(t("notice.maskNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "mask"} aria-disabled={!hasMaskView}>{t("common.mask")}</button>
               <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => hasResultView ? setViewMode("compare") : setNotice(t("notice.compareNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "compare"} aria-disabled={!hasResultView}>{t("common.compare")}</button>
+              </>}
             </div>
             <div className="canvas-actions">
               <div className="preview-backgrounds" aria-label={t("preview.background")}>
@@ -1402,9 +1425,7 @@ function App() {
                 <button className={`background-swatch light ${previewBackground === "light" ? "active" : ""}`} onClick={() => setPreviewBackground("light")} title={t("preview.background.light")} aria-label={t("preview.background.light")} />
                 <button className={`background-swatch dark ${previewBackground === "dark" ? "active" : ""}`} onClick={() => setPreviewBackground("dark")} title={t("preview.background.dark")} aria-label={t("preview.background.dark")} />
               </div>
-              <span className="divider" />
-              <button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={16} />{t(isMaskEditing ? "preview.editing" : "selection.editObject")}</button>
-              <span className="divider" />
+              {settings.processingMode === "removeBackground" && <><span className="divider" /><button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={16} />{t(isMaskEditing ? "preview.editing" : "selection.editObject")}</button><span className="divider" /></>}
               <button className="icon-button" aria-label={t("preview.rotateLeft")} title={t("preview.rotateLeft")} onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
               <button className="icon-button" aria-label={t("preview.rotateRight")} title={t("preview.rotateRight")} onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /></button>
               <span className="divider" />
@@ -1450,9 +1471,10 @@ function App() {
               <span>{formatDimensions(selected.width, selected.height, formatLocale, t("format.unknownDimensions"))}</span>
               <span>{selected.extension.toUpperCase()}</span>
               {selected.rotation !== 0 && <span>{t("preview.rotation", { degrees: selected.rotation })}</span>}
-              {selected.exif.takenAt && <span title={t("preview.exifDate")}>{selected.exif.takenAt}</span>}
-              {selected.exif.camera && <span title={selected.exif.lens ?? t("preview.exifCamera")}>{selected.exif.camera}</span>}
+              {selected.exif.takenAt && <span className="file-exif" title={t("preview.exifDate")}>{selected.exif.takenAt}</span>}
+              {selected.exif.camera && <span className="file-exif" title={selected.exif.lens ?? t("preview.exifCamera")}>{selected.exif.camera}</span>}
               <span className={`file-status ${selected.status}`}>{t(`status.${selected.status}`)}</span>
+              <span className="file-size-change" title={selected.outputBytes != null ? t("output.actualSize") : t("output.estimatedSize")}><span>{formatBytes(selected.sizeBytes, formatLocale)}</span><b aria-hidden="true">→</b><span>{selectedEstimatedOutputBytes != null ? `${selected.outputBytes == null ? "≈" : ""}${formatBytes(selectedEstimatedOutputBytes, formatLocale)}` : isEstimating ? t("output.calculating") : "—"}</span>{selectedSizeChangePercent != null && <em className={selectedSizeChangePercent <= 0 ? "decrease" : "increase"}>{selectedSizeChangePercent > 0 ? "+" : ""}{selectedSizeChangePercent}%</em>}</span>
             </div>
           )}
         </section>
@@ -1680,15 +1702,15 @@ function App() {
                 <p className="metadata-export-state">{t(selectedMetadataPolicy.preserveMetadata ? "metadata.editsExported" : "metadata.editsNotExported")}</p>
                 <div className="metadata-policy-actions"><button type="button" onClick={resetSelectedMetadataPolicy} disabled={!selected.metadataPolicy}>{t("metadata.useGlobal")}</button><button type="button" onClick={() => switchInspectorMode("output")}>{t("metadata.reviewPolicy")}</button></div>
               </div>
-              <div className="metadata-editor">
-                <label><span>{t("metadata.takenAt")}</span><input type="text" value={selected.exif.takenAt ?? ""} placeholder="YYYY-MM-DD HH:MM:SS" onChange={(event) => updateSelectedMetadata({ takenAt: event.target.value || null })} /></label>
-                <label><span>{t("metadata.camera")}</span><input type="text" value={selected.exif.camera ?? ""} onChange={(event) => updateSelectedMetadata({ camera: event.target.value || null })} /></label>
-                <label><span>{t("metadata.lens")}</span><input type="text" value={selected.exif.lens ?? ""} onChange={(event) => updateSelectedMetadata({ lens: event.target.value || null })} /></label>
-                <label><span>{t("metadata.description")}</span><textarea rows={2} value={selected.exif.description ?? ""} onChange={(event) => updateSelectedMetadata({ description: event.target.value || null })} /></label>
-                <label><span>{t("metadata.prompt")}</span><textarea rows={4} value={selected.exif.prompt ?? ""} placeholder={t("metadata.promptEmpty")} onChange={(event) => updateSelectedMetadata({ prompt: event.target.value || null })} /></label>
+              <div className={`metadata-editor ${selectedMetadataPolicy.preserveMetadata ? "" : "is-disabled"}`} aria-disabled={!selectedMetadataPolicy.preserveMetadata}>
+                <label><span>{t("metadata.takenAt")}</span><input type="text" value={selected.exif.takenAt ?? ""} placeholder="YYYY-MM-DD HH:MM:SS" onChange={(event) => updateSelectedMetadata({ takenAt: event.target.value || null })} disabled={!selectedMetadataPolicy.preserveMetadata} /></label>
+                <label><span>{t("metadata.camera")}</span><input type="text" value={selected.exif.camera ?? ""} onChange={(event) => updateSelectedMetadata({ camera: event.target.value || null })} disabled={!selectedMetadataPolicy.preserveMetadata} /></label>
+                <label><span>{t("metadata.lens")}</span><input type="text" value={selected.exif.lens ?? ""} onChange={(event) => updateSelectedMetadata({ lens: event.target.value || null })} disabled={!selectedMetadataPolicy.preserveMetadata} /></label>
+                <label><span>{t("metadata.description")}</span><textarea rows={2} value={selected.exif.description ?? ""} onChange={(event) => updateSelectedMetadata({ description: event.target.value || null })} disabled={!selectedMetadataPolicy.preserveMetadata} /></label>
+                <label><span>{t("metadata.prompt")}</span><textarea rows={4} value={selected.exif.prompt ?? ""} placeholder={t("metadata.promptEmpty")} onChange={(event) => updateSelectedMetadata({ prompt: event.target.value || null })} disabled={!selectedMetadataPolicy.preserveMetadata} /></label>
                 <div className="metadata-coordinate-grid">
-                  <label><span>{t("metadata.latitude")}</span><input type="number" min="-90" max="90" step="any" value={selected.exif.gpsLatitude ?? ""} onChange={(event) => updateSelectedMetadata({ gpsLatitude: event.target.value === "" ? null : Number(event.target.value) })} /></label>
-                  <label><span>{t("metadata.longitude")}</span><input type="number" min="-180" max="180" step="any" value={selected.exif.gpsLongitude ?? ""} onChange={(event) => updateSelectedMetadata({ gpsLongitude: event.target.value === "" ? null : Number(event.target.value) })} /></label>
+                  <label><span>{t("metadata.latitude")}</span><input type="number" min="-90" max="90" step="any" value={selected.exif.gpsLatitude ?? ""} onChange={(event) => updateSelectedMetadata({ gpsLatitude: event.target.value === "" ? null : Number(event.target.value) })} disabled={!selectedMetadataPolicy.preserveMetadata} /></label>
+                  <label><span>{t("metadata.longitude")}</span><input type="number" min="-180" max="180" step="any" value={selected.exif.gpsLongitude ?? ""} onChange={(event) => updateSelectedMetadata({ gpsLongitude: event.target.value === "" ? null : Number(event.target.value) })} disabled={!selectedMetadataPolicy.preserveMetadata} /></label>
                 </div>
                 <p className="setting-help flush">{t("metadata.editHelp")}</p>
               </div>
