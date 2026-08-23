@@ -248,7 +248,7 @@ impl SamEngine {
         let open = |path: &Path| {
             Session::builder()
                 .map_err(|error| format!("SAM ONNX session builder를 만들지 못했습니다: {error}"))?
-                .with_optimization_level(GraphOptimizationLevel::All)
+                .with_optimization_level(GraphOptimizationLevel::Level3)
                 .map_err(|error| format!("SAM ONNX 최적화 설정에 실패했습니다: {error}"))?
                 .with_intra_threads(threads)
                 .map_err(|error| format!("SAM ONNX thread 설정에 실패했습니다: {error}"))?

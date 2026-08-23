@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-7057e8" />
+  <img alt="Version 1.0.1" src="https://img.shields.io/badge/version-1.0.1-7057e8" />
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/engine-Rust-000000?logo=rust&logoColor=white" />
   <img alt="Local processing" src="https://img.shields.io/badge/processing-local--first-2f855a" />
@@ -178,11 +178,13 @@ Then validate and push the matching tag:
 
 ```powershell
 npm run check:release
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
-The workflow rejects a tag that does not match the application version. Release assets are also retained as GitHub Actions artifacts. The workflow uses the official Tauri release action pinned to an explicit version; add Windows and Apple signing secrets later without committing certificates or passwords.
+The workflow rejects a tag that does not match the application version and uploads installers as GitHub Release assets. The workflow uses the official Tauri release action pinned to an explicit version; add Windows and Apple signing secrets later without committing certificates or passwords.
+
+> Intel macOS compatibility: CrystalCut pins `ort` to `2.0.0-rc.10`, the newest release that still provides an `x86_64-apple-darwin` ONNX Runtime binary. Do not upgrade it independently while Intel macOS remains in the release matrix.
 
 ## Project layout
 

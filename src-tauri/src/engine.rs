@@ -52,7 +52,7 @@ impl InferenceEngine {
             .unwrap_or(2);
         let session = Session::builder()
             .map_err(|error| format!("ONNX session builder를 만들지 못했습니다: {error}"))?
-            .with_optimization_level(GraphOptimizationLevel::All)
+            .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|error| format!("ONNX 최적화 설정에 실패했습니다: {error}"))?
             .with_intra_threads(threads)
             .map_err(|error| format!("ONNX thread 설정에 실패했습니다: {error}"))?

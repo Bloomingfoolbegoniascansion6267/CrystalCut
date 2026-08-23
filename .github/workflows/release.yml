@@ -24,7 +24,8 @@ jobs:
             target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin --bundles dmg
           - label: macOS Intel
-            platform: macos-latest
+            # macos-latest is Apple Silicon. Build the Intel package natively.
+            platform: macos-15-intel
             target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin --bundles dmg
 
@@ -69,9 +70,7 @@ jobs:
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
-          uploadUpdaterJson: false
-          uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: CrystalCut-[version]-[platform]-[arch]-[bundle]
-          releaseAssetNamePattern: CrystalCut_[version]_[platform]_[arch][setup][ext]
+          includeUpdaterJson: false
+          assetNamePattern: CrystalCut_[version]_[platform]_[arch][setup][ext]
           retryAttempts: 2
           args: ${{ matrix.args }}
