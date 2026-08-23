@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const zhCNSupplement: MessageCatalog = {
+  "selection.editObject": "编辑对象",
   "management.exportOriginals": "导出原图", "management.exportResults": "导出结果", "management.exportingOriginals": "正在复制原图…", "management.desktopOnly": "文件导出仅在桌面应用中可用。", "management.chooseOriginalFolder": "选择原图导出文件夹", "management.originalsExported": "已导出 {count} 张原图 · {size}", "management.exportFailed": "{count} 个失败", "error.originals.export": "无法导出所选原图。",
   "management.eyebrow": "文件管理", "management.selected": "已选择 {count} 个文件", "management.help": "检查所选文件，或打开单个文件返回图片编辑。", "management.clear": "取消多选", "management.files": "文件", "management.pending": "待处理", "management.remove": "移除所选项", "management.removeConfirm": "从列表中移除所选的 {count} 个文件？原图和结果文件会保留。", "management.resultReady": "结果已就绪", "management.resultNeeded": "需要处理", "management.open": "打开", "management.toolbarHelp": "只选择一个文件即可返回图片预览。",
   "notice.filesLoaded": "已加载 {count} 张图片。", "notice.loadFilesFailed": "无法添加文件：{detail}",

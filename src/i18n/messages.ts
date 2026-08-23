@@ -1,6 +1,7 @@
 export type MessageCatalog = Record<string, string>;
 
 export const en: MessageCatalog = {
+  "selection.editObject": "Edit object",
   "management.exportOriginals": "Export originals", "management.exportResults": "Export results", "management.exportingOriginals": "Copying originals…", "management.desktopOnly": "File export is available in the desktop app.", "management.chooseOriginalFolder": "Choose a folder for original files", "management.originalsExported": "Exported {count} originals · {size}", "management.exportFailed": "{count} failed", "error.originals.export": "Could not export the selected originals.",
   "management.eyebrow": "File management", "management.selected": "{count} files selected", "management.help": "Review the selection or open one file to return to image editing.", "management.clear": "Clear multi-selection", "management.files": "Files", "management.pending": "Pending", "management.remove": "Remove selected", "management.removeConfirm": "Remove {count} selected files from the list? Original and result files will stay.", "management.resultReady": "Result ready", "management.resultNeeded": "Processing needed", "management.open": "Open", "management.toolbarHelp": "Original and preview tabs return when one file is selected.",
   "notice.filesLoaded": "Loaded {count, plural, one {# image} other {# images}}.",
@@ -24,6 +25,7 @@ export const en: MessageCatalog = {
 };
 
 export const ko: MessageCatalog = {
+  "selection.editObject": "객체 편집",
   "management.exportOriginals": "원본 내보내기", "management.exportResults": "결과 내보내기", "management.exportingOriginals": "원본 복사 중…", "management.desktopOnly": "파일 내보내기는 데스크톱 앱에서 사용할 수 있습니다.", "management.chooseOriginalFolder": "원본 파일을 내보낼 폴더 선택", "management.originalsExported": "원본 {count}개 내보냄 · {size}", "management.exportFailed": "{count}개 실패", "error.originals.export": "선택한 원본을 내보내지 못했습니다.",
   "management.eyebrow": "파일 관리", "management.selected": "{count}개 파일 선택됨", "management.help": "선택 항목을 확인하거나 파일 하나를 열어 이미지 편집으로 돌아가세요.", "management.clear": "다중 선택 해제", "management.files": "파일", "management.pending": "처리 대기", "management.remove": "선택 항목 제거", "management.removeConfirm": "선택한 {count}개 파일을 작업 목록에서 제거할까요? 원본과 결과 파일은 그대로 유지됩니다.", "management.resultReady": "결과 준비됨", "management.resultNeeded": "처리 필요", "management.open": "열기", "management.toolbarHelp": "파일 하나를 선택하면 원본과 미리보기 화면으로 돌아갑니다.",
   "notice.filesLoaded": "이미지 {count}개를 불러왔습니다.",

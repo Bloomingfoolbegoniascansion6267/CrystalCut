@@ -106,6 +106,18 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
   );
 }
 
+function InspectorAccordion({ title, summary, children }: { title: string; summary: string; children: React.ReactNode }) {
+  return (
+    <details className="inspector-accordion output-control">
+      <summary>
+        <span><strong>{title}</strong><small>{summary}</small></span>
+        <Icon name="chevron" size={15} />
+      </summary>
+      {children}
+    </details>
+  );
+}
+
 function App() {
   const { t, formatLocale, setLanguagePreference } = useI18n();
   const [assets, setAssets] = useState<ImageAsset[]>([]);
@@ -938,6 +950,16 @@ function App() {
     : exportPlan.estimatedSavingsPercent >= 0
       ? t("estimate.decrease", { percent: Math.round(exportPlan.estimatedSavingsPercent) })
       : t("estimate.increase", { percent: Math.round(Math.abs(exportPlan.estimatedSavingsPercent)) });
+  const processingSummary = t(settings.processingMode === "removeBackground" ? "output.removeBackground" : "output.convertOnly");
+  const formatSummary = settings.format === "png"
+    ? `PNG · ${t("output.compression")} ${settings.pngEffort}`
+    : `WebP · ${settings.webpLossless ? t("output.losslessWebp") : `${t("output.quality")} ${settings.webpQuality}`}`;
+  const resizeSummary = settings.resizeMode === "original"
+    ? t("output.resize.original")
+    : `${t(settings.resizeMode === "percent" ? "output.resize.percent" : "output.resize.longEdge")} · ${settings.resizeValue}${settings.resizeMode === "percent" ? "%" : "px"}`;
+  const locationSummary = t(`output.location.${settings.outputLocation}`);
+  const presetSummary = preferences.presets.find((preset) => preset.id === activePresetId)?.name
+    ?? t(preferences.presets.length ? "output.currentCustom" : "output.noPresets");
 
   const setFormat = (format: OutputFormat) => setSettings((current) => ({ ...current, format }));
 
@@ -1255,7 +1277,7 @@ function App() {
                 <button className={`background-swatch dark ${previewBackground === "dark" ? "active" : ""}`} onClick={() => setPreviewBackground("dark")} title={t("preview.background.dark")} aria-label={t("preview.background.dark")} />
               </div>
               <span className="divider" />
-              <button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={16} />{t(isMaskEditing ? "preview.editing" : "preview.edit")}</button>
+              <button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={16} />{t(isMaskEditing ? "preview.editing" : "selection.editObject")}</button>
               <span className="divider" />
               <button className="icon-button" aria-label={t("preview.rotateLeft")} title={t("preview.rotateLeft")} onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
               <button className="icon-button" aria-label={t("preview.rotateRight")} title={t("preview.rotateRight")} onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /></button>
@@ -1316,8 +1338,9 @@ function App() {
             <button className="panel-toggle inspector-toggle" onClick={() => setIsInspectorCollapsed((value) => !value)} aria-expanded={!isInspectorCollapsed} aria-label={t(isInspectorCollapsed ? "output.expand" : "output.collapse")} title={t(isInspectorCollapsed ? "output.expand" : "output.collapse")}><Icon name="chevron" size={15} /></button>
           </div>
 
-          <div className="inspector-group-heading"><span>{t("common.allFiles")}</span><strong>{t("output.outputAndSave")}</strong></div>
+          <div className="inspector-group-heading output-control"><span>{t("common.allFiles")}</span><strong>{t("output.outputAndSave")}</strong></div>
 
+          <InspectorAccordion title={t("output.preset")} summary={presetSummary}>
           <section className="setting-section preset-section">
             <div className="label-row"><label className="setting-label" htmlFor="output-preset">{t("output.preset")}</label><span className="scope-badge">{t("common.allFiles")}</span></div>
             <div className="preset-controls">
@@ -1330,7 +1353,9 @@ function App() {
             {isPresetNaming && <div className="preset-name-row"><input autoFocus type="text" value={presetName} maxLength={40} placeholder={t("output.presetPlaceholder")} onChange={(event) => setPresetName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void saveOutputPreset(); if (event.key === "Escape") setIsPresetNaming(false); }} /><button type="button" onClick={() => void saveOutputPreset()} disabled={!presetName.trim()}>{t("common.save")}</button><button type="button" onClick={() => setIsPresetNaming(false)}>{t("common.cancel")}</button></div>}
             <p className="setting-help">{t("output.presetHelp")}</p>
           </section>
+          </InspectorAccordion>
 
+          <InspectorAccordion title={t("output.processingMode")} summary={processingSummary}>
           <section className="setting-section">
             <label className="setting-label">{t("output.processingMode")}</label>
             <div className="segmented processing-mode">
@@ -1341,7 +1366,9 @@ function App() {
               ? t("output.removeHelp")
               : t("output.convertHelp")}</p>
           </section>
+          </InspectorAccordion>
 
+          <InspectorAccordion title={t("output.format")} summary={formatSummary}>
           <section className="setting-section">
             <div className="setting-title-row"><span className="setting-label">{t("output.format")}</span><button type="button" onClick={resetFormatSettings}>{t("common.default")}</button></div>
             <div className="segmented">
@@ -1368,7 +1395,9 @@ function App() {
             <label className="check-row metadata-check"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setSettings({ ...settings, preserveMetadata: event.target.checked })} /><span><Icon name="check" size={13} /></span>{t("output.keepMetadata")}</label>
             <p className="setting-help flush">{t("output.metadataHelp")}</p>
           </section>
+          </InspectorAccordion>
 
+          <InspectorAccordion title={t("output.resize")} summary={resizeSummary}>
           <section className="setting-section">
             <label className="setting-label" htmlFor="resize-mode">{t("output.resize")}</label>
             <select id="resize-mode" value={settings.resizeMode} onChange={(e) => setResizeMode(e.target.value as OutputSettings["resizeMode"])}>
@@ -1384,7 +1413,9 @@ function App() {
             )}
             <label className="check-row"><input type="checkbox" checked={settings.preventUpscale} onChange={(e) => setSettings({ ...settings, preventUpscale: e.target.checked })} /><span><Icon name="check" size={13} /></span>{t("output.noUpscale")}</label>
           </section>
+          </InspectorAccordion>
 
+          <InspectorAccordion title={t("output.location")} summary={locationSummary}>
           <section className="setting-section">
             <label className="setting-label" htmlFor="save-location">{t("output.location")}</label>
             <select id="save-location" value={settings.outputLocation} onChange={(e) => setSettings({ ...settings, outputLocation: e.target.value as OutputSettings["outputLocation"] })}>
@@ -1398,7 +1429,9 @@ function App() {
               </button>
             )}
           </section>
+          </InspectorAccordion>
 
+          <InspectorAccordion title={t("output.fileName")} summary={previewOutputName}>
           <section className="setting-section naming-section">
             <div className="label-row"><label className="setting-label" htmlFor="name-template">{t("output.fileName")}</label><span className="scope-badge neutral">{t("output.namingRule")}</span></div>
             <div className="name-grid">
@@ -1418,10 +1451,11 @@ function App() {
             <div className="name-preview"><span>{t(isEstimating ? "output.calculating" : "common.preview")}</span><strong>{previewOutputName}</strong></div>
             {exportPlan?.warnings[0] && <p className="setting-warning">{t(`warning.${exportPlan.warnings[0].code}`, { count: exportPlan.warnings[0].count })}</p>}
           </section>
+          </InspectorAccordion>
 
-          {settings.processingMode === "removeBackground" && <div className="inspector-group-heading edit"><span>{t("common.currentFile")}</span><strong>{t("selection.title")}</strong></div>}
+          {settings.processingMode === "removeBackground" && !isMultiSelection && <div className="inspector-group-heading edit current-file-control"><span>{t("common.currentFile")}</span><strong>{t("selection.title")}</strong></div>}
 
-          {settings.processingMode === "removeBackground" && <section className="setting-section mask-summary-section">
+          {settings.processingMode === "removeBackground" && !isMultiSelection && <section className="setting-section mask-summary-section current-file-control">
             <div className="label-row"><span className="setting-label">{t("selection.object")}</span><span className="state-badge-small">{t("selection.livePreview")}</span></div>
             <p className="setting-help flush">{!selected
               ? t("selection.emptyHelp")
@@ -1432,10 +1466,10 @@ function App() {
                   : selected.maskRecipe.mode === "refine"
                     ? t("selection.refineSummary", { count: selected.maskRecipe.strokes.length })
                     : t("editor.source.auto")}</p>
-            <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={15} />{t("selection.openEditor")}</button>
+            <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={15} />{t("selection.editObject")}</button>
           </section>}
 
-          {settings.processingMode === "removeBackground" && <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings">
+          {settings.processingMode === "removeBackground" && !isMultiSelection && <button className={`advanced-row current-file-control ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings">
             <span className="advanced-row-copy">
               <span>{t("edge.title")}</span>
               {selected && <small className={`edge-preview-state ${maskPreviewStatus}`}>
@@ -1455,8 +1489,8 @@ function App() {
             </span>
             <Icon name="chevron" size={15} />
           </button>}
-          {settings.processingMode === "removeBackground" && isAdvancedOpen && (
-            <section id="advanced-settings" className="setting-section advanced-settings">
+          {settings.processingMode === "removeBackground" && !isMultiSelection && isAdvancedOpen && (
+            <section id="advanced-settings" className="setting-section advanced-settings current-file-control">
               <div className="advanced-section-title"><div><strong>{t("edge.title")}</strong><span>{selected?.name ?? t("output.addImages")}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected}>{t("common.default")}</button></div>
               <div className="sub-setting first">
                 <div className="label-row"><label htmlFor="edge-smoothing">{t("edge.smoothing")}</label><output>{selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing}</output></div>
@@ -1545,7 +1579,7 @@ function App() {
               <div className="context-file-heading"><strong title={contextAsset.name}>{contextAsset.name}</strong><span>{formatDimensions(contextAsset.width, contextAsset.height, formatLocale, t("format.unknownDimensions"))} · {contextAsset.extension.toUpperCase()}</span></div>
               <span className="context-separator" />
               <button role="menuitem" onClick={() => { setContextMenu(null); setViewMode("original"); }}><span>{t("context.openOriginal")}</span></button>
-              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!contextAsset.previewUrl || settings.processingMode === "convert"}><span>{t("context.editMask")}</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!contextAsset.previewUrl || settings.processingMode === "convert"}><span>{t("selection.editObject")}</span></button>
               <span className="context-separator" />
               <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(-1); }}><span>{t("preview.rotateLeft")}</span></button>
               <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(1); }}><span>{t("preview.rotateRight")}</span></button>
@@ -1557,7 +1591,7 @@ function App() {
             </>
           ) : (
             <>
-              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!selected?.previewUrl || settings.processingMode === "convert"}><span>{t("context.editMask")}</span></button>
+              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!selected?.previewUrl || settings.processingMode === "convert"}><span>{t("selection.editObject")}</span></button>
               <span className="context-separator" />
               <button role="menuitem" onClick={() => { setViewMode("original"); setContextMenu(null); }} disabled={!selected}><span>{t("context.openOriginal")}</span></button>
               <button role="menuitem" onClick={() => { setViewMode("result"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>{t("context.openSavedResult")}</span></button>

@@ -116,7 +116,11 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .library-panel, .inspector-panel, .canvas-panel { min-width: 0; min-height: 0; }
 .library-panel, .inspector-panel { background: var(--surface); }
 .library-panel { display: flex; flex-direction: column; border-right: 1px solid var(--line); }
-.inspector-panel { overflow-y: auto; overflow-anchor: none; scrollbar-gutter: stable; border-left: 1px solid var(--line); }
+.inspector-panel { display: flex; overflow-y: auto; overflow-anchor: none; flex-direction: column; scrollbar-gutter: stable; border-left: 1px solid var(--line); }
+.inspector-panel > * { flex: 0 0 auto; }
+.inspector-header { order: 0; }
+.current-file-control { order: 1; }
+.output-control { order: 2; }
 
 .panel-heading, .inspector-header {
   display: flex;
@@ -491,6 +495,18 @@ select:disabled { color: var(--ink-faint); background-color: var(--surface-muted
 .edge-preview-state.updating { color: var(--accent-dark); }
 .edge-preview-state.error { color: var(--danger); }
 .advanced-settings { background: #fbfbfc; }
+.inspector-accordion { background: white; border-bottom: 1px solid var(--line); }
+.inspector-accordion > summary { display: flex; align-items: center; justify-content: space-between; min-height: 54px; gap: 10px; padding: 10px 16px; cursor: pointer; list-style: none; user-select: none; }
+.inspector-accordion > summary::-webkit-details-marker { display: none; }
+.inspector-accordion > summary:hover { background: #faf9ff; }
+.inspector-accordion > summary > span { display: grid; min-width: 0; gap: 4px; }
+.inspector-accordion > summary strong, .inspector-accordion > summary small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-accordion > summary strong { color: var(--ink); font-size: 11.5px; font-weight: 680; }
+.inspector-accordion > summary small { color: var(--ink-faint); font-size: 9.8px; }
+.inspector-accordion > summary svg { flex: 0 0 auto; color: var(--ink-faint); transition: transform 140ms ease; }
+.inspector-accordion[open] > summary svg { transform: rotate(90deg); }
+.inspector-accordion[open] > summary { color: var(--accent-dark); background: #faf9ff; }
+.inspector-accordion > .setting-section { border-top: 1px solid var(--line); border-bottom: 0; background: #fbfbfc; }
 .advanced-settings .sub-setting.first { margin-top: 0; }
 .mask-summary-section .setting-label { margin: 0; }
 .mask-summary-button { width: 100%; justify-content: center; margin-top: 11px; font-size: 11px; }
