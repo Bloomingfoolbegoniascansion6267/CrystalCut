@@ -1438,7 +1438,7 @@ function App() {
               <label className={`check-row ${settings.preserveMetadata ? "" : "disabled"}`}><input type="checkbox" checked={settings.preservePrompt} onChange={(event) => setSettings({ ...settings, preservePrompt: event.target.checked })} disabled={!settings.preserveMetadata} /><span><Icon name="check" size={13} /></span>{t("metadata.keepPrompt")}</label>
             </div>
             {!isMultiSelection && selected && <div className="metadata-editor">
-              <div className="metadata-editor-heading"><strong>{t("metadata.fileValues")}</strong><span title={selected.name}>{selected.name}</span></div>
+              <div className="metadata-editor-heading"><strong>{t("metadata.fileValues")}</strong></div>
               <label><span>{t("metadata.takenAt")}</span><input type="text" value={selected.exif.takenAt ?? ""} placeholder="YYYY-MM-DD HH:MM:SS" onChange={(event) => updateSelectedMetadata({ takenAt: event.target.value || null })} /></label>
               <label><span>{t("metadata.camera")}</span><input type="text" value={selected.exif.camera ?? ""} onChange={(event) => updateSelectedMetadata({ camera: event.target.value || null })} /></label>
               <label><span>{t("metadata.lens")}</span><input type="text" value={selected.exif.lens ?? ""} onChange={(event) => updateSelectedMetadata({ lens: event.target.value || null })} /></label>

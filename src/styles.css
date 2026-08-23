@@ -546,7 +546,7 @@ select:disabled { color: var(--ink-faint); background-color: var(--surface-muted
 .metadata-policy-options.is-disabled { opacity: .5; border-color: #e7e8ec; background: #f3f4f6; }
 .warning-text { color: #9a681b; }
 .metadata-editor { display: grid; gap: 9px; margin-top: 13px; padding-top: 13px; border-top: 1px solid var(--line); }
-.metadata-editor-heading { display: flex; align-items: baseline; justify-content: space-between; min-width: 0; gap: 8px; }
+.metadata-editor-heading { min-width: 0; }
 .metadata-editor-heading strong { font-size: 10.5px; }
 .metadata-editor-heading span { overflow: hidden; color: var(--ink-faint); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
 .metadata-editor > label, .metadata-coordinate-grid label { display: grid; gap: 5px; color: var(--ink-soft); font-size: 9.5px; font-weight: 650; }
