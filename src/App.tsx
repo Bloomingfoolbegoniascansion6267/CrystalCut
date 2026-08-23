@@ -1156,6 +1156,12 @@ function App() {
     setIsMaskEditing(true);
   };
 
+  const openMaskEditorFromToolbar = () => {
+    setIsInspectorCollapsed(false);
+    switchInspectorMode("current");
+    openMaskEditor();
+  };
+
   const applyMaskEditor = () => {
     if (maskDraft) updateSelectedMask(maskDraft);
     maskPreviewSnapshot.current = null;
@@ -1425,7 +1431,7 @@ function App() {
                 <button className={`background-swatch light ${previewBackground === "light" ? "active" : ""}`} onClick={() => setPreviewBackground("light")} title={t("preview.background.light")} aria-label={t("preview.background.light")} />
                 <button className={`background-swatch dark ${previewBackground === "dark" ? "active" : ""}`} onClick={() => setPreviewBackground("dark")} title={t("preview.background.dark")} aria-label={t("preview.background.dark")} />
               </div>
-              {settings.processingMode === "removeBackground" && <><span className="divider" /><button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={16} />{t(isMaskEditing ? "preview.editing" : "selection.editObject")}</button><span className="divider" /></>}
+              {settings.processingMode === "removeBackground" && <><span className="divider" /><button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditorFromToolbar} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={16} />{t(isMaskEditing ? "preview.editing" : "selection.editObject")}</button><span className="divider" /></>}
               <button className="icon-button" aria-label={t("preview.rotateLeft")} title={t("preview.rotateLeft")} onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
               <button className="icon-button" aria-label={t("preview.rotateRight")} title={t("preview.rotateRight")} onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /></button>
               <span className="divider" />
