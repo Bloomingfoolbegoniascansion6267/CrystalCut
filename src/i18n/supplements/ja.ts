@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const jaSupplement: MessageCatalog = {
+  "selection.removeModeOnly": "背景削除モードで使用できます",
   "metadata.filePolicy": "このファイルの出力設定", "metadata.usingGlobal": "出力設定に従う", "metadata.fileOverride": "ファイル別設定", "metadata.useGlobal": "全体設定を使用", "metadata.filePolicyHelp": "項目を変更すると、このファイルだけに個別の出力設定が適用されます。",
   "inspector.currentScope": "このタブの変更は選択中のファイルだけに適用されます。", "inspector.outputScope": "このタブの設定は作業リスト内のすべてのファイルに適用されます。", "edge.selectedTitle": "選択ファイルのエッジ検出",
   "metadata.editsNotExported": "編集内容は作業に保存されますが、現在の出力にはメタデータが含まれません。", "metadata.editsExported": "編集した値は現在の出力ポリシーに従って新しいファイルに含まれます。", "metadata.reviewPolicy": "出力ポリシーを確認",
@@ -60,9 +61,9 @@ export const jaSupplement: MessageCatalog = {
   "notice.outputReset": "出力設定を新規作業の既定値に戻しました。ファイル別の編集内容は維持されます。",
   "notice.revealFailed": "ファイルの場所を開けませんでした。",
   "notice.clipboardPermission": "クリップボードの権限を確認してください。Ctrl/Cmd+Vでも貼り付けられます。",
-  "notice.previewNeeded": "先に選択範囲または境界のプレビューを開いてください。",
-  "notice.maskNeeded": "マスクを確認するには選択範囲または境界のプレビューを開いてください。",
-  "notice.compareNeeded": "比較するにはプレビューが必要です。",
+  "notice.previewNeeded": "「オブジェクトを編集」または「選択ファイルのエッジ検出」を開いてプレビューを準備してください。",
+  "notice.maskNeeded": "「オブジェクトを編集」または「選択ファイルのエッジ検出」を開いてマスクを準備してください。",
+  "notice.compareNeeded": "プレビューを準備してから元画像と比較できます。",
   "operation.remove": "背景削除",
   "operation.convert": "画像変換",
   "estimate.expected": "推定 {size}",

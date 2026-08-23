@@ -146,6 +146,7 @@ function App() {
   const [pendingMaskEditId, setPendingMaskEditId] = useState<string | null>(null);
   const [maskPreviewStatus, setMaskPreviewStatus] = useState<PreviewStatus>("idle");
   const [maskPreviewError, setMaskPreviewError] = useState<string | null>(null);
+  const [maskPreviewRefreshToken, setMaskPreviewRefreshToken] = useState(0);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(true);
   const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
   const [exportPlan, setExportPlan] = useState<ExportPlan | null>(null);
@@ -227,6 +228,7 @@ function App() {
     setIsMaskEditing(false);
     setMaskDraft(null);
     setViewMode("original");
+    setIsAdvancedOpen(false);
     switchInspectorMode("output");
   }, [settings.processingMode]);
   const previewRenderKey = useMemo(() => JSON.stringify({
@@ -527,7 +529,7 @@ function App() {
       });
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [isMaskEditing, selected?.id, selected?.path, selected?.rotation, previewRecipe, previewRenderKey]);
+  }, [isMaskEditing, selected?.id, selected?.path, selected?.rotation, previewRecipe, previewRenderKey, maskPreviewRefreshToken]);
 
   useEffect(() => {
     if (!selected?.outputPath || selected.resultPreviewUrl || !isTauri()) return;
@@ -1162,6 +1164,13 @@ function App() {
     openMaskEditor();
   };
 
+  const toggleAdvancedSettings = () => {
+    if (settings.processingMode === "convert") return;
+    setIsAdvancedOpen((value) => !value);
+    setMaskPreviewRefreshToken((value) => value + 1);
+    if (hasResultView) setViewMode("result");
+  };
+
   const applyMaskEditor = () => {
     if (maskDraft) updateSelectedMask(maskDraft);
     maskPreviewSnapshot.current = null;
@@ -1624,9 +1633,11 @@ function App() {
           </div>
 
           <div id="current-file-inspector" className={`inspector-tab-panel ${inspectorMode === "current" ? "active" : ""}`} role="tabpanel" aria-labelledby="inspector-tab-current" hidden={inspectorMode !== "current"} inert={inspectorMode !== "current"}>
-          {settings.processingMode === "removeBackground" && !isMultiSelection && <section className="setting-section mask-summary-section current-file-control">
-            <div className="label-row"><span className="setting-label">{t("selection.object")}</span><span className="state-badge-small">{t("selection.livePreview")}</span></div>
-            <p className="setting-help flush">{!selected
+          {!isMultiSelection && <section className={`setting-section mask-summary-section current-file-control current-removal-control ${settings.processingMode === "convert" ? "is-disabled" : ""}`} aria-disabled={settings.processingMode === "convert"}>
+            <div className="label-row"><span className="setting-label">{t("selection.object")}</span><span className="state-badge-small">{t(settings.processingMode === "convert" ? "selection.removeModeOnly" : "selection.livePreview")}</span></div>
+            <p className="setting-help flush">{settings.processingMode === "convert"
+              ? t("selection.removeModeOnly")
+              : !selected
               ? t("selection.emptyHelp")
               : selected.maskRecipe.mode === "manual"
                 ? t("selection.manualSummary", { count: selected.maskRecipe.strokes.length })
@@ -1635,13 +1646,13 @@ function App() {
                   : selected.maskRecipe.mode === "refine"
                     ? t("selection.refineSummary", { count: selected.maskRecipe.strokes.length })
                     : t("editor.source.auto")}</p>
-            <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={15} />{t("selection.editObject")}</button>
+            <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={15} />{t("selection.editObject")}</button>
           </section>}
 
-          {settings.processingMode === "removeBackground" && !isMultiSelection && <button className={`advanced-row current-file-control ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings">
+          {!isMultiSelection && <button className={`advanced-row current-file-control current-removal-control ${isAdvancedOpen ? "open" : ""}`} onClick={toggleAdvancedSettings} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings" disabled={settings.processingMode === "convert"}>
             <span className="advanced-row-copy">
               <span>{t("edge.selectedTitle")}</span>
-              {selected && <small className={`edge-preview-state ${maskPreviewStatus}`}>
+              {settings.processingMode === "convert" ? <small className="edge-preview-state">{t("selection.removeModeOnly")}</small> : selected && <small className={`edge-preview-state ${maskPreviewStatus}`}>
                 {maskPreviewStatus === "updating"
                   ? <span className="spinner" />
                   : maskPreviewStatus !== "error" && hasResultView
@@ -1658,33 +1669,33 @@ function App() {
             </span>
             <Icon name="chevron" size={15} />
           </button>}
-          {settings.processingMode === "removeBackground" && !isMultiSelection && (
+          {!isMultiSelection && (
             <div id="advanced-settings" className={`advanced-settings-collapse current-file-control ${isAdvancedOpen ? "open" : ""}`} aria-hidden={!isAdvancedOpen} inert={!isAdvancedOpen}>
             <div>
-            <section className="setting-section advanced-settings">
-              <div className="advanced-section-title"><div><strong title={selected?.name}>{selected?.name ?? t("output.addImages")}</strong><span>{selected ? `${formatDimensions(selected.width, selected.height, formatLocale, t("format.unknownDimensions"))} · ${selected.extension.toUpperCase()}` : t("edge.fileOnlyHelp")}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected}>{t("common.default")}</button></div>
+            <section className={`setting-section advanced-settings current-removal-control ${settings.processingMode === "convert" ? "is-disabled" : ""}`} aria-disabled={settings.processingMode === "convert"}>
+              <div className="advanced-section-title"><div><strong title={selected?.name}>{selected?.name ?? t("output.addImages")}</strong><span>{selected ? `${formatDimensions(selected.width, selected.height, formatLocale, t("format.unknownDimensions"))} · ${selected.extension.toUpperCase()}` : t("edge.fileOnlyHelp")}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected || settings.processingMode === "convert"}>{t("common.default")}</button></div>
               <div className="sub-setting first">
                 <div className="label-row"><label htmlFor="edge-smoothing">{t("edge.smoothing")}</label><output>{selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing}</output></div>
-                <input id="edge-smoothing" type="range" min="0" max="10" value={selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing} onChange={(event) => updateSelectedEdgeSettings({ edgeSmoothing: Number(event.target.value) })} disabled={!selected} />
+                <input id="edge-smoothing" type="range" min="0" max="10" value={selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing} onChange={(event) => updateSelectedEdgeSettings({ edgeSmoothing: Number(event.target.value) })} disabled={!selected || settings.processingMode === "convert"} />
                 <p className="setting-help flush">{t("edge.smoothingHelp")}</p>
               </div>
               <div className="sub-setting">
                 <div className="label-row"><label htmlFor="edge-feather">{t("edge.feather")}</label><output>{selected?.edgeSettings.edgeFeather ?? DEFAULT_EDGE_SETTINGS.edgeFeather}px</output></div>
-                <input id="edge-feather" type="range" min="0" max="20" value={selected?.edgeSettings.edgeFeather ?? DEFAULT_EDGE_SETTINGS.edgeFeather} onChange={(event) => updateSelectedEdgeSettings({ edgeFeather: Number(event.target.value) })} disabled={!selected} />
+                <input id="edge-feather" type="range" min="0" max="20" value={selected?.edgeSettings.edgeFeather ?? DEFAULT_EDGE_SETTINGS.edgeFeather} onChange={(event) => updateSelectedEdgeSettings({ edgeFeather: Number(event.target.value) })} disabled={!selected || settings.processingMode === "convert"} />
               </div>
               <div className="sub-setting">
                 <div className="label-row"><label htmlFor="edge-shift">{t("edge.shift")}</label><output>{(selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift) > 0 ? "+" : ""}{selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift}px</output></div>
-                <input id="edge-shift" type="range" min="-8" max="8" value={selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift} onChange={(event) => updateSelectedEdgeSettings({ edgeShift: Number(event.target.value) })} disabled={!selected} />
+                <input id="edge-shift" type="range" min="-8" max="8" value={selected?.edgeSettings.edgeShift ?? DEFAULT_EDGE_SETTINGS.edgeShift} onChange={(event) => updateSelectedEdgeSettings({ edgeShift: Number(event.target.value) })} disabled={!selected || settings.processingMode === "convert"} />
               </div>
               <div className="sub-setting">
                 <div className="label-row"><label htmlFor="alpha-threshold">{t("edge.alphaThreshold")}</label><output>{selected?.edgeSettings.alphaThreshold ?? DEFAULT_EDGE_SETTINGS.alphaThreshold}%</output></div>
-                <input id="alpha-threshold" type="range" min="0" max="30" value={selected?.edgeSettings.alphaThreshold ?? DEFAULT_EDGE_SETTINGS.alphaThreshold} onChange={(event) => updateSelectedEdgeSettings({ alphaThreshold: Number(event.target.value) })} disabled={!selected} />
+                <input id="alpha-threshold" type="range" min="0" max="30" value={selected?.edgeSettings.alphaThreshold ?? DEFAULT_EDGE_SETTINGS.alphaThreshold} onChange={(event) => updateSelectedEdgeSettings({ alphaThreshold: Number(event.target.value) })} disabled={!selected || settings.processingMode === "convert"} />
               </div>
               <div className="sub-setting">
                 <div className="label-row"><label htmlFor="mask-contrast">{t("edge.contrast")}</label><output>{(selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast) > 0 ? "+" : ""}{selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast}</output></div>
-                <input id="mask-contrast" type="range" min="-50" max="50" value={selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast} onChange={(event) => updateSelectedEdgeSettings({ maskContrast: Number(event.target.value) })} disabled={!selected} />
+                <input id="mask-contrast" type="range" min="-50" max="50" value={selected?.edgeSettings.maskContrast ?? DEFAULT_EDGE_SETTINGS.maskContrast} onChange={(event) => updateSelectedEdgeSettings({ maskContrast: Number(event.target.value) })} disabled={!selected || settings.processingMode === "convert"} />
               </div>
-              <label className="check-row"><input type="checkbox" checked={selected?.edgeSettings.preserveOriginalAlpha ?? DEFAULT_EDGE_SETTINGS.preserveOriginalAlpha} onChange={(event) => updateSelectedEdgeSettings({ preserveOriginalAlpha: event.target.checked })} disabled={!selected} /><span><Icon name="check" size={13} /></span>{t("edge.keepOriginalAlpha")}</label>
+              <label className="check-row"><input type="checkbox" checked={selected?.edgeSettings.preserveOriginalAlpha ?? DEFAULT_EDGE_SETTINGS.preserveOriginalAlpha} onChange={(event) => updateSelectedEdgeSettings({ preserveOriginalAlpha: event.target.checked })} disabled={!selected || settings.processingMode === "convert"} /><span><Icon name="check" size={13} /></span>{t("edge.keepOriginalAlpha")}</label>
               <p className="setting-help">{t("edge.fileOnlyHelp")}</p>
             </section>
             </div>
