@@ -1882,6 +1882,7 @@ function App() {
 
           <InspectorAccordion title={t("metadata.title")} summary={metadataSummary} defaultOpen>
           <section className="setting-section metadata-section">
+            <div className="setting-title-row"><span className="setting-label">{t("metadata.title")}</span></div>
             <label className="check-row"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setMetadataPreservation(event.target.checked)} /><span><Icon name="check" size={13} /></span>{t("output.keepMetadata")}</label>
             <p className="setting-help flush">{t("metadata.safeHelp")}</p>
             <div className={`metadata-policy-options ${settings.preserveMetadata ? "" : "is-disabled"}`}>
@@ -1991,7 +1992,7 @@ function App() {
             <div id="advanced-settings" className={`advanced-settings-collapse current-file-control ${isAdvancedOpen ? "open" : ""}`} aria-hidden={!isAdvancedOpen} inert={!isAdvancedOpen}>
             <div>
             <section className={`setting-section advanced-settings current-removal-control ${settings.processingMode === "convert" ? "is-disabled" : ""}`} aria-disabled={settings.processingMode === "convert"}>
-              <div className="advanced-section-title"><div><strong title={selected?.name}>{selected?.name ?? t("output.addImages")}</strong><span>{selected ? `${formatDimensions(selected.width, selected.height, formatLocale, t("format.unknownDimensions"))} · ${selected.extension.toUpperCase()}` : t("edge.fileOnlyHelp")}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected || settings.processingMode === "convert"}>{t("common.default")}</button></div>
+              <div className="advanced-section-title"><div><strong>{t("edge.selectedTitle")}</strong></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected || settings.processingMode === "convert"}>{t("common.default")}</button></div>
               <div className="sub-setting first">
                 <div className="label-row"><label htmlFor="edge-smoothing">{t("edge.smoothing")}</label><output>{selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing}</output></div>
                 <input id="edge-smoothing" type="range" min="0" max="10" value={selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing} onChange={(event) => updateSelectedEdgeSettings({ edgeSmoothing: Number(event.target.value) })} disabled={!selected || settings.processingMode === "convert"} />
@@ -2049,6 +2050,7 @@ function App() {
 
           {selected && <InspectorAccordion title={t("metadata.fileValues")} summary={selectedMetadataSummary}>
             <section className="setting-section metadata-section current-metadata-section">
+              <div className="setting-title-row"><span className="setting-label">{t("metadata.fileValues")}</span></div>
               <div className={`metadata-output-bridge ${selectedMetadataPolicy.preserveMetadata ? "active" : "inactive"}`}>
                 <div className="label-row">
                   <strong className="metadata-policy-title">{t("metadata.filePolicy")}</strong>
