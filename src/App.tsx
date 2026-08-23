@@ -1458,19 +1458,6 @@ function App() {
               <p className="setting-help flush warning-text">{t("metadata.gpsWarning")}</p>
               <label className={`check-row ${settings.preserveMetadata ? "" : "disabled"}`}><input type="checkbox" checked={settings.preservePrompt} onChange={(event) => setSettings({ ...settings, preservePrompt: event.target.checked })} disabled={!settings.preserveMetadata} /><span><Icon name="check" size={13} /></span>{t("metadata.keepPrompt")}</label>
             </div>
-            {!isMultiSelection && selected && <div className="metadata-editor">
-              <div className="metadata-editor-heading"><strong>{t("metadata.fileValues")}</strong></div>
-              <label><span>{t("metadata.takenAt")}</span><input type="text" value={selected.exif.takenAt ?? ""} placeholder="YYYY-MM-DD HH:MM:SS" onChange={(event) => updateSelectedMetadata({ takenAt: event.target.value || null })} /></label>
-              <label><span>{t("metadata.camera")}</span><input type="text" value={selected.exif.camera ?? ""} onChange={(event) => updateSelectedMetadata({ camera: event.target.value || null })} /></label>
-              <label><span>{t("metadata.lens")}</span><input type="text" value={selected.exif.lens ?? ""} onChange={(event) => updateSelectedMetadata({ lens: event.target.value || null })} /></label>
-              <label><span>{t("metadata.description")}</span><textarea rows={2} value={selected.exif.description ?? ""} onChange={(event) => updateSelectedMetadata({ description: event.target.value || null })} /></label>
-              <label><span>{t("metadata.prompt")}</span><textarea rows={4} value={selected.exif.prompt ?? ""} placeholder={t("metadata.promptEmpty")} onChange={(event) => updateSelectedMetadata({ prompt: event.target.value || null })} /></label>
-              <div className="metadata-coordinate-grid">
-                <label><span>{t("metadata.latitude")}</span><input type="number" min="-90" max="90" step="any" value={selected.exif.gpsLatitude ?? ""} onChange={(event) => updateSelectedMetadata({ gpsLatitude: event.target.value === "" ? null : Number(event.target.value) })} /></label>
-                <label><span>{t("metadata.longitude")}</span><input type="number" min="-180" max="180" step="any" value={selected.exif.gpsLongitude ?? ""} onChange={(event) => updateSelectedMetadata({ gpsLongitude: event.target.value === "" ? null : Number(event.target.value) })} /></label>
-              </div>
-              <p className="setting-help flush">{t("metadata.editHelp")}</p>
-            </div>}
           </section>
           </InspectorAccordion>
 
@@ -1533,6 +1520,11 @@ function App() {
           </div>}
 
           {inspectorMode === "current" && <div id="current-file-inspector" className="inspector-tab-panel" role="tabpanel">
+          {selected && <div className="inspector-file-card">
+            <span className="inspector-file-thumb">{selected.thumbnailUrl || selected.previewUrl ? <img src={selected.thumbnailUrl ?? selected.previewUrl} alt="" /> : <Icon name="image" size={16} />}</span>
+            <span className="inspector-file-copy"><strong title={selected.name}>{selected.name}</strong><small>{formatDimensions(selected.width, selected.height, formatLocale, t("format.unknownDimensions"))} · {selected.extension.toUpperCase()}</small></span>
+            <span className={`file-status ${selected.status}`}>{t(`status.short.${selected.status}`)}</span>
+          </div>}
           {settings.processingMode === "removeBackground" && !isMultiSelection && <div className="inspector-group-heading edit current-file-control"><span>{t("common.currentFile")}</span><strong>{t("selection.title")}</strong></div>}
 
           {settings.processingMode === "removeBackground" && !isMultiSelection && <section className="setting-section mask-summary-section current-file-control">
@@ -1601,6 +1593,31 @@ function App() {
             </div>
             </div>
           )}
+
+          {selected && <InspectorAccordion title={t("metadata.fileValues")} summary={metadataSummary}>
+            <section className="setting-section metadata-section current-metadata-section">
+              <div className={`metadata-output-bridge ${settings.preserveMetadata ? "active" : "inactive"}`}>
+                <div className="label-row">
+                  <label className="check-row"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setMetadataPreservation(event.target.checked)} /><span><Icon name="check" size={13} /></span>{t("output.keepMetadata")}</label>
+                  <span className="scope-badge">{t("common.allFiles")}</span>
+                </div>
+                <p>{t(settings.preserveMetadata ? "metadata.editsExported" : "metadata.editsNotExported")}</p>
+                <button type="button" onClick={() => setInspectorMode("output")}>{t("metadata.reviewPolicy")}</button>
+              </div>
+              <div className="metadata-editor">
+                <label><span>{t("metadata.takenAt")}</span><input type="text" value={selected.exif.takenAt ?? ""} placeholder="YYYY-MM-DD HH:MM:SS" onChange={(event) => updateSelectedMetadata({ takenAt: event.target.value || null })} /></label>
+                <label><span>{t("metadata.camera")}</span><input type="text" value={selected.exif.camera ?? ""} onChange={(event) => updateSelectedMetadata({ camera: event.target.value || null })} /></label>
+                <label><span>{t("metadata.lens")}</span><input type="text" value={selected.exif.lens ?? ""} onChange={(event) => updateSelectedMetadata({ lens: event.target.value || null })} /></label>
+                <label><span>{t("metadata.description")}</span><textarea rows={2} value={selected.exif.description ?? ""} onChange={(event) => updateSelectedMetadata({ description: event.target.value || null })} /></label>
+                <label><span>{t("metadata.prompt")}</span><textarea rows={4} value={selected.exif.prompt ?? ""} placeholder={t("metadata.promptEmpty")} onChange={(event) => updateSelectedMetadata({ prompt: event.target.value || null })} /></label>
+                <div className="metadata-coordinate-grid">
+                  <label><span>{t("metadata.latitude")}</span><input type="number" min="-90" max="90" step="any" value={selected.exif.gpsLatitude ?? ""} onChange={(event) => updateSelectedMetadata({ gpsLatitude: event.target.value === "" ? null : Number(event.target.value) })} /></label>
+                  <label><span>{t("metadata.longitude")}</span><input type="number" min="-180" max="180" step="any" value={selected.exif.gpsLongitude ?? ""} onChange={(event) => updateSelectedMetadata({ gpsLongitude: event.target.value === "" ? null : Number(event.target.value) })} /></label>
+                </div>
+                <p className="setting-help flush">{t("metadata.editHelp")}</p>
+              </div>
+            </section>
+          </InspectorAccordion>}
           </div>}
         </aside>
       </main>
