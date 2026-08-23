@@ -60,13 +60,30 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: CrystalCut v__VERSION__
           releaseBody: |
-            Download the installer for your platform below.
+            CrystalCut 1.0.1 restores native support for Intel-based Macs and improves the reliability of the release pipeline.
 
-            - Windows: use the `setup.exe` installer for most users, or the `.msi` package for managed deployment.
-            - macOS: choose Apple Silicon for M1 or newer Macs, and Intel for older Macs.
-            - AI models are downloaded and verified on first use; images are processed locally.
+            ## What's fixed
 
-            These community builds are currently unsigned, so Windows SmartScreen or macOS Gatekeeper may ask for confirmation.
+            - Restored the macOS Intel (`x86_64-apple-darwin`) build.
+            - Moved Intel builds to a native `macos-15-intel` runner.
+            - Pinned ONNX Runtime bindings to the newest version that still provides Intel macOS binaries.
+            - Updated U2NetP and SlimSAM session optimization settings for runtime compatibility.
+            - Corrected unsupported Tauri Action options and release asset naming.
+            - Aligned all application and package versions to `1.0.1`.
+
+            ## Downloads
+
+            - **Windows x64:** use `setup.exe` for a standard installation or `.msi` for managed deployment.
+            - **macOS Apple Silicon:** for Macs with M1, M2, M3, M4 or newer Apple chips.
+            - **macOS Intel:** for older Intel-based Macs.
+
+            ## First AI run and privacy
+
+            AI model files are downloaded and verified when background removal or SlimSAM object selection is used for the first time. Images are always processed locally and are not uploaded.
+
+            ## Installation notice
+
+            These community builds are currently unsigned. Windows SmartScreen may display a warning, and macOS Gatekeeper may require first-launch confirmation in **System Settings > Privacy & Security**.
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
