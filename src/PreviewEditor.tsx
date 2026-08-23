@@ -73,7 +73,7 @@ export default function PreviewEditor({
   const imageGroupRef = useRef<HTMLDivElement>(null);
   const [stageSize, setStageSize] = useState<Size>({ width: 0, height: 0 });
   const [sourceSize, setSourceSize] = useState<Size>({ width: asset.width ?? 1, height: asset.height ?? 1 });
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState<number | null>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [comparePosition, setComparePosition] = useState(50);
   const [tool, setTool] = useState<EditorTool>("pan");
@@ -102,14 +102,15 @@ export default function PreviewEditor({
   }, []);
 
   useEffect(() => {
-    setZoom(1);
+    setSourceSize({ width: asset.width ?? 1, height: asset.height ?? 1 });
+    setZoom(null);
     setPan({ x: 0, y: 0 });
     setComparePosition(50);
     setRedoStack([]);
     setActiveStroke(null);
     setTool("pan");
     activeStrokeRef.current = null;
-  }, [asset.id]);
+  }, [asset.id, asset.width, asset.height]);
 
   const rotated = asset.rotation === 90 || asset.rotation === 270;
   const orientedSize = useMemo<Size>(() => rotated
@@ -119,10 +120,8 @@ export default function PreviewEditor({
     Math.max(1, stageSize.width - (editing ? 112 : 40)) / Math.max(1, orientedSize.width),
     Math.max(1, stageSize.height - (editing ? 136 : 40)) / Math.max(1, orientedSize.height),
   );
-  const displaySize = {
-    width: Math.max(1, orientedSize.width * fitScale),
-    height: Math.max(1, orientedSize.height * fitScale),
-  };
+  const effectiveZoom = zoom ?? fitScale;
+  const displaySize = orientedSize;
   const baseImageSize = rotated
     ? { width: displaySize.height, height: displaySize.width }
     : displaySize;
@@ -154,9 +153,9 @@ export default function PreviewEditor({
     return { x: clamp(x, 0, 1), y: clamp(y, 0, 1) };
   }, []);
 
-  const changeZoom = useCallback((next: number) => setZoom(clamp(next, 0.25, 8)), []);
+  const changeZoom = useCallback((next: number) => setZoom(clamp(next, 0.01, 16)), []);
   const fitToScreen = useCallback(() => {
-    setZoom(1);
+    setZoom(null);
     setPan({ x: 0, y: 0 });
   }, []);
 
@@ -253,7 +252,7 @@ export default function PreviewEditor({
 
   const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
     event.preventDefault();
-    changeZoom(zoom * (event.deltaY < 0 ? 1.12 : 0.89));
+    changeZoom(effectiveZoom * (event.deltaY < 0 ? 1.12 : 0.89));
   };
 
   const updateComparePosition = (clientX: number) => {
@@ -304,15 +303,19 @@ export default function PreviewEditor({
       <div
         ref={imageGroupRef}
         className="preview-transform"
-        style={{ width: displaySize.width, height: displaySize.height, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+        style={{ width: displaySize.width, height: displaySize.height, transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${effectiveZoom})` }}
       >
         {(viewMode === "original" || viewMode === "compare" || (!resultUrl && viewMode === "result")) && asset.previewUrl && (
-          <img className="editor-source-image" src={asset.previewUrl} alt={t("editor.originalAlt", { name: asset.name })} style={imageStyle} onLoad={(event) => setSourceSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} draggable={false} />
+          <img className="editor-source-image" src={asset.previewUrl} alt={t("editor.originalAlt", { name: asset.name })} style={imageStyle} onLoad={(event) => {
+            if (asset.width === null || asset.height === null) {
+              setSourceSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight });
+            }
+          }} draggable={false} />
         )}
         {viewMode === "result" && resultUrl && <img className="editor-result-image" src={resultUrl} alt={`${asset.name} ${resultLabel}`} draggable={false} />}
         {viewMode === "mask" && asset.maskPreviewUrl && <img className="editor-result-image mask-image" src={asset.maskPreviewUrl} alt={t("editor.maskAlt", { name: asset.name })} draggable={false} />}
         {viewMode === "compare" && resultUrl && (
-          <div className="compare-result-clip" style={{ clipPath: `inset(0 0 0 ${comparePosition}%)` }}>
+          <div className={`compare-result-clip preview-bg-${background}`} style={{ clipPath: `inset(0 0 0 ${comparePosition}%)` }}>
             <img className="editor-result-image" src={resultUrl} alt={`${asset.name} ${resultLabel}`} draggable={false} />
           </div>
         )}
@@ -334,7 +337,7 @@ export default function PreviewEditor({
 
       {viewMode === "result" && resultUrl && <span className={`preview-kind-label ${showingEditPreview ? "draft" : "saved"}`}>{resultLabel}</span>}
       {viewMode === "compare" && resultUrl && <><span className="compare-label left">{t("common.original")}</span><span className="compare-label right">{resultLabel}</span></>}
-      {(editing || previewStatus !== "idle") && <div className={`mask-preview-status ${previewStatus === "error" ? "error" : previewStatus}`} role="status" aria-live="polite" title={previewError ?? undefined}>{previewStatus === "updating" && <span className="spinner" />}{t(previewStatus === "updating" ? "editor.previewUpdating" : previewStatus === "error" ? "editor.previewError" : previewStatus === "current" ? "editor.previewCurrent" : "editor.previewReady")}</div>}
+      {(editing || previewStatus === "updating" || previewStatus === "error") && <div className={`mask-preview-status ${previewStatus === "error" ? "error" : previewStatus}`} role="status" aria-live="polite" title={previewError ?? undefined}>{previewStatus === "updating" && <span className="spinner" />}{t(previewStatus === "updating" ? "editor.previewUpdating" : previewStatus === "error" ? "editor.previewError" : previewStatus === "current" ? "editor.previewCurrent" : "editor.previewReady")}</div>}
 
       {editing && (
         <>
@@ -360,7 +363,7 @@ export default function PreviewEditor({
         </>
       )}
 
-      <div className="zoom-controls" onPointerDown={(event) => event.stopPropagation()}><button onClick={() => changeZoom(zoom / 1.2)} aria-label={t("editor.zoomOut")}>−</button><button className="zoom-value" onClick={fitToScreen} title={t("editor.fitTitle")}>{Math.round(zoom * 100)}%</button><button onClick={() => changeZoom(zoom * 1.2)} aria-label={t("editor.zoomIn")}>+</button><button className="fit-button" onClick={fitToScreen}>{t("editor.fit")}</button></div>
+      <div className="zoom-controls" onPointerDown={(event) => event.stopPropagation()}><button onClick={() => changeZoom(effectiveZoom / 1.2)} aria-label={t("editor.zoomOut")}>−</button><button className="zoom-value" onClick={fitToScreen} title={t("editor.fitTitle")}>{Math.round(effectiveZoom * 100)}%</button><button onClick={() => changeZoom(effectiveZoom * 1.2)} aria-label={t("editor.zoomIn")}>+</button><button className="fit-button" onClick={fitToScreen}>{t("editor.fit")}</button></div>
     </div>
   );
 }

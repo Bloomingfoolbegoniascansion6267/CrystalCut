@@ -9,7 +9,8 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.0.1" src="https://img.shields.io/badge/version-1.0.1-7057e8" />
+  <img alt="Version 1.0.2" src="https://img.shields.io/badge/version-1.0.2-7057e8" />
+  <img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue" />
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/engine-Rust-000000?logo=rust&logoColor=white" />
   <img alt="Local processing" src="https://img.shields.io/badge/processing-local--first-2f855a" />
@@ -178,8 +179,8 @@ Then validate and push the matching tag:
 
 ```powershell
 npm run check:release
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.0.2
+git push origin v1.0.2
 ```
 
 The workflow rejects a tag that does not match the application version and uploads installers as GitHub Release assets. The workflow uses the official Tauri release action pinned to an explicit version; add Windows and Apple signing secrets later without committing certificates or passwords.
@@ -204,9 +205,13 @@ src-tauri/src/          Rust coordinator, worker, inference and image pipeline
 - Processing is CPU-first; DirectML/CoreML selection remains disabled until quality and recovery behavior are validated.
 - The first model download can take time depending on the network.
 - Public builds are not yet code-signed or notarized.
-- Installer and model licenses must be reviewed together with [third-party model notices](docs/05_THIRD_PARTY_MODELS.ko.md) before commercial redistribution.
+- Installer and model licenses must be reviewed together with [third-party notices](THIRD_PARTY_NOTICES.md) before commercial redistribution.
 
 Well-scoped bug reports are welcome. For processing issues, include the OS, CPU architecture, CrystalCut version, model status and the diagnostics shown in Settings—without attaching private source images unless you choose to share them.
+
+## License
+
+CrystalCut source code is available under the [Apache License 2.0](LICENSE). Third-party software and AI model assets retain their own licenses; review [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution. The CrystalCut name and logo are not granted as trademarks by the source-code license.
 
 ## Documentation
 

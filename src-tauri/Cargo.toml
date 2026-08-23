@@ -1,9 +1,12 @@
 [package]
 name = "crystalcut"
-version = "1.0.1"
+version = "1.0.2"
 description = "Fast local-first background removal for Windows and macOS"
 authors = ["CrystalCut contributors"]
 edition = "2021"
+license = "Apache-2.0"
+homepage = "https://pkh31337.com"
+repository = "https://github.com/pkh31337/CrystalCut"
 
 [lib]
 name = "crystalcut_lib"

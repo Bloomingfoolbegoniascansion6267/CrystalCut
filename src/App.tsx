@@ -426,8 +426,7 @@ function App() {
 
   useEffect(() => {
     const revision = ++maskPreviewRevision.current;
-    const previewRequested = isMaskEditing || isAdvancedOpen;
-    if (!isTauri() || !previewRequested || !selected || !previewRecipe || settings.processingMode !== "removeBackground") {
+    if (!isTauri() || !selected || !previewRecipe || settings.processingMode !== "removeBackground") {
       setMaskPreviewStatus("idle");
       setMaskPreviewError(null);
       return;
@@ -438,9 +437,9 @@ function App() {
       setMaskPreviewError(null);
       return;
     }
+    setMaskPreviewStatus("updating");
+    setMaskPreviewError(null);
     const timer = window.setTimeout(() => {
-      setMaskPreviewStatus("updating");
-      setMaskPreviewError(null);
       const command = previewRecipe.mode === "sam" ? "generate_sam_preview" : "generate_mask_preview";
       void invoke<MaskPreviewBundle>(command, {
         path: selected.path,
@@ -462,7 +461,7 @@ function App() {
       });
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [isMaskEditing, isAdvancedOpen, selected?.id, selected?.path, selected?.rotation, previewRecipe, previewRenderKey]);
+  }, [isMaskEditing, selected?.id, selected?.path, selected?.rotation, previewRecipe, previewRenderKey]);
 
   useEffect(() => {
     if (!selected?.outputPath || selected.resultPreviewUrl || !isTauri()) return;
@@ -1327,11 +1326,29 @@ function App() {
             <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={15} />{t("selection.openEditor")}</button>
           </section>}
 
-          {settings.processingMode === "removeBackground" && <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings"><span>{t("edge.title")}</span><Icon name="chevron" size={15} /></button>}
+          {settings.processingMode === "removeBackground" && <button className={`advanced-row ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings">
+            <span className="advanced-row-copy">
+              <span>{t("edge.title")}</span>
+              {selected && <small className={`edge-preview-state ${maskPreviewStatus}`}>
+                {maskPreviewStatus === "updating"
+                  ? <span className="spinner" />
+                  : maskPreviewStatus !== "error" && hasResultView
+                    ? <Icon name="check" size={11} />
+                    : null}
+                {t(maskPreviewStatus === "updating"
+                  ? "preview.updating"
+                  : maskPreviewStatus === "error"
+                    ? "editor.previewError"
+                    : hasResultView
+                      ? "preview.current"
+                      : "preview.selectedBasis")}
+              </small>}
+            </span>
+            <Icon name="chevron" size={15} />
+          </button>}
           {settings.processingMode === "removeBackground" && isAdvancedOpen && (
             <section id="advanced-settings" className="setting-section advanced-settings">
               <div className="advanced-section-title"><div><strong>{t("edge.title")}</strong><span>{selected?.name ?? t("output.addImages")}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected}>{t("common.default")}</button></div>
-              <div className="advanced-preview-heading"><span>{t(maskPreviewStatus === "updating" ? "preview.updating" : maskPreviewStatus === "current" ? "preview.current" : "preview.selectedBasis")}</span>{maskPreviewStatus === "updating" && <span className="spinner" />}</div>
               <div className="sub-setting first">
                 <div className="label-row"><label htmlFor="edge-smoothing">{t("edge.smoothing")}</label><output>{selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing}</output></div>
                 <input id="edge-smoothing" type="range" min="0" max="10" value={selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing} onChange={(event) => updateSelectedEdgeSettings({ edgeSmoothing: Number(event.target.value) })} disabled={!selected} />

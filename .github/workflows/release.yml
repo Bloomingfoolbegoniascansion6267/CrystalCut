@@ -60,16 +60,19 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: CrystalCut v__VERSION__
           releaseBody: |
-            CrystalCut 1.0.1 restores native support for Intel-based Macs and improves the reliability of the release pipeline.
+            CrystalCut 1.0.2 makes background-removal previews consistent and adopts the Apache License 2.0 for the CrystalCut source code.
 
             ## What's fixed
 
-            - Restored the macOS Intel (`x86_64-apple-darwin`) build.
-            - Moved Intel builds to a native `macos-15-intel` runner.
-            - Pinned ONNX Runtime bindings to the newest version that still provides Intel macOS binaries.
-            - Updated U2NetP and SlimSAM session optimization settings for runtime compatibility.
-            - Corrected unsupported Tauri Action options and release asset naming.
-            - Aligned all application and package versions to `1.0.1`.
+            - Background-removal and per-file edge previews now stay active whether the edge settings panel is open or closed.
+            - The edge section now shows the live preview state for the selected file.
+            - Preview zoom percentages now use the original image dimensions as the 100% reference.
+            - Original, result, mask, and comparison tabs now keep one stable canvas size and aspect ratio.
+            - Transparent pixels in the comparison result now reveal the selected preview background instead of the original image underneath.
+
+            ## Open-source license
+
+            CrystalCut source code is now available under the Apache License 2.0. Third-party software and AI model assets retain their own licenses and notices.
 
             ## Downloads
 
