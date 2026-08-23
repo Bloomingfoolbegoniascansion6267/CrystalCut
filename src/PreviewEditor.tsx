@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { BrushMode, BrushStroke, ImageAsset, ManualMaskRecipe, MaskPoint, MaskMode } from "./types";
 import { useI18n } from "./i18n/I18nProvider";
+import BrushActionIcon from "./BrushActionIcon";
 
 export type PreviewViewMode = "original" | "result" | "mask" | "compare";
 export type PreviewBackground = "checker" | "light" | "dark";
@@ -451,8 +452,8 @@ export default function PreviewEditor({
           </div>
           <div className="editor-commit-actions" onPointerDown={(event) => event.stopPropagation()}><button className="editor-cancel" onClick={onCancel}>{t("common.cancel")}</button><button className="editor-apply" onClick={onApply} disabled={previewStatus === "updating"}>{t("editor.apply")}</button></div>
           <div className="editor-toolrail" aria-label={t("editor.tools")} onPointerDown={(event) => event.stopPropagation()}>
-            <button className={tool === "keep" ? "active keep" : ""} onClick={() => selectBrush("keep")} title={t("editor.brush", { tool: keepLabel })}><span>＋</span><small>{keepLabel}</small></button>
-            <button className={tool === "remove" ? "active remove" : ""} onClick={() => selectBrush("remove")} title={t("editor.brush", { tool: removeLabel })}><span>−</span><small>{removeLabel}</small></button>
+            <button className={tool === "keep" ? "active keep" : ""} onClick={() => selectBrush("keep")} title={t("editor.brush", { tool: keepLabel })}><BrushActionIcon action="add" /><small>{keepLabel}</small></button>
+            <button className={tool === "remove" ? "active remove" : ""} onClick={() => selectBrush("remove")} title={t("editor.brush", { tool: removeLabel })}><BrushActionIcon action="subtract" /><small>{removeLabel}</small></button>
             <button className={tool === "pan" ? "active" : ""} onClick={() => setTool("pan")} title={t("editor.pan")}><span>✥</span><small>{t("editor.pan")}</small></button>
           </div>
           {inactiveStrokeCount > 0 && <div className="inactive-corrections" onPointerDown={(event) => event.stopPropagation()}><span>{t("editor.inactive", { count: inactiveStrokeCount })}</span><button onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "refine" })}>{t("editor.reapply")}</button><button onClick={() => onMaskChange({ mode: "automatic", strokes: [] })}>{t("editor.clear")}</button></div>}

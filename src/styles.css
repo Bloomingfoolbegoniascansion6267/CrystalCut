@@ -417,6 +417,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .editor-toolrail { position: absolute; z-index: 10; top: 50%; left: 12px; display: grid; gap: 4px; padding: 5px; border: 1px solid rgba(35,39,50,.13); border-radius: 12px; background: rgba(255,255,255,.96); box-shadow: 0 6px 24px rgba(25,28,38,.14); transform: translateY(-50%); backdrop-filter: blur(12px); }
 .editor-toolrail button { display: grid; width: 45px; min-height: 43px; padding: 4px 2px; place-items: center; color: var(--ink-soft); border: 1px solid transparent; border-radius: 8px; background: transparent; cursor: pointer; }
 .editor-toolrail button span { font-size: 16px; line-height: 1; }
+.editor-toolrail .brush-action-icon { display: block; overflow: visible; }
 .editor-toolrail button small { font-size: 10px; font-weight: 700; }
 .editor-toolrail button:hover, .editor-toolrail button.active { color: var(--accent-dark); border-color: #ddd6fa; background: var(--accent-soft); }
 .editor-toolrail button.active.keep { color: #207647; border-color: #a9dfbf; background: #e7f7ed; }
