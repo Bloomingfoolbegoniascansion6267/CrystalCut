@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.0.2" src="https://img.shields.io/badge/version-1.0.2-7057e8" />
+  <img alt="Version 1.0.3" src="https://img.shields.io/badge/version-1.0.3-7057e8" />
   <img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue" />
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/engine-Rust-000000?logo=rust&logoColor=white" />
@@ -183,7 +183,7 @@ Native file inspection, AI inference, and export require the Tauri desktop runti
 
 ```powershell
 npm run build
-npm run check:release -- v1.0.2
+npm run check:release -- v1.0.3
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
@@ -208,10 +208,10 @@ Keep the version identical in:
 Then validate and push an annotated tag:
 
 ```powershell
-npm run check:release -- v1.0.2
-git tag -a v1.0.2 -m "CrystalCut v1.0.2"
+npm run check:release -- v1.0.3
+git tag -a v1.0.3 -m "CrystalCut v1.0.3"
 git push origin main
-git push origin v1.0.2
+git push origin v1.0.3
 ```
 
 > **Intel macOS note:** CrystalCut pins `ort` to `2.0.0-rc.10`, the newest compatible release that still publishes an `x86_64-apple-darwin` ONNX Runtime binary. Do not upgrade it independently while Intel macOS remains in the release matrix.
