@@ -170,7 +170,6 @@ function App() {
   const [pendingMaskEditId, setPendingMaskEditId] = useState<string | null>(null);
   const [maskPreviewStatus, setMaskPreviewStatus] = useState<PreviewStatus>("idle");
   const [maskPreviewError, setMaskPreviewError] = useState<string | null>(null);
-  const [maskPreviewRefreshToken, setMaskPreviewRefreshToken] = useState(0);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(true);
   const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
   const [exportPlan, setExportPlan] = useState<ExportPlan | null>(null);
@@ -221,6 +220,7 @@ function App() {
   const contextAsset = contextMenu?.assetId ? assets.find((asset) => asset.id === contextMenu.assetId) ?? null : null;
   const totalBytes = useMemo(() => assets.reduce((sum, asset) => sum + asset.sizeBytes, 0), [assets]);
   const previewRecipe = isMaskEditing ? maskDraft ?? selected?.maskRecipe : selected?.maskRecipe;
+  const previewRecipeKey = useMemo(() => previewRecipe ? JSON.stringify(previewRecipe) : "", [previewRecipe]);
   const previewRecipeReady = !previewRecipe || !((previewRecipe.mode === "manual" || previewRecipe.mode === "sam")
     && !previewRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length > 0));
   const hasResultView = previewRecipeReady && Boolean(selected?.resultPreviewUrl || selected?.editBasePreviewUrl);
@@ -233,12 +233,21 @@ function App() {
         ? "original"
         : viewMode;
   const previewAsset = selected && previewRecipe ? { ...selected, maskRecipe: previewRecipe } : selected;
-  const selectedPreviewSettings = useMemo(() => selected?.resizeOverride ? {
-    ...settings,
-    resizeMode: selected.resizeOverride.axis,
-    resizeValue: selected.resizeOverride.value,
-    preventUpscale: selected.resizeOverride.preventUpscale,
-  } : settings, [selected?.resizeOverride, settings]);
+  const selectedPreviewSettings = useMemo(() => {
+    const resizeOverride = selected?.resizeOverride;
+    return resizeOverride ? {
+      ...settings,
+      resizeMode: resizeOverride.axis,
+      resizeValue: resizeOverride.value,
+      preventUpscale: resizeOverride.preventUpscale,
+    } : settings;
+  }, [
+    selected?.resizeOverride,
+    settings.processingMode,
+    settings.resizeMode,
+    settings.resizeValue,
+    settings.preventUpscale,
+  ]);
   const switchInspectorMode = useCallback((nextMode: InspectorMode) => {
     if (nextMode === inspectorMode) return;
     const panel = inspectorPanelRef.current;
@@ -490,7 +499,7 @@ function App() {
       setIsEstimating(true);
       void invoke<ExportPlan>("prepare_export_plan", {
         items: assets.map((asset, index) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, sequence: index + 1, exif: asset.exif, maskRecipe: asset.maskRecipe, edgeSettings: asset.edgeSettings, metadataPolicy: asset.metadataPolicy, resizeOverride: asset.resizeOverride })),
-        settings: selectedPreviewSettings,
+        settings,
       })
         .then((plan) => {
           if (!cancelled) setExportPlan(plan);
@@ -550,7 +559,7 @@ function App() {
         rotation: selected.rotation,
         maskRecipe: previewRecipe,
         edgeSettings: selected.edgeSettings,
-        settings,
+        settings: selectedPreviewSettings,
       }).then(({ resultPreviewUrl: editBasePreviewUrl, maskPreviewUrl }) => {
         if (maskPreviewRevision.current !== revision) return;
         setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, editBasePreviewUrl, maskPreviewUrl } : asset));
@@ -565,7 +574,7 @@ function App() {
       });
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [isMaskEditing, selected?.id, selected?.path, selected?.rotation, previewRecipe, previewRenderKey, maskPreviewRefreshToken, selectedPreviewSettings]);
+  }, [selected?.id, selected?.path, selected?.rotation, previewRecipeKey, previewRenderKey]);
 
   useEffect(() => {
     if (!selected?.outputPath || selected.resultPreviewUrl || !isTauri()) return;
@@ -1274,8 +1283,6 @@ function App() {
   const toggleAdvancedSettings = () => {
     if (settings.processingMode === "convert") return;
     setIsAdvancedOpen((value) => !value);
-    setMaskPreviewRefreshToken((value) => value + 1);
-    if (hasResultView) setViewMode("result");
   };
 
   const applyMaskEditor = () => {
