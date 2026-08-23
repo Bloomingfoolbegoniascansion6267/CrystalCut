@@ -7,6 +7,7 @@ import { formatBytes, formatDimensions } from "./lib/format";
 import SettingsModal, { type SettingsTab } from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
 import SelectionManager from "./SelectionManager";
+import Tooltip from "./Tooltip";
 import appIconUrl from "../assets/app-icon.svg";
 import { useI18n } from "./i18n/I18nProvider";
 import type { LanguagePreference } from "./i18n/locale";
@@ -1306,7 +1307,7 @@ function App() {
           <div className="panel-heading">
             <div><span className="eyebrow">{t("library.title")}</span><strong>{assets.length}</strong></div>
             {assets.length > 0 && <span className="muted">{formatBytes(totalBytes, formatLocale)}</span>}
-            <button className="panel-toggle" onClick={() => setIsLibraryCollapsed((value) => !value)} aria-expanded={!isLibraryCollapsed} aria-label={t(isLibraryCollapsed ? "library.expand" : "library.collapse")} title={t(isLibraryCollapsed ? "library.expand" : "library.collapse")}><Icon name="chevron" size={15} /></button>
+            <button className="panel-toggle tooltip-host" onClick={() => setIsLibraryCollapsed((value) => !value)} aria-expanded={!isLibraryCollapsed} aria-label={t(isLibraryCollapsed ? "library.expand" : "library.collapse")}><Icon name="chevron" size={15} /><Tooltip side="right">{t(isLibraryCollapsed ? "library.expand" : "library.collapse")}</Tooltip></button>
           </div>
           <div className="asset-list" role="listbox" aria-multiselectable="true" tabIndex={assets.length ? 0 : undefined} onKeyDown={handleLibraryKeyDown}>
             {assets.length === 0 ? (
@@ -1405,17 +1406,15 @@ function App() {
           <div className="inspector-header">
             <span className="eyebrow">{t(inspectorMode === "current" ? "common.currentFile" : "output.title")}</span>
             {inspectorMode === "output" && <button className="text-button" onClick={resetOutputSettings}>{t("output.reset")}</button>}
-            <button className="panel-toggle inspector-toggle" onClick={() => setIsInspectorCollapsed((value) => !value)} aria-expanded={!isInspectorCollapsed} aria-label={t(isInspectorCollapsed ? "output.expand" : "output.collapse")} title={t(isInspectorCollapsed ? "output.expand" : "output.collapse")}><Icon name="chevron" size={15} /></button>
+            <button className="panel-toggle inspector-toggle tooltip-host" onClick={() => setIsInspectorCollapsed((value) => !value)} aria-expanded={!isInspectorCollapsed} aria-label={t(isInspectorCollapsed ? "output.expand" : "output.collapse")}><Icon name="chevron" size={15} /><Tooltip side="left">{t(isInspectorCollapsed ? "output.expand" : "output.collapse")}</Tooltip></button>
           </div>
 
           <div className="inspector-tabs" role="tablist" aria-label={t("output.title")} onKeyDown={handleInspectorTabKeyDown}>
-            <button id="inspector-tab-current" type="button" role="tab" aria-selected={inspectorMode === "current"} aria-controls="current-file-inspector" tabIndex={inspectorMode === "current" ? 0 : -1} className={inspectorMode === "current" ? "active" : ""} onClick={() => switchInspectorMode("current")} disabled={!selected || isMultiSelection} title={!selected || isMultiSelection ? t("selection.emptyHelp") : undefined}>{t("common.currentFile")}</button>
-            <button id="inspector-tab-output" type="button" role="tab" aria-selected={inspectorMode === "output"} aria-controls="output-inspector" tabIndex={inspectorMode === "output" ? 0 : -1} className={inspectorMode === "output" ? "active" : ""} onClick={() => switchInspectorMode("output")}>{t("output.title")}</button>
+            <button id="inspector-tab-current" type="button" role="tab" aria-selected={inspectorMode === "current"} aria-controls="current-file-inspector" aria-disabled={!selected || isMultiSelection} tabIndex={inspectorMode === "current" ? 0 : -1} className={`tooltip-host ${inspectorMode === "current" ? "active" : ""}`} onClick={() => { if (selected && !isMultiSelection) switchInspectorMode("current"); }}>{t("common.currentFile")}<Tooltip side="bottom">{t(!selected || isMultiSelection ? "selection.emptyHelp" : "inspector.currentScope")}</Tooltip></button>
+            <button id="inspector-tab-output" type="button" role="tab" aria-selected={inspectorMode === "output"} aria-controls="output-inspector" tabIndex={inspectorMode === "output" ? 0 : -1} className={`tooltip-host ${inspectorMode === "output" ? "active" : ""}`} onClick={() => switchInspectorMode("output")}>{t("output.title")}<Tooltip side="bottom">{t("inspector.outputScope")}</Tooltip></button>
           </div>
 
           <div id="output-inspector" className={`inspector-tab-panel ${inspectorMode === "output" ? "active" : ""}`} role="tabpanel" aria-labelledby="inspector-tab-output" hidden={inspectorMode !== "output"} inert={inspectorMode !== "output"}>
-          <div className="inspector-group-heading output-control"><span>{t("common.allFiles")}</span><strong>{t("output.outputAndSave")}</strong></div>
-
           <InspectorAccordion title={t("output.preset")} summary={presetSummary}>
           <section className="setting-section preset-section">
             <div className="label-row"><label className="setting-label" htmlFor="output-preset">{t("output.preset")}</label><span className="scope-badge">{t("common.allFiles")}</span></div>
@@ -1542,13 +1541,6 @@ function App() {
           </div>
 
           <div id="current-file-inspector" className={`inspector-tab-panel ${inspectorMode === "current" ? "active" : ""}`} role="tabpanel" aria-labelledby="inspector-tab-current" hidden={inspectorMode !== "current"} inert={inspectorMode !== "current"}>
-          {selected && <div className="inspector-file-card">
-            <span className="inspector-file-thumb">{selected.thumbnailUrl || selected.previewUrl ? <img src={selected.thumbnailUrl ?? selected.previewUrl} alt="" /> : <Icon name="image" size={16} />}</span>
-            <span className="inspector-file-copy"><strong title={selected.name}>{selected.name}</strong><small>{formatDimensions(selected.width, selected.height, formatLocale, t("format.unknownDimensions"))} · {selected.extension.toUpperCase()}</small></span>
-            <span className={`file-status ${selected.status}`}>{t(`status.short.${selected.status}`)}</span>
-          </div>}
-          {settings.processingMode === "removeBackground" && !isMultiSelection && <div className="inspector-group-heading edit current-file-control"><span>{t("common.currentFile")}</span><strong>{t("selection.title")}</strong></div>}
-
           {settings.processingMode === "removeBackground" && !isMultiSelection && <section className="setting-section mask-summary-section current-file-control">
             <div className="label-row"><span className="setting-label">{t("selection.object")}</span><span className="state-badge-small">{t("selection.livePreview")}</span></div>
             <p className="setting-help flush">{!selected
@@ -1565,7 +1557,7 @@ function App() {
 
           {settings.processingMode === "removeBackground" && !isMultiSelection && <button className={`advanced-row current-file-control ${isAdvancedOpen ? "open" : ""}`} onClick={() => setIsAdvancedOpen((value) => !value)} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings">
             <span className="advanced-row-copy">
-              <span>{t("edge.title")}</span>
+              <span>{t("edge.selectedTitle")}</span>
               {selected && <small className={`edge-preview-state ${maskPreviewStatus}`}>
                 {maskPreviewStatus === "updating"
                   ? <span className="spinner" />

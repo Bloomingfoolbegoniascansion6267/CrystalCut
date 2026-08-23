@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const jaSupplement: MessageCatalog = {
+  "inspector.currentScope": "このタブの変更は選択中のファイルだけに適用されます。", "inspector.outputScope": "このタブの設定は作業リスト内のすべてのファイルに適用されます。", "edge.selectedTitle": "選択ファイルのエッジ検出",
   "metadata.editsNotExported": "編集内容は作業に保存されますが、現在の出力にはメタデータが含まれません。", "metadata.editsExported": "編集した値は現在の出力ポリシーに従って新しいファイルに含まれます。", "metadata.reviewPolicy": "出力ポリシーを確認",
   "settings.privacy.originalSafe": "元画像は変更しません", "settings.privacy.originalSafeHelp": "選択した項目だけを出力用に再構成し、元ファイルは一切変更しません。",
   "metadata.title": "メタデータ", "metadata.none": "出力から削除", "metadata.safe": "撮影情報・位置情報なし", "metadata.withGps": "撮影情報・位置情報あり", "metadata.withPrompt": "撮影情報・プロンプトあり", "metadata.gpsAndPrompt": "位置情報とプロンプトを含む", "metadata.safeHelp": "撮影日時、カメラ、レンズ、説明を保持します。位置情報と生成プロンプトは明示的に選んだ場合のみ含まれます。", "metadata.keepGps": "GPS位置情報を保持", "metadata.gpsWarning": "位置情報は撮影場所を明らかにする可能性があるため、既定では除外されます。", "metadata.keepPrompt": "生成プロンプトを保持", "metadata.fileValues": "選択ファイルのメタデータ", "metadata.takenAt": "撮影日時", "metadata.camera": "カメラ", "metadata.lens": "レンズ", "metadata.description": "説明", "metadata.prompt": "生成プロンプト / ワークフロー", "metadata.promptEmpty": "認識できるプロンプト情報はありません", "metadata.latitude": "緯度", "metadata.longitude": "経度", "metadata.editHelp": "変更は新しい出力だけに適用され、元画像は変更されません。", "settings.privacy.gpsOptional": "GPSは選択制", "settings.privacy.gpsOptionalHelp": "位置情報は確認できますが、明示的に有効にした場合のみ出力に書き込みます。", "settings.privacy.promptOptional": "生成情報は選択制", "settings.privacy.promptOptionalHelp": "認識したプロンプトやワークフローを確認・編集でき、出力への追加は既定でオフです。",

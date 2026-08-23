@@ -1,6 +1,7 @@
 import type { MessageCatalog } from "../messages";
 
 export const zhCNSupplement: MessageCatalog = {
+  "inspector.currentScope": "此标签页的更改仅应用于当前所选文件。", "inspector.outputScope": "此标签页的设置应用于任务列表中的所有文件。", "edge.selectedTitle": "所选文件边缘检测",
   "metadata.editsNotExported": "修改会保留在当前任务中，但输出文件目前不包含元数据。", "metadata.editsExported": "修改后的值将按当前输出策略写入新文件。", "metadata.reviewPolicy": "查看输出策略",
   "settings.privacy.originalSafe": "原图保持不变", "settings.privacy.originalSafeHelp": "仅重新构建所选输出字段，绝不会修改源文件。",
   "metadata.title": "元数据", "metadata.none": "从输出中移除", "metadata.safe": "拍摄信息 · 不含位置", "metadata.withGps": "拍摄信息 · 含位置", "metadata.withPrompt": "拍摄信息 · 含提示词", "metadata.gpsAndPrompt": "含位置和提示词", "metadata.safeHelp": "保留拍摄日期、相机、镜头和描述。位置及生成提示词仅在手动选择后写入。", "metadata.keepGps": "保留 GPS 位置", "metadata.gpsWarning": "位置可能暴露图片的创建地点，因此默认不保留。", "metadata.keepPrompt": "保留生成提示词", "metadata.fileValues": "所选文件的元数据", "metadata.takenAt": "拍摄日期", "metadata.camera": "相机", "metadata.lens": "镜头", "metadata.description": "描述", "metadata.prompt": "生成提示词 / 工作流", "metadata.promptEmpty": "未识别到提示词元数据", "metadata.latitude": "纬度", "metadata.longitude": "经度", "metadata.editHelp": "修改仅写入新的输出文件，不会更改原图。", "settings.privacy.gpsOptional": "GPS 需主动选择", "settings.privacy.gpsOptionalHelp": "位置可供查看，但仅在你明确启用后写入输出。", "settings.privacy.promptOptional": "生成信息需主动选择", "settings.privacy.promptOptionalHelp": "可查看和编辑已识别的提示词与工作流，默认不写入输出。",
