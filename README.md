@@ -27,6 +27,14 @@
   <a href="#한국어-안내">한국어 안내</a>
 </p>
 
+<p align="center">
+  <a href="CODE_SIGNING.md">Code signing policy</a>
+  &nbsp;·&nbsp;
+  <a href="PRIVACY.md">Privacy policy</a>
+  &nbsp;·&nbsp;
+  <a href="THIRD_PARTY_NOTICES.md">Third-party notices</a>
+</p>
+
 CrystalCut turns background removal into a practical desktop workflow. Add one image or a whole folder, inspect the result immediately, refine the selected object when necessary, and export optimized PNG or WebP files. Images remain on your computer; only pinned AI model files are downloaded on first use.
 
 ![CrystalCut workspace showing a transparent result and per-file controls](docs/assets/crystalcut-workspace.png)
@@ -138,6 +146,10 @@ Open [GitHub Releases](https://github.com/pkh31337/CrystalCut/releases/latest) a
 - **macOS Intel:** for older Intel-based Macs.
 
 Windows community installers are currently unsigned, so SmartScreen may ask you to confirm the first launch. The application inside every macOS package is code-signed: release builds use a Developer ID certificate and Apple notarization when the repository credentials are configured, and otherwise use an ad-hoc signature to keep the downloaded application bundle intact. An ad-hoc-signed build can still require confirmation in **System Settings > Privacy & Security**.
+
+### Code signing policy
+
+Windows signing through the SignPath Foundation is being prepared and is not yet active. A release is signed only when its release notes explicitly say so. See the [code signing policy](CODE_SIGNING.md) for the official artifact scope, build provenance, and the author, reviewer, and signing-approver roles. CrystalCut's local data handling and model-download behavior are documented in the [privacy policy](PRIVACY.md).
 
 The U2NetP and SlimSAM model files are not bundled in the installer. They are downloaded only when required, verified against pinned size and hash metadata, and cached in the application data folder. The first use of each AI feature therefore requires an internet connection; image processing itself stays local.
 
@@ -255,7 +267,7 @@ Well-scoped bug reports are welcome. Include the OS, CPU architecture, CrystalCu
 
 ## License
 
-CrystalCut source code is available under the [Apache License 2.0](LICENSE). Third-party software and AI model assets retain their own licenses; review [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution. The source-code license does not grant trademark rights to the CrystalCut name or logo.
+CrystalCut source code is available under the [Apache License 2.0](LICENSE). Third-party software and AI model assets retain their own licenses; review [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution. The source-code license does not grant trademark rights to the CrystalCut name or logo. Official releases follow the [code signing policy](CODE_SIGNING.md) and the application follows the [privacy policy](PRIVACY.md).
 
 ## Documentation
 

@@ -144,6 +144,12 @@ jobs:
             ## Installation notice
 
             Windows SmartScreen may display a warning for unsigned Windows installers. The application inside every macOS package is code-signed; when Developer ID credentials are not configured, Gatekeeper may still require first-launch confirmation in **System Settings > Privacy & Security**.
+
+            ## Policies
+
+            - **Code signing policy:** https://github.com/pkh31337/CrystalCut/blob/main/CODE_SIGNING.md
+            - **Privacy policy:** https://github.com/pkh31337/CrystalCut/blob/main/PRIVACY.md
+            - **Third-party notices:** https://github.com/pkh31337/CrystalCut/blob/main/THIRD_PARTY_NOTICES.md
           # Keep the release private until every native package passes its
           # platform verification step below.
           releaseDraft: true
