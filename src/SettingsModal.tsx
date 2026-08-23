@@ -177,10 +177,10 @@ export default function SettingsModal({
         </div>
         {draft.defaultSettings.outputLocation === "custom" && <button className="preferences-path-picker" type="button" onClick={() => void handleChooseDirectory()}><span>{draft.defaultSettings.outputDirectory || t("settings.defaultFolder")}</span><b>{t("common.browse")}</b></button>}
         <label className="preferences-wide-field"><span>{t("settings.nameTemplate")}</span><input value={draft.defaultSettings.nameTemplate} spellCheck={false} onChange={(event) => updateDefaultSettings({ nameTemplate: event.target.value })} /></label>
-        <label className="check-row preferences-metadata-check"><input type="checkbox" checked={draft.defaultSettings.preserveMetadata} onChange={(event) => updateDefaultSettings({ preserveMetadata: event.target.checked })} /><span aria-hidden="true">✓</span>{t("settings.keepMetadata")}</label>
-        <div className="preferences-metadata-options">
-          <label className="check-row"><input type="checkbox" checked={draft.defaultSettings.preserveGps} onChange={(event) => updateDefaultSettings({ preserveGps: event.target.checked })} disabled={!draft.defaultSettings.preserveMetadata} /><span aria-hidden="true">✓</span>{t("metadata.keepGps")}</label>
-          <label className="check-row"><input type="checkbox" checked={draft.defaultSettings.preservePrompt} onChange={(event) => updateDefaultSettings({ preservePrompt: event.target.checked })} disabled={!draft.defaultSettings.preserveMetadata} /><span aria-hidden="true">✓</span>{t("metadata.keepPrompt")}</label>
+        <label className="check-row preferences-metadata-check"><input type="checkbox" checked={draft.defaultSettings.preserveMetadata} onChange={(event) => updateDefaultSettings(event.target.checked ? { preserveMetadata: true } : { preserveMetadata: false, preserveGps: false, preservePrompt: false })} /><span aria-hidden="true">✓</span>{t("settings.keepMetadata")}</label>
+        <div className={`preferences-metadata-options ${draft.defaultSettings.preserveMetadata ? "" : "is-disabled"}`}>
+          <label className={`check-row ${draft.defaultSettings.preserveMetadata ? "" : "disabled"}`}><input type="checkbox" checked={draft.defaultSettings.preserveGps} onChange={(event) => updateDefaultSettings({ preserveGps: event.target.checked })} disabled={!draft.defaultSettings.preserveMetadata} /><span aria-hidden="true">✓</span>{t("metadata.keepGps")}</label>
+          <label className={`check-row ${draft.defaultSettings.preserveMetadata ? "" : "disabled"}`}><input type="checkbox" checked={draft.defaultSettings.preservePrompt} onChange={(event) => updateDefaultSettings({ preservePrompt: event.target.checked })} disabled={!draft.defaultSettings.preserveMetadata} /><span aria-hidden="true">✓</span>{t("metadata.keepPrompt")}</label>
         </div>
         <p className="preferences-note">{t("settings.defaults.note")}</p>
       </section>

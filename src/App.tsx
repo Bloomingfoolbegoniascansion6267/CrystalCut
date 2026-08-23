@@ -109,14 +109,17 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
 }
 
 function InspectorAccordion({ title, summary, children }: { title: string; summary: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
   return (
-    <details className="inspector-accordion output-control">
-      <summary>
+    <section className={`inspector-accordion output-control ${open ? "open" : ""}`}>
+      <button type="button" className="inspector-accordion-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <span><strong>{title}</strong><small>{summary}</small></span>
         <Icon name="chevron" size={15} />
-      </summary>
-      {children}
-    </details>
+      </button>
+      <div className="inspector-accordion-content" aria-hidden={!open} inert={!open}>
+        <div>{children}</div>
+      </div>
+    </section>
   );
 }
 
@@ -476,7 +479,7 @@ function App() {
         if (maskPreviewRevision.current !== revision) return;
         setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, editBasePreviewUrl, maskPreviewUrl } : asset));
         setMaskPreviewStatus("current");
-        setViewMode("result");
+        setViewMode((current) => current === "mask" ? "mask" : "result");
       }).catch((error) => {
         if (maskPreviewRevision.current !== revision) return;
         const message = String(error);
@@ -605,7 +608,7 @@ function App() {
         error: invalidatesResult ? undefined : asset.error,
       };
     }));
-    if (isMaskEditing) setViewMode("result");
+    if (isMaskEditing) setViewMode((current) => current === "mask" ? "mask" : "result");
   }, [isMaskEditing, selectedId]);
 
   const updateSelectedEdgeSettings = useCallback((patch: Partial<EdgeSettings>) => {
@@ -986,6 +989,12 @@ function App() {
           : t("metadata.safe");
 
   const setFormat = (format: OutputFormat) => setSettings((current) => ({ ...current, format }));
+  const setMetadataPreservation = (preserveMetadata: boolean) => setSettings((current) => ({
+    ...current,
+    preserveMetadata,
+    preserveGps: preserveMetadata ? current.preserveGps : false,
+    preservePrompt: preserveMetadata ? current.preservePrompt : false,
+  }));
 
   const resetFormatSettings = () => {
     setSettings((current) => ({
@@ -1421,12 +1430,12 @@ function App() {
 
           <InspectorAccordion title={t("metadata.title")} summary={metadataSummary}>
           <section className="setting-section metadata-section">
-            <label className="check-row"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setSettings({ ...settings, preserveMetadata: event.target.checked })} /><span><Icon name="check" size={13} /></span>{t("output.keepMetadata")}</label>
+            <label className="check-row"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setMetadataPreservation(event.target.checked)} /><span><Icon name="check" size={13} /></span>{t("output.keepMetadata")}</label>
             <p className="setting-help flush">{t("metadata.safeHelp")}</p>
-            <div className="metadata-policy-options">
-              <label className="check-row"><input type="checkbox" checked={settings.preserveGps} onChange={(event) => setSettings({ ...settings, preserveGps: event.target.checked })} disabled={!settings.preserveMetadata} /><span><Icon name="check" size={13} /></span>{t("metadata.keepGps")}</label>
+            <div className={`metadata-policy-options ${settings.preserveMetadata ? "" : "is-disabled"}`}>
+              <label className={`check-row ${settings.preserveMetadata ? "" : "disabled"}`}><input type="checkbox" checked={settings.preserveGps} onChange={(event) => setSettings({ ...settings, preserveGps: event.target.checked })} disabled={!settings.preserveMetadata} /><span><Icon name="check" size={13} /></span>{t("metadata.keepGps")}</label>
               <p className="setting-help flush warning-text">{t("metadata.gpsWarning")}</p>
-              <label className="check-row"><input type="checkbox" checked={settings.preservePrompt} onChange={(event) => setSettings({ ...settings, preservePrompt: event.target.checked })} disabled={!settings.preserveMetadata} /><span><Icon name="check" size={13} /></span>{t("metadata.keepPrompt")}</label>
+              <label className={`check-row ${settings.preserveMetadata ? "" : "disabled"}`}><input type="checkbox" checked={settings.preservePrompt} onChange={(event) => setSettings({ ...settings, preservePrompt: event.target.checked })} disabled={!settings.preserveMetadata} /><span><Icon name="check" size={13} /></span>{t("metadata.keepPrompt")}</label>
             </div>
             {!isMultiSelection && selected && <div className="metadata-editor">
               <div className="metadata-editor-heading"><strong>{t("metadata.fileValues")}</strong><span title={selected.name}>{selected.name}</span></div>
@@ -1536,9 +1545,11 @@ function App() {
             </span>
             <Icon name="chevron" size={15} />
           </button>}
-          {settings.processingMode === "removeBackground" && !isMultiSelection && isAdvancedOpen && (
-            <section id="advanced-settings" className="setting-section advanced-settings current-file-control">
-              <div className="advanced-section-title"><div><strong>{t("edge.title")}</strong><span>{selected?.name ?? t("output.addImages")}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected}>{t("common.default")}</button></div>
+          {settings.processingMode === "removeBackground" && !isMultiSelection && (
+            <div id="advanced-settings" className={`advanced-settings-collapse current-file-control ${isAdvancedOpen ? "open" : ""}`} aria-hidden={!isAdvancedOpen} inert={!isAdvancedOpen}>
+            <div>
+            <section className="setting-section advanced-settings">
+              <div className="advanced-section-title"><div><strong title={selected?.name}>{selected?.name ?? t("output.addImages")}</strong><span>{selected ? `${formatDimensions(selected.width, selected.height, formatLocale, t("format.unknownDimensions"))} · ${selected.extension.toUpperCase()}` : t("edge.fileOnlyHelp")}</span></div><button type="button" onClick={() => updateSelectedEdgeSettings({ ...DEFAULT_EDGE_SETTINGS })} disabled={!selected}>{t("common.default")}</button></div>
               <div className="sub-setting first">
                 <div className="label-row"><label htmlFor="edge-smoothing">{t("edge.smoothing")}</label><output>{selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing}</output></div>
                 <input id="edge-smoothing" type="range" min="0" max="10" value={selected?.edgeSettings.edgeSmoothing ?? DEFAULT_EDGE_SETTINGS.edgeSmoothing} onChange={(event) => updateSelectedEdgeSettings({ edgeSmoothing: Number(event.target.value) })} disabled={!selected} />
@@ -1563,6 +1574,8 @@ function App() {
               <label className="check-row"><input type="checkbox" checked={selected?.edgeSettings.preserveOriginalAlpha ?? DEFAULT_EDGE_SETTINGS.preserveOriginalAlpha} onChange={(event) => updateSelectedEdgeSettings({ preserveOriginalAlpha: event.target.checked })} disabled={!selected} /><span><Icon name="check" size={13} /></span>{t("edge.keepOriginalAlpha")}</label>
               <p className="setting-help">{t("edge.fileOnlyHelp")}</p>
             </section>
+            </div>
+            </div>
           )}
         </aside>
       </main>
