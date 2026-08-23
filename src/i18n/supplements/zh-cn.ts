@@ -2,6 +2,7 @@ import type { MessageCatalog } from "../messages";
 
 export const zhCNSupplement: MessageCatalog = {
   "editor.source.manualLabel": "手动涂抹",
+  "library.reorderHint": "拖动文件可调整顺序，也可使用 Alt 和方向键移动。顺序会影响处理和文件编号。", "library.dragHandle": "拖动调整顺序", "library.draggingMany": "正在移动 {count} 个文件", "library.reorderMoved": "已将 {count} 个文件移到第 {position} 位。", "library.moveUp": "上移", "library.moveDown": "下移", "library.moveTop": "移到顶部", "library.moveBottom": "移到底部",
   "editor.chooseSource": "选择选区方式", "editor.recommended": "推荐", "editor.source.autoDescription": "AI 会先识别主要对象。", "editor.source.autoUseCase": "适合大多数照片 · 可用保留或移除画笔修正。", "editor.source.samDescription": "标记要包含或排除的位置，AI 会选中对应对象。", "editor.source.samUseCase": "适合复杂场景或多个对象。", "editor.source.manualDescription": "从空选区开始，只涂抹要保留的区域。", "editor.source.manualUseCase": "适合精细处理或难以自动识别的图片。", "editor.changeSourceConfirm": "切换选区方式会清除当前画笔标记。是否继续？", "editor.keepArea": "保留", "editor.removeArea": "移除", "editor.eraseArea": "擦除",
   "selection.removeModeOnly": "仅在移除背景模式下可用",
   "metadata.filePolicy": "此文件的输出策略", "metadata.usingGlobal": "跟随输出设置", "metadata.fileOverride": "文件单独设置", "metadata.useGlobal": "使用全局设置", "metadata.filePolicyHelp": "更改选项后，将仅为此文件使用独立的输出策略。",

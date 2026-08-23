@@ -1,4 +1,4 @@
-import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -60,6 +60,28 @@ interface ContextMenuState {
 }
 
 type InspectorMode = "current" | "output";
+type LibraryMoveTarget = "up" | "down" | "top" | "bottom";
+
+interface LibraryDragSession {
+  pointerId: number;
+  pointerType: string;
+  assetId: string;
+  startX: number;
+  startY: number;
+  lastY: number;
+  draggedIds: string[];
+  dropIndex: number;
+  active: boolean;
+  hasMoved: boolean;
+  holdTimer: number | null;
+}
+
+interface LibraryDragVisual {
+  draggedIds: string[];
+  dropIndex: number;
+  clientX: number;
+  clientY: number;
+}
 
 const DEFAULT_PREFERENCES: AppPreferences = {
   defaultSettings: DEFAULT_SETTINGS,
@@ -165,7 +187,10 @@ function App() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isPresetNaming, setIsPresetNaming] = useState(false);
   const [presetName, setPresetName] = useState("");
+  const [libraryDragVisual, setLibraryDragVisual] = useState<LibraryDragVisual | null>(null);
+  const [libraryAnnouncement, setLibraryAnnouncement] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const assetListRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const inspectorPanelRef = useRef<HTMLElement>(null);
   const inspectorScrollPositions = useRef<Record<InspectorMode, number>>({ current: 0, output: 0 });
@@ -177,6 +202,9 @@ function App() {
   const thumbnailLoads = useRef(new Set<string>());
   const selectionAnchorId = useRef<string | null>(null);
   const hadSingleInspectorSelection = useRef(false);
+  const libraryDragSession = useRef<LibraryDragSession | null>(null);
+  const libraryAutoScrollFrame = useRef<number | null>(null);
+  const suppressNextAssetClick = useRef(false);
 
   useEffect(() => {
     if (!notice) return;
@@ -1216,7 +1244,7 @@ function App() {
     selectionAnchorId.current = assetId;
     setContextMenu({
       x: Math.min(event.clientX, window.innerWidth - 220),
-      y: Math.min(event.clientY, window.innerHeight - 300),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 470)),
       kind: "asset",
       assetId,
     });
@@ -1273,7 +1301,183 @@ function App() {
     tabs[nextIndex].click();
   };
 
+  const calculateLibraryDropIndex = (clientY: number, draggedIds: string[]) => {
+    const list = assetListRef.current;
+    if (!list) return 0;
+    const dragged = new Set(draggedIds);
+    const remainingIds = assets.filter((asset) => !dragged.has(asset.id)).map((asset) => asset.id);
+    const rows = new Map(Array.from(list.querySelectorAll<HTMLElement>("[data-asset-id]")).map((row) => [row.dataset.assetId, row]));
+    for (let index = 0; index < remainingIds.length; index += 1) {
+      const row = rows.get(remainingIds[index]);
+      if (row && clientY < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2) return index;
+    }
+    return remainingIds.length;
+  };
+
+  const announceLibraryMove = (count: number, position: number) => {
+    setLibraryAnnouncement("");
+    window.requestAnimationFrame(() => setLibraryAnnouncement(t("library.reorderMoved", { count, position })));
+  };
+
+  const applyLibraryOrder = (draggedIds: string[], dropIndex: number) => {
+    const dragged = new Set(draggedIds);
+    setAssets((current) => {
+      const moving = current.filter((asset) => dragged.has(asset.id));
+      const remaining = current.filter((asset) => !dragged.has(asset.id));
+      const insertion = Math.max(0, Math.min(dropIndex, remaining.length));
+      return [...remaining.slice(0, insertion), ...moving, ...remaining.slice(insertion)];
+    });
+    announceLibraryMove(draggedIds.length, dropIndex + 1);
+  };
+
+  const moveLibraryAssets = (target: LibraryMoveTarget, anchorId: string) => {
+    if (isProcessing) return;
+    const selectedForMove = selectedIdSet.has(anchorId) ? assets.filter((asset) => selectedIdSet.has(asset.id)).map((asset) => asset.id) : [anchorId];
+    const moving = new Set(selectedForMove);
+    const firstIndex = assets.findIndex((asset) => moving.has(asset.id));
+    const currentDropIndex = assets.slice(0, Math.max(0, firstIndex)).filter((asset) => !moving.has(asset.id)).length;
+    const remainingCount = assets.length - selectedForMove.length;
+    const nextDropIndex = target === "top" ? 0
+      : target === "bottom" ? remainingCount
+        : target === "up" ? Math.max(0, currentDropIndex - 1)
+          : Math.min(remainingCount, currentDropIndex + 1);
+    if (nextDropIndex === currentDropIndex) return;
+    applyLibraryOrder(selectedForMove, nextDropIndex);
+  };
+
+  const updateLibraryDragPosition = (clientY: number) => {
+    const session = libraryDragSession.current;
+    if (!session?.active) return;
+    session.lastY = clientY;
+    session.dropIndex = calculateLibraryDropIndex(clientY, session.draggedIds);
+    setLibraryDragVisual({ draggedIds: session.draggedIds, dropIndex: session.dropIndex, clientX: session.startX, clientY });
+  };
+
+  const stopLibraryAutoScroll = () => {
+    if (libraryAutoScrollFrame.current !== null) window.cancelAnimationFrame(libraryAutoScrollFrame.current);
+    libraryAutoScrollFrame.current = null;
+  };
+
+  const startLibraryAutoScroll = () => {
+    if (libraryAutoScrollFrame.current !== null) return;
+    const tick = () => {
+      const session = libraryDragSession.current;
+      const list = assetListRef.current;
+      if (!session?.active || !list) {
+        libraryAutoScrollFrame.current = null;
+        return;
+      }
+      const bounds = list.getBoundingClientRect();
+      const edge = 42;
+      const topPressure = Math.max(0, edge - (session.lastY - bounds.top));
+      const bottomPressure = Math.max(0, edge - (bounds.bottom - session.lastY));
+      const delta = bottomPressure > 0 ? Math.min(12, bottomPressure * 0.32) : topPressure > 0 ? -Math.min(12, topPressure * 0.32) : 0;
+      if (delta !== 0) {
+        const before = list.scrollTop;
+        list.scrollTop += delta;
+        if (list.scrollTop !== before) updateLibraryDragPosition(session.lastY);
+      }
+      libraryAutoScrollFrame.current = window.requestAnimationFrame(tick);
+    };
+    libraryAutoScrollFrame.current = window.requestAnimationFrame(tick);
+  };
+
+  const activateLibraryDrag = (session: LibraryDragSession) => {
+    if (libraryDragSession.current !== session || session.active) return;
+    session.active = true;
+    session.dropIndex = calculateLibraryDropIndex(session.lastY, session.draggedIds);
+    if (!selectedIdSet.has(session.assetId)) {
+      setSelectedIds([session.assetId]);
+      setSelectedId(session.assetId);
+      selectionAnchorId.current = session.assetId;
+    }
+    document.body.classList.add("library-reordering");
+    setLibraryDragVisual({ draggedIds: session.draggedIds, dropIndex: session.dropIndex, clientX: session.startX, clientY: session.lastY });
+    startLibraryAutoScroll();
+  };
+
+  const handleAssetPointerDown = (event: ReactPointerEvent<HTMLButtonElement>, assetId: string) => {
+    if (isProcessing || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const draggedIds = selectedIdSet.has(assetId) && selectedIds.length > 1
+      ? assets.filter((asset) => selectedIdSet.has(asset.id)).map((asset) => asset.id)
+      : [assetId];
+    const session: LibraryDragSession = {
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      assetId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastY: event.clientY,
+      draggedIds,
+      dropIndex: 0,
+      active: false,
+      hasMoved: false,
+      holdTimer: null,
+    };
+    libraryDragSession.current = session;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (event.pointerType !== "mouse") {
+      session.holdTimer = window.setTimeout(() => activateLibraryDrag(session), 200);
+    }
+  };
+
+  const handleAssetPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const session = libraryDragSession.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    session.lastY = event.clientY;
+    const distance = Math.hypot(event.clientX - session.startX, event.clientY - session.startY);
+    if (!session.active) {
+      if (session.pointerType === "mouse" && distance >= 5) activateLibraryDrag(session);
+      else if (session.pointerType !== "mouse" && distance >= 9) {
+        if (session.holdTimer !== null) window.clearTimeout(session.holdTimer);
+        libraryDragSession.current = null;
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        return;
+      }
+    }
+    if (!session.active) return;
+    if (distance >= 3) session.hasMoved = true;
+    event.preventDefault();
+    updateLibraryDragPosition(event.clientY);
+  };
+
+  const finishLibraryDrag = (event: ReactPointerEvent<HTMLButtonElement>, apply: boolean) => {
+    const session = libraryDragSession.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    if (session.holdTimer !== null) window.clearTimeout(session.holdTimer);
+    if (session.active) {
+      suppressNextAssetClick.current = true;
+      if (apply && session.hasMoved) applyLibraryOrder(session.draggedIds, session.dropIndex);
+      window.setTimeout(() => { suppressNextAssetClick.current = false; }, 0);
+    }
+    stopLibraryAutoScroll();
+    document.body.classList.remove("library-reordering");
+    setLibraryDragVisual(null);
+    libraryDragSession.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const cancelLibraryDrag = () => {
+    const session = libraryDragSession.current;
+    if (session?.holdTimer !== null && session?.holdTimer !== undefined) window.clearTimeout(session.holdTimer);
+    stopLibraryAutoScroll();
+    document.body.classList.remove("library-reordering");
+    setLibraryDragVisual(null);
+    libraryDragSession.current = null;
+  };
+
+  useEffect(() => () => {
+    const session = libraryDragSession.current;
+    if (session?.holdTimer !== null && session?.holdTimer !== undefined) window.clearTimeout(session.holdTimer);
+    if (libraryAutoScrollFrame.current !== null) window.cancelAnimationFrame(libraryAutoScrollFrame.current);
+    document.body.classList.remove("library-reordering");
+  }, []);
+
   const selectAssetFromList = (event: ReactMouseEvent<HTMLButtonElement>, assetId: string) => {
+    if (suppressNextAssetClick.current) {
+      event.preventDefault();
+      return;
+    }
     const toggle = event.ctrlKey || event.metaKey;
     const range = event.shiftKey;
     const anchorId = selectionAnchorId.current ?? selectedId ?? assetId;
@@ -1344,12 +1548,25 @@ function App() {
   };
 
   const handleLibraryKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") return;
-    event.preventDefault();
-    const allIds = assets.map((asset) => asset.id);
-    setSelectedIds(allIds);
-    setSelectedId((current) => current ?? allIds[0] ?? null);
-    selectionAnchorId.current = selectedId ?? allIds[0] ?? null;
+    if (event.key === "Escape" && libraryDragSession.current?.active) {
+      event.preventDefault();
+      cancelLibraryDrag();
+      return;
+    }
+    const row = (event.target as HTMLElement).closest<HTMLElement>("[data-asset-id]");
+    if (event.altKey && row?.dataset.assetId && ["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      const target: LibraryMoveTarget = event.key === "ArrowUp" ? "up" : event.key === "ArrowDown" ? "down" : event.key === "Home" ? "top" : "bottom";
+      moveLibraryAssets(target, row.dataset.assetId);
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      const allIds = assets.map((asset) => asset.id);
+      setSelectedIds(allIds);
+      setSelectedId((current) => current ?? allIds[0] ?? null);
+      selectionAnchorId.current = selectedId ?? allIds[0] ?? null;
+    }
   };
 
   const handleInspectorTabKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1362,6 +1579,12 @@ function App() {
     switchInspectorMode(nextMode);
     window.requestAnimationFrame(() => document.getElementById(`inspector-tab-${nextMode}`)?.focus());
   };
+
+  const libraryDraggedIdSet = new Set(libraryDragVisual?.draggedIds ?? []);
+  const libraryRemainingAssets = libraryDragVisual ? assets.filter((asset) => !libraryDraggedIdSet.has(asset.id)) : [];
+  const libraryDropBeforeId = libraryDragVisual ? libraryRemainingAssets[libraryDragVisual.dropIndex]?.id ?? null : null;
+  const libraryDropAtEnd = Boolean(libraryDragVisual && libraryDragVisual.dropIndex >= libraryRemainingAssets.length);
+  const libraryDragLead = libraryDragVisual ? assets.find((asset) => asset.id === libraryDragVisual.draggedIds[0]) ?? null : null;
 
   return (
     <div
@@ -1400,13 +1623,26 @@ function App() {
             {assets.length > 0 && <span className="muted">{formatBytes(totalBytes, formatLocale)}</span>}
             <button className="panel-toggle tooltip-host" onClick={() => setIsLibraryCollapsed((value) => !value)} aria-expanded={!isLibraryCollapsed} aria-label={t(isLibraryCollapsed ? "library.expand" : "library.collapse")}><Icon name="chevron" size={15} /><Tooltip side="right">{t(isLibraryCollapsed ? "library.expand" : "library.collapse")}</Tooltip></button>
           </div>
-          <div className="asset-list" role="listbox" aria-multiselectable="true" tabIndex={assets.length ? 0 : undefined} onKeyDown={handleLibraryKeyDown}>
+          <div ref={assetListRef} className={`asset-list ${libraryDragVisual ? "reordering" : ""}`} role="listbox" aria-multiselectable="true" aria-describedby="library-reorder-help" tabIndex={assets.length ? 0 : undefined} onKeyDown={handleLibraryKeyDown}>
+            <span id="library-reorder-help" className="sr-only">{t("library.reorderHint")}</span>
             {assets.length === 0 ? (
               <div className="library-empty"><Icon name="image" size={24} /><span>{t(isWorkspaceLoaded ? "library.empty" : "library.loading")}</span></div>
             ) : assets.map((asset, index) => (
-              <button key={asset.id} className={`asset-row ${selectedIdSet.has(asset.id) ? "selected" : ""} ${asset.id === selectedId ? "active" : ""}`} role="option" aria-selected={selectedIdSet.has(asset.id)} onClick={(event) => selectAssetFromList(event, asset.id)} onContextMenu={(event) => openAssetContextMenu(event, asset.id)}>
-                <span className="asset-index">{String(index + 1).padStart(2, "0")}</span>
-                <span className="asset-thumb">{asset.thumbnailUrl || asset.previewUrl ? <img src={asset.thumbnailUrl ?? asset.previewUrl} alt="" /> : <Icon name="image" size={16} />}</span>
+              <button
+                key={asset.id}
+                data-asset-id={asset.id}
+                className={`asset-row ${selectedIdSet.has(asset.id) ? "selected" : ""} ${asset.id === selectedId ? "active" : ""} ${libraryDraggedIdSet.has(asset.id) ? "dragging" : ""} ${libraryDropBeforeId === asset.id ? "drop-before" : ""}`}
+                role="option"
+                aria-selected={selectedIdSet.has(asset.id)}
+                onClick={(event) => selectAssetFromList(event, asset.id)}
+                onContextMenu={(event) => openAssetContextMenu(event, asset.id)}
+                onPointerDown={(event) => handleAssetPointerDown(event, asset.id)}
+                onPointerMove={handleAssetPointerMove}
+                onPointerUp={(event) => finishLibraryDrag(event, true)}
+                onPointerCancel={(event) => finishLibraryDrag(event, false)}
+              >
+                <span className="asset-order-cell"><span className="asset-index">{String(index + 1).padStart(2, "0")}</span><span className="asset-reorder-grip" title={t("library.dragHandle")} aria-hidden="true"><i /><i /><i /><i /><i /><i /></span></span>
+                <span className="asset-thumb">{asset.thumbnailUrl || asset.previewUrl ? <img src={asset.thumbnailUrl ?? asset.previewUrl} alt="" draggable={false} /> : <Icon name="image" size={16} />}</span>
                 <span className="asset-copy">
                   <strong title={asset.name}>{asset.name}</strong>
                   <small>{formatDimensions(asset.width, asset.height, formatLocale, t("format.unknownDimensions"))} · {formatBytes(asset.sizeBytes, formatLocale)}</small>
@@ -1414,7 +1650,10 @@ function App() {
                 <span className={`asset-status-badge ${asset.status}`} title={asset.error || t(`status.${asset.status}`)}>{t(`status.short.${asset.status}`)}</span>
               </button>
             ))}
+            {libraryDropAtEnd && <div className="library-drop-marker end" aria-hidden="true" />}
           </div>
+          <div className="sr-only" role="status" aria-live="polite">{libraryAnnouncement}</div>
+          {libraryDragVisual && libraryDragLead && <div className="library-drag-ghost" style={{ left: libraryDragVisual.clientX + 12, top: libraryDragVisual.clientY + 12 }} aria-hidden="true"><span className="asset-thumb">{libraryDragLead.thumbnailUrl || libraryDragLead.previewUrl ? <img src={libraryDragLead.thumbnailUrl ?? libraryDragLead.previewUrl} alt="" draggable={false} /> : <Icon name="image" size={16} />}</span><strong>{libraryDragVisual.draggedIds.length > 1 ? t("library.draggingMany", { count: libraryDragVisual.draggedIds.length }) : libraryDragLead.name}</strong></div>}
           {assets.length > 0 && (
             <div className="library-footer-actions">
               <button className="add-more" onClick={addFilesFromDialog} disabled={isProcessing}><Icon name="add" size={16} />{t("app.addMore")}</button>
@@ -1800,6 +2039,11 @@ function App() {
               <span className="context-separator" />
               <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(-1); }}><span>{t("preview.rotateLeft")}</span></button>
               <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(1); }}><span>{t("preview.rotateRight")}</span></button>
+              <span className="context-separator" />
+              <button role="menuitem" onClick={() => { moveLibraryAssets("up", contextAsset.id); setContextMenu(null); }} disabled={isProcessing}><span>{t("library.moveUp")}</span><kbd>Alt+↑</kbd></button>
+              <button role="menuitem" onClick={() => { moveLibraryAssets("down", contextAsset.id); setContextMenu(null); }} disabled={isProcessing}><span>{t("library.moveDown")}</span><kbd>Alt+↓</kbd></button>
+              <button role="menuitem" onClick={() => { moveLibraryAssets("top", contextAsset.id); setContextMenu(null); }} disabled={isProcessing}><span>{t("library.moveTop")}</span><kbd>Alt+Home</kbd></button>
+              <button role="menuitem" onClick={() => { moveLibraryAssets("bottom", contextAsset.id); setContextMenu(null); }} disabled={isProcessing}><span>{t("library.moveBottom")}</span><kbd>Alt+End</kbd></button>
               <span className="context-separator" />
               <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.path)}><span>{t("context.openOriginalLocation")}</span></button>
               <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.outputPath!)} disabled={!contextAsset.outputPath}><span>{t("context.openResultLocation")}</span></button>
