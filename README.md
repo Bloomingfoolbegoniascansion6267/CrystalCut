@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.0.3" src="https://img.shields.io/badge/version-1.0.3-7057e8" />
+  <img alt="Version 1.0.4" src="https://img.shields.io/badge/version-1.0.4-7057e8" />
   <img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue" />
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/engine-Rust-000000?logo=rust&logoColor=white" />
@@ -137,7 +137,7 @@ Open [GitHub Releases](https://github.com/pkh31337/CrystalCut/releases/latest) a
 - **macOS Apple Silicon:** for Macs with M1, M2, M3, M4, or newer Apple chips.
 - **macOS Intel:** for older Intel-based Macs.
 
-Community builds are currently unsigned. Windows SmartScreen or macOS Gatekeeper may therefore ask you to confirm the first launch. Code signing and notarization can be added later without placing credentials in the repository.
+Windows community installers are currently unsigned, so SmartScreen may ask you to confirm the first launch. The application inside every macOS package is code-signed: release builds use a Developer ID certificate and Apple notarization when the repository credentials are configured, and otherwise use an ad-hoc signature to keep the downloaded application bundle intact. An ad-hoc-signed build can still require confirmation in **System Settings > Privacy & Security**.
 
 The U2NetP and SlimSAM model files are not bundled in the installer. They are downloaded only when required, verified against pinned size and hash metadata, and cached in the application data folder. The first use of each AI feature therefore requires an internet connection; image processing itself stays local.
 
@@ -183,7 +183,7 @@ Native file inspection, AI inference, and export require the Tauri desktop runti
 
 ```powershell
 npm run build
-npm run check:release -- v1.0.3
+npm run check:release -- v1.0.4
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
@@ -197,7 +197,7 @@ npm run build:bundle
 
 ## Publishing a release
 
-The tag-driven [release workflow](.github/workflows/release.yml) validates that the tag matches all application manifests, builds Windows x64, macOS Apple Silicon, and macOS Intel packages in parallel, creates a GitHub Release titled `CrystalCut v__VERSION__`, and uploads each installer.
+The tag-driven [release workflow](.github/workflows/release.yml) validates that the tag matches all application manifests, builds Windows x64 on Windows and both macOS architectures on macOS, verifies the macOS app signature and DMG integrity, and publishes the draft GitHub Release only after every native package succeeds.
 
 Keep the version identical in:
 
@@ -208,13 +208,28 @@ Keep the version identical in:
 Then validate and push an annotated tag:
 
 ```powershell
-npm run check:release -- v1.0.3
-git tag -a v1.0.3 -m "CrystalCut v1.0.3"
+npm run check:release -- v1.0.4
+git tag -a v1.0.4 -m "CrystalCut v1.0.4"
 git push origin main
-git push origin v1.0.3
+git push origin v1.0.4
 ```
 
 > **Intel macOS note:** CrystalCut pins `ort` to `2.0.0-rc.10`, the newest compatible release that still publishes an `x86_64-apple-darwin` ONNX Runtime binary. Do not upgrade it independently while Intel macOS remains in the release matrix.
+
+### macOS signing and notarization
+
+DMG packages must be built on macOS; a Windows build machine cannot produce a distributable macOS application. `bundle.macOS.signingIdentity` therefore defaults to Tauri's ad-hoc identity (`-`), which prevents Apple Silicon from treating an entirely unsigned downloaded bundle as damaged.
+
+For public distribution without a Gatekeeper override, enroll in the Apple Developer Program and add all of these GitHub Actions repository secrets:
+
+- `APPLE_CERTIFICATE`: single-line base64 Developer ID Application `.p12` created with `openssl base64 -A -in certificate.p12`
+- `APPLE_CERTIFICATE_PASSWORD`: password used when exporting the `.p12`
+- `APPLE_SIGNING_IDENTITY`: full `Developer ID Application: ...` identity
+- `APPLE_ID`: Apple Developer account email
+- `APPLE_PASSWORD`: app-specific password for that Apple ID
+- `APPLE_TEAM_ID`: Apple Developer Team ID
+
+The workflow rejects a partially configured set so it cannot silently publish an unnotarized Developer ID build. When all six values are present, Tauri imports the certificate, signs the app, submits it to Apple for notarization, and staples the ticket before the release is published. Secrets remain in GitHub Actions and are never stored in the repository.
 
 ## Project layout
 
@@ -233,7 +248,7 @@ src-tauri/src/          Rust coordinator, worker, inference, and image pipeline
 - U2NetP is the lightweight baseline; hair, fur, glass, and other difficult edges may still need manual refinement.
 - Processing is CPU-first. DirectML and CoreML execution remain disabled until quality and recovery behavior are validated.
 - The first model download duration depends on network speed.
-- Public installers are not yet code-signed or notarized.
+- Windows installers are not yet code-signed. macOS uses ad-hoc signing by default and supports Developer ID signing and notarization through repository secrets.
 - Third-party software and AI model terms must be reviewed before commercial redistribution.
 
 Well-scoped bug reports are welcome. Include the OS, CPU architecture, CrystalCut version, model status, and diagnostics shown in Settings. Do not attach private source images unless you explicitly choose to share them.

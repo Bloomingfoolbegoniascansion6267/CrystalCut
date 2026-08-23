@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  publish:
+  build:
     name: ${{ matrix.label }}
     strategy:
       fail-fast: false
@@ -51,6 +51,50 @@ jobs:
       - name: Verify release version
         run: npm run check:release -- ${{ github.ref_name }}
 
+      - name: Validate macOS signing configuration
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          values=(
+            "$APPLE_CERTIFICATE"
+            "$APPLE_CERTIFICATE_PASSWORD"
+            "$APPLE_SIGNING_IDENTITY"
+            "$APPLE_ID"
+            "$APPLE_PASSWORD"
+            "$APPLE_TEAM_ID"
+          )
+          configured=0
+          for value in "${values[@]}"; do
+            if [[ -n "$value" ]]; then
+              configured=$((configured + 1))
+            fi
+          done
+
+          if [[ "$configured" -ne 0 && "$configured" -ne "${#values[@]}" ]]; then
+            echo "macOS release signing is only partially configured." >&2
+            echo "Set all six Apple secrets or remove all of them to use the ad-hoc fallback." >&2
+            exit 1
+          fi
+
+          if [[ "$configured" -eq 0 ]]; then
+            echo "Apple credentials are absent; using the ad-hoc signing identity from tauri.conf.json."
+          else
+            echo "Developer ID signing and Apple notarization are enabled."
+            printf '%s\n' "APPLE_CERTIFICATE=$APPLE_CERTIFICATE" >> "$GITHUB_ENV"
+            printf '%s\n' "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD" >> "$GITHUB_ENV"
+            printf '%s\n' "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+            printf '%s\n' "APPLE_ID=$APPLE_ID" >> "$GITHUB_ENV"
+            printf '%s\n' "APPLE_PASSWORD=$APPLE_PASSWORD" >> "$GITHUB_ENV"
+            printf '%s\n' "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+          fi
+
       - name: Build and publish installers
         uses: tauri-apps/tauri-action@v0.6.2
         env:
@@ -60,7 +104,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: CrystalCut v__VERSION__
           releaseBody: |
-            CrystalCut 1.0.2 brings the complete local-first background-removal and batch-conversion workflow together in a faster, clearer desktop experience.
+            CrystalCut 1.0.4 fixes macOS release installation and keeps the complete local-first background-removal and batch-conversion workflow available on both Windows and macOS.
 
             ## Highlights
 
@@ -75,6 +119,8 @@ jobs:
 
             ## Reliability and UX fixes
 
+            - macOS apps are code-signed, DMG integrity is checked, and only a fully verified release is published.
+            - Developer ID credentials automatically enable Apple notarization; otherwise a bundle-preserving ad-hoc signature is used.
             - HTTPS model downloads include the required Rustls transport instead of failing at runtime.
             - Packaged applications load bundled assets directly and no longer depend on a development server.
             - Intel macOS uses an ONNX Runtime package that provides an `x86_64-apple-darwin` binary.
@@ -97,11 +143,67 @@ jobs:
 
             ## Installation notice
 
-            These community builds are currently unsigned. Windows SmartScreen may display a warning, and macOS Gatekeeper may require first-launch confirmation in **System Settings > Privacy & Security**.
-          releaseDraft: false
+            Windows SmartScreen may display a warning for unsigned Windows installers. The application inside every macOS package is code-signed; when Developer ID credentials are not configured, Gatekeeper may still require first-launch confirmation in **System Settings > Privacy & Security**.
+          # Keep the release private until every native package passes its
+          # platform verification step below.
+          releaseDraft: true
           prerelease: false
           generateReleaseNotes: true
           includeUpdaterJson: false
           assetNamePattern: CrystalCut_[version]_[platform]_[arch][setup][ext]
           retryAttempts: 2
           args: ${{ matrix.args }}
+
+      - name: Verify macOS application and disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+        run: |
+          dmg_dir="src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
+
+          shopt -s nullglob
+          dmgs=("$dmg_dir"/*.dmg)
+          if [[ "${#dmgs[@]}" -ne 1 ]]; then
+            echo "Expected exactly one DMG in $dmg_dir; found ${#dmgs[@]}." >&2
+            exit 1
+          fi
+
+          hdiutil verify "${dmgs[0]}"
+
+          mount_dir="$(mktemp -d)"
+          mounted=false
+          cleanup() {
+            if [[ "$mounted" == true ]]; then
+              hdiutil detach "$mount_dir" >/dev/null || true
+            fi
+            rmdir "$mount_dir" || true
+          }
+          trap cleanup EXIT
+
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "${dmgs[0]}"
+          mounted=true
+          app="$mount_dir/CrystalCut.app"
+          if [[ ! -d "$app" ]]; then
+            echo "CrystalCut.app is missing from the DMG." >&2
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          if [[ -n "$APPLE_ID" ]]; then
+            spctl --assess --type execute --verbose=4 "$app"
+            xcrun stapler validate "$app"
+          fi
+
+  publish:
+    name: Publish verified release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --repo "$GITHUB_REPOSITORY"
