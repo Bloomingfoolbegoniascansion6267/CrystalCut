@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const WORKER_PROTOCOL_VERSION: u16 = 5;
+pub const WORKER_PROTOCOL_VERSION: u16 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +18,8 @@ pub struct ProcessItem {
     pub edge_settings: EdgeSettings,
     #[serde(default)]
     pub metadata_policy: Option<MetadataOutputPolicy>,
+    #[serde(default)]
+    pub resize_override: Option<ResizeOverride>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +28,21 @@ pub struct MetadataOutputPolicy {
     pub preserve_metadata: bool,
     pub preserve_gps: bool,
     pub preserve_prompt: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResizeOverride {
+    pub axis: ResizeAxis,
+    pub value: u32,
+    pub prevent_upscale: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResizeAxis {
+    Width,
+    Height,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -165,6 +182,8 @@ pub enum ResizeMode {
     Original,
     Percent,
     LongEdge,
+    Width,
+    Height,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -557,6 +557,9 @@ fn prepare_export_plan_blocking(
     settings: OutputSettings,
 ) -> Result<ExportPlan, String> {
     validate_settings(&settings)?;
+    for item in &items {
+        validate_settings(&output_settings_for_item(&settings, item))?;
+    }
     let mut reserved = HashSet::new();
     let planned_outputs = items
         .iter()
@@ -627,6 +630,14 @@ fn output_settings_for_item(settings: &OutputSettings, item: &ProcessItem) -> Ou
         resolved.preserve_metadata = policy.preserve_metadata;
         resolved.preserve_gps = policy.preserve_metadata && policy.preserve_gps;
         resolved.preserve_prompt = policy.preserve_metadata && policy.preserve_prompt;
+    }
+    if let Some(resize_override) = item.resize_override {
+        resolved.resize_mode = match resize_override.axis {
+            protocol::ResizeAxis::Width => ResizeMode::Width,
+            protocol::ResizeAxis::Height => ResizeMode::Height,
+        };
+        resolved.resize_value = resize_override.value;
+        resolved.prevent_upscale = resize_override.prevent_upscale;
     }
     resolved
 }
@@ -876,6 +887,9 @@ fn process_batch_blocking(
     settings: OutputSettings,
     controller: BatchController,
 ) -> Result<BatchResult, String> {
+    for item in &items {
+        validate_settings(&output_settings_for_item(&settings, item))?;
+    }
     if matches!(settings.processing_mode, ProcessingMode::RemoveBackground) {
         for item in &items {
             validate_mask_recipe(&item.mask_recipe)?;
@@ -1265,8 +1279,12 @@ fn validate_settings(settings: &OutputSettings) -> Result<(), String> {
     if matches!(settings.resize_mode, ResizeMode::Percent) && settings.resize_value > 1_000 {
         return Err("비율은 안전을 위해 1,000% 이하여야 합니다.".to_owned());
     }
-    if matches!(settings.resize_mode, ResizeMode::LongEdge) && settings.resize_value > 32_768 {
-        return Err("긴 변은 안전을 위해 32,768px 이하여야 합니다.".to_owned());
+    if matches!(
+        settings.resize_mode,
+        ResizeMode::LongEdge | ResizeMode::Width | ResizeMode::Height
+    ) && settings.resize_value > 32_768
+    {
+        return Err("출력 크기는 안전을 위해 32,768px 이하여야 합니다.".to_owned());
     }
     if matches!(settings.output_location, OutputLocation::Custom)
         && settings.output_directory.trim().is_empty()
@@ -1548,6 +1566,7 @@ mod tests {
             mask_recipe: protocol::ManualMaskRecipe::default(),
             edge_settings: EdgeSettings::default(),
             metadata_policy: None,
+            resize_override: None,
         }];
 
         let plan = prepare_export_plan_blocking(items, settings()).expect("prepare export plan");
@@ -1578,6 +1597,7 @@ mod tests {
                 preserve_gps: true,
                 preserve_prompt: false,
             }),
+            resize_override: None,
         };
 
         let resolved = output_settings_for_item(&global, &item);
@@ -1606,12 +1626,44 @@ mod tests {
                 preserve_gps: true,
                 preserve_prompt: true,
             }),
+            resize_override: None,
         };
 
         let resolved = output_settings_for_item(&global, &item);
         assert!(!resolved.preserve_metadata);
         assert!(!resolved.preserve_gps);
         assert!(!resolved.preserve_prompt);
+    }
+
+    #[test]
+    fn per_file_resize_override_replaces_only_global_resize_fields() {
+        let mut global = settings();
+        global.resize_mode = ResizeMode::Percent;
+        global.resize_value = 50;
+        global.prevent_upscale = false;
+        global.format = protocol::OutputFormat::Webp;
+        let item = ProcessItem {
+            id: "resize-override".to_owned(),
+            path: "photo.jpg".to_owned(),
+            rotation: 0,
+            sequence: None,
+            exif: None,
+            mask_recipe: protocol::ManualMaskRecipe::default(),
+            edge_settings: EdgeSettings::default(),
+            metadata_policy: None,
+            resize_override: Some(protocol::ResizeOverride {
+                axis: protocol::ResizeAxis::Height,
+                value: 1_080,
+                prevent_upscale: true,
+            }),
+        };
+
+        let resolved = output_settings_for_item(&global, &item);
+        assert_eq!(resolved.resize_mode, ResizeMode::Height);
+        assert_eq!(resolved.resize_value, 1_080);
+        assert!(resolved.prevent_upscale);
+        assert_eq!(resolved.format, protocol::OutputFormat::Webp);
+        assert_eq!(global.resize_mode, ResizeMode::Percent);
     }
 
     #[test]

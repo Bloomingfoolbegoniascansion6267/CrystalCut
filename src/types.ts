@@ -22,6 +22,7 @@ export interface ImageAsset {
   maskRecipe: ManualMaskRecipe;
   edgeSettings: EdgeSettings;
   metadataPolicy: MetadataOutputPolicy | null;
+  resizeOverride: ResizeOverride | null;
 }
 
 export type MaskMode = "automatic" | "refine" | "manual" | "sam";
@@ -65,6 +66,7 @@ export interface ExifSummary {
 
 export type OutputFormat = "png" | "webp";
 export type ResizeMode = "original" | "percent" | "longEdge";
+export type ResizeAxis = "width" | "height";
 export type OutputLocation = "subfolder" | "sameFolder" | "custom";
 export type ProcessingMode = "removeBackground" | "convert";
 
@@ -91,6 +93,12 @@ export interface MetadataOutputPolicy {
   preserveMetadata: boolean;
   preserveGps: boolean;
   preservePrompt: boolean;
+}
+
+export interface ResizeOverride {
+  axis: ResizeAxis;
+  value: number;
+  preventUpscale: boolean;
 }
 
 export type PersistedAsset = Omit<ImageAsset, "thumbnailUrl" | "previewUrl" | "resultPreviewUrl" | "editBasePreviewUrl" | "maskPreviewUrl">;
@@ -134,6 +142,7 @@ export interface ProcessItem {
   maskRecipe: ManualMaskRecipe;
   edgeSettings: EdgeSettings;
   metadataPolicy?: MetadataOutputPolicy | null;
+  resizeOverride?: ResizeOverride | null;
 }
 
 export type BatchProgressStatus = "modelDownloading" | "queued" | "processing" | "retryingWorker" | "completed" | "failed" | "cancelled";

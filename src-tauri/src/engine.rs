@@ -568,13 +568,31 @@ fn target_dimensions(width: u32, height: u32, settings: &OutputSettings) -> (u32
             if settings.prevent_upscale && long_edge <= settings.resize_value {
                 return (width, height);
             }
-            let scale = settings.resize_value as f64 / f64::from(long_edge);
-            (
-                (f64::from(width) * scale).round().max(1.0) as u32,
-                (f64::from(height) * scale).round().max(1.0) as u32,
-            )
+            scaled_dimensions(width, height, settings.resize_value, long_edge)
+        }
+        ResizeMode::Width => {
+            if settings.prevent_upscale && width <= settings.resize_value {
+                return (width, height);
+            }
+            scaled_dimensions(width, height, settings.resize_value, width)
+        }
+        ResizeMode::Height => {
+            if settings.prevent_upscale && height <= settings.resize_value {
+                return (width, height);
+            }
+            scaled_dimensions(width, height, settings.resize_value, height)
         }
     }
+}
+
+fn scaled_dimensions(width: u32, height: u32, target: u32, source_axis: u32) -> (u32, u32) {
+    let requested_scale = f64::from(target) / f64::from(source_axis.max(1));
+    let safe_scale = 32_768.0 / f64::from(width.max(height).max(1));
+    let scale = requested_scale.min(safe_scale);
+    (
+        (f64::from(width) * scale).round().max(1.0) as u32,
+        (f64::from(height) * scale).round().max(1.0) as u32,
+    )
 }
 
 fn encode(
@@ -782,6 +800,34 @@ mod tests {
         let source = DynamicImage::new_rgba8(80, 40);
         let resized = resize(source, &settings(ResizeMode::LongEdge, 100, true));
         assert_eq!(resized.dimensions(), (80, 40));
+    }
+
+    #[test]
+    fn width_resize_preserves_aspect_ratio() {
+        assert_eq!(
+            target_dimensions(4_000, 3_000, &settings(ResizeMode::Width, 1_200, true)),
+            (1_200, 900)
+        );
+    }
+
+    #[test]
+    fn height_resize_preserves_aspect_ratio() {
+        assert_eq!(
+            target_dimensions(4_000, 3_000, &settings(ResizeMode::Height, 600, true)),
+            (800, 600)
+        );
+    }
+
+    #[test]
+    fn axis_resize_respects_prevent_upscale() {
+        assert_eq!(
+            target_dimensions(800, 600, &settings(ResizeMode::Width, 1_200, true)),
+            (800, 600)
+        );
+        assert_eq!(
+            target_dimensions(800, 600, &settings(ResizeMode::Height, 900, false)),
+            (1_200, 900)
+        );
     }
 
     #[test]

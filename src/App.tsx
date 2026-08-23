@@ -109,6 +109,7 @@ const toPersistedAsset = (asset: ImageAsset): PersistedAsset => ({
   maskRecipe: asset.maskRecipe,
   edgeSettings: asset.edgeSettings,
   metadataPolicy: asset.metadataPolicy,
+  resizeOverride: asset.resizeOverride,
 });
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
@@ -285,7 +286,7 @@ function App() {
   const persistedAssets = useMemo(() => assets.map(toPersistedAsset), [assets]);
   const workspaceKey = useMemo(() => JSON.stringify({ items: persistedAssets, settings }), [persistedAssets, settings]);
   const planKey = useMemo(() => JSON.stringify({
-    items: assets.map(({ path, rotation, maskRecipe, edgeSettings, metadataPolicy }) => ({ path, rotation, maskRecipe, edgeSettings, metadataPolicy })),
+    items: assets.map(({ path, rotation, maskRecipe, edgeSettings, metadataPolicy, resizeOverride }) => ({ path, rotation, maskRecipe, edgeSettings, metadataPolicy, resizeOverride })),
     settings,
   }), [assets, settings]);
 
@@ -330,7 +331,7 @@ function App() {
     if (!paths.length) return;
     try {
       const inspected = await invoke<Omit<ImageAsset, "status" | "rotation">[]>("inspect_paths", { paths });
-      const incoming: ImageAsset[] = inspected.map((asset) => ({ ...asset, status: "ready", rotation: 0, maskRecipe: DEFAULT_MASK_RECIPE, edgeSettings: { ...DEFAULT_EDGE_SETTINGS }, metadataPolicy: null }));
+      const incoming: ImageAsset[] = inspected.map((asset) => ({ ...asset, status: "ready", rotation: 0, maskRecipe: DEFAULT_MASK_RECIPE, edgeSettings: { ...DEFAULT_EDGE_SETTINGS }, metadataPolicy: null, resizeOverride: null }));
       addAssets(incoming);
       preloadThumbnails(incoming);
     } catch (error) {
@@ -366,7 +367,7 @@ function App() {
           return;
         }
         setSettings(restored.settings);
-        const restoredItems = restored.items.map((asset) => ({ ...asset, metadataPolicy: asset.metadataPolicy ?? null }));
+        const restoredItems = restored.items.map((asset) => ({ ...asset, metadataPolicy: asset.metadataPolicy ?? null, resizeOverride: asset.resizeOverride ?? null }));
         setAssets(restoredItems);
         preloadThumbnails(restoredItems);
         setSelectedId(restored.items[0]?.id ?? null);
@@ -481,7 +482,7 @@ function App() {
     const timer = window.setTimeout(() => {
       setIsEstimating(true);
       void invoke<ExportPlan>("prepare_export_plan", {
-        items: assets.map((asset, index) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, sequence: index + 1, exif: asset.exif, maskRecipe: asset.maskRecipe, edgeSettings: asset.edgeSettings, metadataPolicy: asset.metadataPolicy })),
+        items: assets.map((asset, index) => ({ id: asset.id, path: asset.path, rotation: asset.rotation, sequence: index + 1, exif: asset.exif, maskRecipe: asset.maskRecipe, edgeSettings: asset.edgeSettings, metadataPolicy: asset.metadataPolicy, resizeOverride: asset.resizeOverride })),
         settings,
       })
         .then((plan) => {
@@ -613,6 +614,7 @@ function App() {
         maskRecipe: DEFAULT_MASK_RECIPE,
         edgeSettings: { ...DEFAULT_EDGE_SETTINGS },
         metadataPolicy: null,
+        resizeOverride: null,
       }));
     addAssets(incoming);
     event.target.value = "";
@@ -878,6 +880,7 @@ function App() {
           maskRecipe: asset.maskRecipe,
           edgeSettings: asset.edgeSettings,
           metadataPolicy: asset.metadataPolicy,
+          resizeOverride: asset.resizeOverride,
         })),
         settings,
       });

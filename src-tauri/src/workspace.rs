@@ -9,10 +9,12 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     metadata::ExifSummary,
-    protocol::{EdgeSettings, ManualMaskRecipe, MetadataOutputPolicy, OutputSettings},
+    protocol::{
+        EdgeSettings, ManualMaskRecipe, MetadataOutputPolicy, OutputSettings, ResizeOverride,
+    },
 };
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 const DATABASE_FILE: &str = "workspace.sqlite3";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +43,8 @@ pub struct PersistedAsset {
     pub edge_settings: EdgeSettings,
     #[serde(default)]
     pub metadata_policy: Option<MetadataOutputPolicy>,
+    #[serde(default)]
+    pub resize_override: Option<ResizeOverride>,
     pub output_path: Option<String>,
     pub output_bytes: Option<u64>,
     pub error: Option<String>,
@@ -329,6 +333,19 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             .map_err(|error| {
                 format!("파일별 메타데이터 정책 schema를 만들지 못했습니다: {error}")
             })?;
+        version = 5;
+    }
+    if version == 5 {
+        connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 ALTER TABLE workspace_items ADD COLUMN resize_override_json TEXT;
+                 PRAGMA user_version = 6;
+                 COMMIT;",
+            )
+            .map_err(|error| {
+                format!("파일별 크기 변경 설정 schema를 만들지 못했습니다: {error}")
+            })?;
     }
     Ok(())
 }
@@ -438,14 +455,19 @@ fn insert_asset(
         .map(|policy| serde_json::to_string(&policy))
         .transpose()
         .map_err(|error| format!("메타데이터 정책을 직렬화하지 못했습니다: {error}"))?;
+    let resize_override_json = item
+        .resize_override
+        .map(|resize_override| serde_json::to_string(&resize_override))
+        .transpose()
+        .map_err(|error| format!("파일별 크기 변경 설정을 직렬화하지 못했습니다: {error}"))?;
     let modified_at_ms = file_modified_ms(Path::new(&item.path));
     transaction
         .execute(
             "INSERT INTO workspace_items(
                 id, position, name, path, size_bytes, modified_at_ms, extension, width, height,
                 exif_json, status, rotation, mask_recipe_json, edge_settings_json, metadata_policy_json,
-                output_path, output_bytes, error
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                resize_override_json, output_path, output_bytes, error
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 item.id,
                 to_i64(position as u64),
@@ -462,6 +484,7 @@ fn insert_asset(
                 mask_recipe_json,
                 edge_settings_json,
                 metadata_policy_json,
+                resize_override_json,
                 item.output_path,
                 item.output_bytes.map(to_i64),
                 item.error,
@@ -489,7 +512,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
         .prepare(
             "SELECT id, name, path, size_bytes, modified_at_ms, extension, width, height, exif_json,
                     status, rotation, mask_recipe_json, edge_settings_json, metadata_policy_json,
-                    output_path, output_bytes, error
+                    resize_override_json, output_path, output_bytes, error
              FROM workspace_items ORDER BY position",
         )
         .map_err(|error| format!("저장된 작업 항목 query를 준비하지 못했습니다: {error}"))?;
@@ -511,8 +534,9 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
                 row.get::<_, String>(12)?,
                 row.get::<_, Option<String>>(13)?,
                 row.get::<_, Option<String>>(14)?,
-                row.get::<_, Option<i64>>(15)?,
-                row.get::<_, Option<String>>(16)?,
+                row.get::<_, Option<String>>(15)?,
+                row.get::<_, Option<i64>>(16)?,
+                row.get::<_, Option<String>>(17)?,
             ))
         })
         .map_err(|error| format!("저장된 작업 항목을 읽지 못했습니다: {error}"))?;
@@ -536,6 +560,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             mask_recipe_json,
             edge_settings_json,
             metadata_policy_json,
+            resize_override_json,
             output_path,
             output_bytes,
             error,
@@ -554,6 +579,12 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             .map(|value| serde_json::from_str(&value))
             .transpose()
             .map_err(|error| format!("저장된 메타데이터 정책이 올바르지 않습니다: {error}"))?;
+        let resize_override = resize_override_json
+            .map(|value| serde_json::from_str(&value))
+            .transpose()
+            .map_err(|error| {
+                format!("저장된 파일별 크기 변경 설정이 올바르지 않습니다: {error}")
+            })?;
         let mut item = PersistedAsset {
             id,
             name,
@@ -568,6 +599,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             mask_recipe,
             edge_settings,
             metadata_policy,
+            resize_override,
             output_path,
             output_bytes: output_bytes.map(to_u64),
             error,
@@ -621,6 +653,11 @@ fn normalize_restored_asset(item: &mut PersistedAsset, saved_modified_at_ms: Opt
 
 fn validate_asset(item: &PersistedAsset) -> Result<(), String> {
     crate::validate_edge_settings(&item.edge_settings)?;
+    if let Some(resize_override) = item.resize_override {
+        if resize_override.value == 0 || resize_override.value > 32_768 {
+            return Err("파일별 출력 크기는 1px에서 32,768px 사이여야 합니다.".to_owned());
+        }
+    }
     if item.id.trim().is_empty() || item.path.trim().is_empty() {
         return Err("저장할 작업 항목의 ID와 경로는 비워둘 수 없습니다.".to_owned());
     }
@@ -702,6 +739,7 @@ mod tests {
             mask_recipe: ManualMaskRecipe::default(),
             edge_settings: EdgeSettings::default(),
             metadata_policy: None,
+            resize_override: None,
             output_path: None,
             output_bytes: None,
             error: None,
@@ -738,6 +776,11 @@ mod tests {
             preserve_gps: false,
             preserve_prompt: true,
         });
+        edited.resize_override = Some(ResizeOverride {
+            axis: crate::protocol::ResizeAxis::Width,
+            value: 1_280,
+            prevent_upscale: true,
+        });
         let snapshot = WorkspaceSnapshot {
             items: vec![edited, asset(&second, PersistedStatus::Failed)],
             settings: settings(),
@@ -761,6 +804,14 @@ mod tests {
                 preserve_metadata: true,
                 preserve_gps: false,
                 preserve_prompt: true,
+            })
+        );
+        assert_eq!(
+            restored.items[0].resize_override,
+            Some(ResizeOverride {
+                axis: crate::protocol::ResizeAxis::Width,
+                value: 1_280,
+                prevent_upscale: true,
             })
         );
         assert_eq!(restored.items[1].status, PersistedStatus::Failed);
