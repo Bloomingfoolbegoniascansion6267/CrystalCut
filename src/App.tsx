@@ -110,8 +110,8 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
   );
 }
 
-function InspectorAccordion({ title, summary, children }: { title: string; summary: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+function InspectorAccordion({ title, summary, children, defaultOpen = false }: { title: string; summary: string; children: React.ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <section className={`inspector-accordion output-control ${open ? "open" : ""}`}>
       <button type="button" className="inspector-accordion-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
@@ -144,7 +144,7 @@ function App() {
   const [pendingMaskEditId, setPendingMaskEditId] = useState<string | null>(null);
   const [maskPreviewStatus, setMaskPreviewStatus] = useState<PreviewStatus>("idle");
   const [maskPreviewError, setMaskPreviewError] = useState<string | null>(null);
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(true);
   const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
   const [exportPlan, setExportPlan] = useState<ExportPlan | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
@@ -164,6 +164,8 @@ function App() {
   const [presetName, setPresetName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const inspectorPanelRef = useRef<HTMLElement>(null);
+  const inspectorScrollPositions = useRef<Record<InspectorMode, number>>({ current: 0, output: 0 });
   const skipNextWorkspaceSave = useRef(false);
   const workspaceSaveTimer = useRef<number | null>(null);
   const workspaceSaveQueue = useRef<Promise<void>>(Promise.resolve());
@@ -196,17 +198,26 @@ function App() {
       ? "original"
       : viewMode;
   const previewAsset = selected && previewRecipe ? { ...selected, maskRecipe: previewRecipe } : selected;
+  const switchInspectorMode = useCallback((nextMode: InspectorMode) => {
+    if (nextMode === inspectorMode) return;
+    const panel = inspectorPanelRef.current;
+    if (panel) inspectorScrollPositions.current[inspectorMode] = panel.scrollTop;
+    setInspectorMode(nextMode);
+    window.requestAnimationFrame(() => {
+      if (inspectorPanelRef.current) inspectorPanelRef.current.scrollTop = inspectorScrollPositions.current[nextMode];
+    });
+  }, [inspectorMode]);
 
   useEffect(() => {
     const canInspectCurrent = Boolean(selected && !isMultiSelection);
     if (!canInspectCurrent) {
       hadSingleInspectorSelection.current = false;
-      setInspectorMode("output");
+      switchInspectorMode("output");
     } else if (!hadSingleInspectorSelection.current) {
       hadSingleInspectorSelection.current = true;
-      setInspectorMode("current");
+      switchInspectorMode("current");
     }
-  }, [isMultiSelection, selected?.id]);
+  }, [isMultiSelection, selected?.id, switchInspectorMode]);
   const previewRenderKey = useMemo(() => JSON.stringify({
     processingMode: settings.processingMode,
     resizeMode: settings.resizeMode,
@@ -1253,6 +1264,17 @@ function App() {
     selectionAnchorId.current = selectedId ?? allIds[0] ?? null;
   };
 
+  const handleInspectorTabKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const currentAvailable = Boolean(selected && !isMultiSelection);
+    const nextMode: InspectorMode = event.key === 'ArrowLeft' || event.key === 'Home'
+      ? currentAvailable ? 'current' : 'output'
+      : 'output';
+    switchInspectorMode(nextMode);
+    window.requestAnimationFrame(() => document.getElementById(`inspector-tab-${nextMode}`)?.focus());
+  };
+
   return (
     <div
       className={`app ${isLibraryCollapsed ? "library-collapsed" : ""} ${isInspectorCollapsed ? "inspector-collapsed" : ""}`}
@@ -1379,19 +1401,19 @@ function App() {
           )}
         </section>
 
-        <aside className={`inspector-panel ${isInspectorCollapsed ? "collapsed" : ""}`}>
+        <aside ref={inspectorPanelRef} className={`inspector-panel ${isInspectorCollapsed ? "collapsed" : ""}`}>
           <div className="inspector-header">
             <span className="eyebrow">{t(inspectorMode === "current" ? "common.currentFile" : "output.title")}</span>
             {inspectorMode === "output" && <button className="text-button" onClick={resetOutputSettings}>{t("output.reset")}</button>}
             <button className="panel-toggle inspector-toggle" onClick={() => setIsInspectorCollapsed((value) => !value)} aria-expanded={!isInspectorCollapsed} aria-label={t(isInspectorCollapsed ? "output.expand" : "output.collapse")} title={t(isInspectorCollapsed ? "output.expand" : "output.collapse")}><Icon name="chevron" size={15} /></button>
           </div>
 
-          <div className="inspector-tabs" role="tablist">
-            <button type="button" role="tab" aria-selected={inspectorMode === "current"} aria-controls="current-file-inspector" className={inspectorMode === "current" ? "active" : ""} onClick={() => setInspectorMode("current")} disabled={!selected || isMultiSelection}>{t("common.currentFile")}</button>
-            <button type="button" role="tab" aria-selected={inspectorMode === "output"} aria-controls="output-inspector" className={inspectorMode === "output" ? "active" : ""} onClick={() => setInspectorMode("output")}>{t("output.title")}</button>
+          <div className="inspector-tabs" role="tablist" aria-label={t("output.title")} onKeyDown={handleInspectorTabKeyDown}>
+            <button id="inspector-tab-current" type="button" role="tab" aria-selected={inspectorMode === "current"} aria-controls="current-file-inspector" tabIndex={inspectorMode === "current" ? 0 : -1} className={inspectorMode === "current" ? "active" : ""} onClick={() => switchInspectorMode("current")} disabled={!selected || isMultiSelection} title={!selected || isMultiSelection ? t("selection.emptyHelp") : undefined}>{t("common.currentFile")}</button>
+            <button id="inspector-tab-output" type="button" role="tab" aria-selected={inspectorMode === "output"} aria-controls="output-inspector" tabIndex={inspectorMode === "output" ? 0 : -1} className={inspectorMode === "output" ? "active" : ""} onClick={() => switchInspectorMode("output")}>{t("output.title")}</button>
           </div>
 
-          {inspectorMode === "output" && <div id="output-inspector" className="inspector-tab-panel" role="tabpanel">
+          <div id="output-inspector" className={`inspector-tab-panel ${inspectorMode === "output" ? "active" : ""}`} role="tabpanel" aria-labelledby="inspector-tab-output" hidden={inspectorMode !== "output"} inert={inspectorMode !== "output"}>
           <div className="inspector-group-heading output-control"><span>{t("common.allFiles")}</span><strong>{t("output.outputAndSave")}</strong></div>
 
           <InspectorAccordion title={t("output.preset")} summary={presetSummary}>
@@ -1409,7 +1431,7 @@ function App() {
           </section>
           </InspectorAccordion>
 
-          <InspectorAccordion title={t("output.processingMode")} summary={processingSummary}>
+          <InspectorAccordion title={t("output.processingMode")} summary={processingSummary} defaultOpen>
           <section className="setting-section">
             <label className="setting-label">{t("output.processingMode")}</label>
             <div className="segmented processing-mode">
@@ -1449,7 +1471,7 @@ function App() {
           </section>
           </InspectorAccordion>
 
-          <InspectorAccordion title={t("metadata.title")} summary={metadataSummary}>
+          <InspectorAccordion title={t("metadata.title")} summary={metadataSummary} defaultOpen>
           <section className="setting-section metadata-section">
             <label className="check-row"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setMetadataPreservation(event.target.checked)} /><span><Icon name="check" size={13} /></span>{t("output.keepMetadata")}</label>
             <p className="setting-help flush">{t("metadata.safeHelp")}</p>
@@ -1517,9 +1539,9 @@ function App() {
           </section>
           </InspectorAccordion>
 
-          </div>}
+          </div>
 
-          {inspectorMode === "current" && <div id="current-file-inspector" className="inspector-tab-panel" role="tabpanel">
+          <div id="current-file-inspector" className={`inspector-tab-panel ${inspectorMode === "current" ? "active" : ""}`} role="tabpanel" aria-labelledby="inspector-tab-current" hidden={inspectorMode !== "current"} inert={inspectorMode !== "current"}>
           {selected && <div className="inspector-file-card">
             <span className="inspector-file-thumb">{selected.thumbnailUrl || selected.previewUrl ? <img src={selected.thumbnailUrl ?? selected.previewUrl} alt="" /> : <Icon name="image" size={16} />}</span>
             <span className="inspector-file-copy"><strong title={selected.name}>{selected.name}</strong><small>{formatDimensions(selected.width, selected.height, formatLocale, t("format.unknownDimensions"))} · {selected.extension.toUpperCase()}</small></span>
@@ -1602,7 +1624,7 @@ function App() {
                   <span className="scope-badge">{t("common.allFiles")}</span>
                 </div>
                 <p>{t(settings.preserveMetadata ? "metadata.editsExported" : "metadata.editsNotExported")}</p>
-                <button type="button" onClick={() => setInspectorMode("output")}>{t("metadata.reviewPolicy")}</button>
+                <button type="button" onClick={() => switchInspectorMode("output")}>{t("metadata.reviewPolicy")}</button>
               </div>
               <div className="metadata-editor">
                 <label><span>{t("metadata.takenAt")}</span><input type="text" value={selected.exif.takenAt ?? ""} placeholder="YYYY-MM-DD HH:MM:SS" onChange={(event) => updateSelectedMetadata({ takenAt: event.target.value || null })} /></label>
@@ -1618,7 +1640,7 @@ function App() {
               </div>
             </section>
           </InspectorAccordion>}
-          </div>}
+          </div>
         </aside>
       </main>
 

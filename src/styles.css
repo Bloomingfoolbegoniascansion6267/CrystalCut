@@ -423,7 +423,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .inspector-tabs button:hover:not(:disabled) { color: var(--accent-dark); background: #f5f2ff; }
 .inspector-tabs button.active { color: var(--accent-dark); background: var(--accent-soft); box-shadow: inset 0 0 0 1px #ddd5fb; }
 .inspector-tabs button:disabled { color: #a9abb2; background: #f3f4f6; }
-.inspector-tab-panel { display: flex; flex: 0 0 auto; flex-direction: column; min-width: 0; animation: inspector-tab-in 180ms ease both; }
+.inspector-tab-panel { display: flex; flex: 0 0 auto; flex-direction: column; min-width: 0; }
+.inspector-tab-panel[hidden] { display: none; }
+.inspector-tab-panel.active { animation: inspector-tab-in 180ms ease both; }
 .inspector-file-card { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #fff, #fbfbfc); }
 .inspector-file-thumb { display: grid; width: 38px; height: 38px; overflow: hidden; place-items: center; color: var(--ink-faint); border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
 .inspector-file-thumb img { width: 100%; height: 100%; object-fit: cover; }
