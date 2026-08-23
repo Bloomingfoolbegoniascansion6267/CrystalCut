@@ -16,6 +16,16 @@ pub struct ProcessItem {
     pub mask_recipe: ManualMaskRecipe,
     #[serde(default)]
     pub edge_settings: EdgeSettings,
+    #[serde(default)]
+    pub metadata_policy: Option<MetadataOutputPolicy>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataOutputPolicy {
+    pub preserve_metadata: bool,
+    pub preserve_gps: bool,
+    pub preserve_prompt: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

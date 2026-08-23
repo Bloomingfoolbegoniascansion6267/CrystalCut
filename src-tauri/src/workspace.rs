@@ -9,10 +9,10 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     metadata::ExifSummary,
-    protocol::{EdgeSettings, ManualMaskRecipe, OutputSettings},
+    protocol::{EdgeSettings, ManualMaskRecipe, MetadataOutputPolicy, OutputSettings},
 };
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 const DATABASE_FILE: &str = "workspace.sqlite3";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +39,8 @@ pub struct PersistedAsset {
     pub mask_recipe: ManualMaskRecipe,
     #[serde(default)]
     pub edge_settings: EdgeSettings,
+    #[serde(default)]
+    pub metadata_policy: Option<MetadataOutputPolicy>,
     pub output_path: Option<String>,
     pub output_bytes: Option<u64>,
     pub error: Option<String>,
@@ -314,6 +316,19 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                  COMMIT;",
             )
             .map_err(|error| format!("파일별 가장자리 설정 schema를 만들지 못했습니다: {error}"))?;
+        version = 4;
+    }
+    if version == 4 {
+        connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 ALTER TABLE workspace_items ADD COLUMN metadata_policy_json TEXT;
+                 PRAGMA user_version = 5;
+                 COMMIT;",
+            )
+            .map_err(|error| {
+                format!("파일별 메타데이터 정책 schema를 만들지 못했습니다: {error}")
+            })?;
     }
     Ok(())
 }
@@ -418,13 +433,19 @@ fn insert_asset(
         .map_err(|error| format!("브러시 마스크를 직렬화하지 못했습니다: {error}"))?;
     let edge_settings_json = serde_json::to_string(&item.edge_settings)
         .map_err(|error| format!("가장자리 설정을 직렬화하지 못했습니다: {error}"))?;
+    let metadata_policy_json = item
+        .metadata_policy
+        .map(|policy| serde_json::to_string(&policy))
+        .transpose()
+        .map_err(|error| format!("메타데이터 정책을 직렬화하지 못했습니다: {error}"))?;
     let modified_at_ms = file_modified_ms(Path::new(&item.path));
     transaction
         .execute(
             "INSERT INTO workspace_items(
                 id, position, name, path, size_bytes, modified_at_ms, extension, width, height,
-                exif_json, status, rotation, mask_recipe_json, edge_settings_json, output_path, output_bytes, error
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                exif_json, status, rotation, mask_recipe_json, edge_settings_json, metadata_policy_json,
+                output_path, output_bytes, error
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 item.id,
                 to_i64(position as u64),
@@ -440,6 +461,7 @@ fn insert_asset(
                 i64::from(item.rotation),
                 mask_recipe_json,
                 edge_settings_json,
+                metadata_policy_json,
                 item.output_path,
                 item.output_bytes.map(to_i64),
                 item.error,
@@ -466,7 +488,8 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
     let mut statement = connection
         .prepare(
             "SELECT id, name, path, size_bytes, modified_at_ms, extension, width, height, exif_json,
-                    status, rotation, mask_recipe_json, edge_settings_json, output_path, output_bytes, error
+                    status, rotation, mask_recipe_json, edge_settings_json, metadata_policy_json,
+                    output_path, output_bytes, error
              FROM workspace_items ORDER BY position",
         )
         .map_err(|error| format!("저장된 작업 항목 query를 준비하지 못했습니다: {error}"))?;
@@ -487,8 +510,9 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
                 row.get::<_, String>(11)?,
                 row.get::<_, String>(12)?,
                 row.get::<_, Option<String>>(13)?,
-                row.get::<_, Option<i64>>(14)?,
-                row.get::<_, Option<String>>(15)?,
+                row.get::<_, Option<String>>(14)?,
+                row.get::<_, Option<i64>>(15)?,
+                row.get::<_, Option<String>>(16)?,
             ))
         })
         .map_err(|error| format!("저장된 작업 항목을 읽지 못했습니다: {error}"))?;
@@ -511,6 +535,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             rotation,
             mask_recipe_json,
             edge_settings_json,
+            metadata_policy_json,
             output_path,
             output_bytes,
             error,
@@ -525,6 +550,10 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             .map_err(|error| format!("저장된 브러시 마스크가 올바르지 않습니다: {error}"))?;
         let edge_settings = serde_json::from_str(&edge_settings_json)
             .map_err(|error| format!("저장된 가장자리 설정이 올바르지 않습니다: {error}"))?;
+        let metadata_policy = metadata_policy_json
+            .map(|value| serde_json::from_str(&value))
+            .transpose()
+            .map_err(|error| format!("저장된 메타데이터 정책이 올바르지 않습니다: {error}"))?;
         let mut item = PersistedAsset {
             id,
             name,
@@ -538,6 +567,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             rotation: u16::try_from(rotation).unwrap_or(0),
             mask_recipe,
             edge_settings,
+            metadata_policy,
             output_path,
             output_bytes: output_bytes.map(to_u64),
             error,
@@ -671,6 +701,7 @@ mod tests {
             rotation: 0,
             mask_recipe: ManualMaskRecipe::default(),
             edge_settings: EdgeSettings::default(),
+            metadata_policy: None,
             output_path: None,
             output_bytes: None,
             error: None,
@@ -702,6 +733,11 @@ mod tests {
             }],
         };
         edited.edge_settings.edge_feather = 7;
+        edited.metadata_policy = Some(MetadataOutputPolicy {
+            preserve_metadata: true,
+            preserve_gps: false,
+            preserve_prompt: true,
+        });
         let snapshot = WorkspaceSnapshot {
             items: vec![edited, asset(&second, PersistedStatus::Failed)],
             settings: settings(),
@@ -719,6 +755,14 @@ mod tests {
         ));
         assert_eq!(restored.items[0].mask_recipe.strokes.len(), 1);
         assert_eq!(restored.items[0].edge_settings.edge_feather, 7);
+        assert_eq!(
+            restored.items[0].metadata_policy,
+            Some(MetadataOutputPolicy {
+                preserve_metadata: true,
+                preserve_gps: false,
+                preserve_prompt: true,
+            })
+        );
         assert_eq!(restored.items[1].status, PersistedStatus::Failed);
         assert_eq!(restored.settings.suffix, "_bg");
 

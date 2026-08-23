@@ -21,6 +21,7 @@ export interface ImageAsset {
   rotation: 0 | 90 | 180 | 270;
   maskRecipe: ManualMaskRecipe;
   edgeSettings: EdgeSettings;
+  metadataPolicy: MetadataOutputPolicy | null;
 }
 
 export type MaskMode = "automatic" | "refine" | "manual" | "sam";
@@ -86,6 +87,12 @@ export interface OutputSettings {
   preservePrompt: boolean;
 }
 
+export interface MetadataOutputPolicy {
+  preserveMetadata: boolean;
+  preserveGps: boolean;
+  preservePrompt: boolean;
+}
+
 export type PersistedAsset = Omit<ImageAsset, "thumbnailUrl" | "previewUrl" | "resultPreviewUrl" | "editBasePreviewUrl" | "maskPreviewUrl">;
 
 export interface WorkspaceSnapshot {
@@ -126,6 +133,7 @@ export interface ProcessItem {
   exif?: ExifSummary;
   maskRecipe: ManualMaskRecipe;
   edgeSettings: EdgeSettings;
+  metadataPolicy?: MetadataOutputPolicy | null;
 }
 
 export type BatchProgressStatus = "modelDownloading" | "queued" | "processing" | "retryingWorker" | "completed" | "failed" | "cancelled";

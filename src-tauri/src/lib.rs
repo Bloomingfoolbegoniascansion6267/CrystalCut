@@ -588,7 +588,9 @@ fn prepare_export_plan_blocking(
         let Ok(input_bytes) = path.metadata().map(|metadata| metadata.len()) else {
             continue;
         };
-        let Ok(output_bytes) = engine::estimate_output_size(path, item.rotation, &settings) else {
+        let item_settings = output_settings_for_item(&settings, item);
+        let Ok(output_bytes) = engine::estimate_output_size(path, item.rotation, &item_settings)
+        else {
             continue;
         };
         sampled_input_bytes = sampled_input_bytes.saturating_add(input_bytes);
@@ -617,6 +619,16 @@ fn prepare_export_plan_blocking(
         estimate_sample_count,
         warnings,
     })
+}
+
+fn output_settings_for_item(settings: &OutputSettings, item: &ProcessItem) -> OutputSettings {
+    let mut resolved = settings.clone();
+    if let Some(policy) = item.metadata_policy {
+        resolved.preserve_metadata = policy.preserve_metadata;
+        resolved.preserve_gps = policy.preserve_metadata && policy.preserve_gps;
+        resolved.preserve_prompt = policy.preserve_metadata && policy.preserve_prompt;
+    }
+    resolved
 }
 
 #[tauri::command]
@@ -908,6 +920,7 @@ fn process_batch_blocking(
     let mut reserved = HashSet::new();
     let mut requests = Vec::with_capacity(total);
     for (index, item) in items.iter().enumerate() {
+        let item_settings = output_settings_for_item(&settings, item);
         let output_path = plan_output_path(
             Path::new(&item.path),
             &settings,
@@ -924,7 +937,7 @@ fn process_batch_blocking(
             sam_encoder_path: sam_encoder_path.clone(),
             sam_decoder_path: sam_decoder_path.clone(),
             rotation: item.rotation,
-            settings: settings.clone(),
+            settings: item_settings,
             mask_recipe: item.mask_recipe.clone(),
             edge_settings: item.edge_settings.clone(),
             metadata: item.exif.clone(),
@@ -1534,6 +1547,7 @@ mod tests {
             exif: None,
             mask_recipe: protocol::ManualMaskRecipe::default(),
             edge_settings: EdgeSettings::default(),
+            metadata_policy: None,
         }];
 
         let plan = prepare_export_plan_blocking(items, settings()).expect("prepare export plan");
@@ -1543,6 +1557,61 @@ mod tests {
 
         std::fs::remove_file(source).expect("remove estimate fixture");
         std::fs::remove_dir(temp_dir).expect("remove estimate directory");
+    }
+
+    #[test]
+    fn per_file_metadata_policy_overrides_global_output_settings() {
+        let mut global = settings();
+        global.preserve_metadata = false;
+        global.preserve_gps = false;
+        global.preserve_prompt = false;
+        let item = ProcessItem {
+            id: "metadata-policy".to_owned(),
+            path: "photo.jpg".to_owned(),
+            rotation: 0,
+            sequence: None,
+            exif: None,
+            mask_recipe: protocol::ManualMaskRecipe::default(),
+            edge_settings: EdgeSettings::default(),
+            metadata_policy: Some(protocol::MetadataOutputPolicy {
+                preserve_metadata: true,
+                preserve_gps: true,
+                preserve_prompt: false,
+            }),
+        };
+
+        let resolved = output_settings_for_item(&global, &item);
+        assert!(resolved.preserve_metadata);
+        assert!(resolved.preserve_gps);
+        assert!(!resolved.preserve_prompt);
+        assert!(!global.preserve_metadata);
+    }
+
+    #[test]
+    fn disabled_file_metadata_policy_clears_sensitive_children() {
+        let mut global = settings();
+        global.preserve_metadata = true;
+        global.preserve_gps = true;
+        global.preserve_prompt = true;
+        let item = ProcessItem {
+            id: "metadata-disabled".to_owned(),
+            path: "photo.jpg".to_owned(),
+            rotation: 0,
+            sequence: None,
+            exif: None,
+            mask_recipe: protocol::ManualMaskRecipe::default(),
+            edge_settings: EdgeSettings::default(),
+            metadata_policy: Some(protocol::MetadataOutputPolicy {
+                preserve_metadata: false,
+                preserve_gps: true,
+                preserve_prompt: true,
+            }),
+        };
+
+        let resolved = output_settings_for_item(&global, &item);
+        assert!(!resolved.preserve_metadata);
+        assert!(!resolved.preserve_gps);
+        assert!(!resolved.preserve_prompt);
     }
 
     #[test]
