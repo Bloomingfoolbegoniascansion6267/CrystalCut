@@ -283,7 +283,7 @@ impl SamEngine {
             Path::new(&request.output_path),
             &request.settings,
             &request.edge_settings,
-            Some(&source_metadata),
+            Some(request.metadata.as_ref().unwrap_or(&source_metadata)),
         )
     }
 

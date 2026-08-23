@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const WORKER_PROTOCOL_VERSION: u16 = 4;
+pub const WORKER_PROTOCOL_VERSION: u16 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +98,8 @@ pub struct OutputSettings {
     #[serde(default = "crate::naming::default_name_template")]
     pub name_template: String,
     pub preserve_metadata: bool,
+    pub preserve_gps: bool,
+    pub preserve_prompt: bool,
 }
 
 impl Default for OutputSettings {
@@ -117,6 +119,8 @@ impl Default for OutputSettings {
             suffix: "_bg".to_owned(),
             name_template: crate::naming::default_name_template(),
             preserve_metadata: false,
+            preserve_gps: false,
+            preserve_prompt: false,
         }
     }
 }
@@ -175,6 +179,8 @@ pub struct WorkerRequest {
     pub settings: OutputSettings,
     pub mask_recipe: ManualMaskRecipe,
     pub edge_settings: EdgeSettings,
+    #[serde(default)]
+    pub metadata: Option<crate::metadata::ExifSummary>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

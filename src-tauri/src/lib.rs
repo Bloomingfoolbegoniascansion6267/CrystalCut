@@ -927,6 +927,7 @@ fn process_batch_blocking(
             settings: settings.clone(),
             mask_recipe: item.mask_recipe.clone(),
             edge_settings: item.edge_settings.clone(),
+            metadata: item.exif.clone(),
         });
         emit_progress(
             &app,

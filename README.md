@@ -78,7 +78,7 @@ CrystalCut turns background removal into a dependable desktop workflow: add one 
 
 ### Metadata and privacy
 
-When metadata preservation is enabled, CrystalCut writes only the capture date, camera and lens to the output. GPS and the full original EXIF block are never copied. Location EXIF is not stored in the job database.
+CrystalCut reads a focused metadata summary for review, rotation and naming: capture date, camera, lens, description, recognized generation prompt/workflow and GPS coordinates. Output metadata is rebuilt field by field instead of copying the full original EXIF block. Capture details and descriptions can be preserved, while GPS and generation data are opt-in and disabled by default. Metadata edits affect new output files only; originals are never modified.
 
 ## Languages
 
@@ -233,7 +233,7 @@ CrystalCut은 Windows와 macOS에서 동작하는 로컬 우선 배경 제거·�
 - PNG/WebP, 화질·압축, 비율·긴 변 크기 변경
 - 같은 폴더·새 폴더·지정 폴더 저장과 EXIF 기반 파일명
 - 출력 프리셋, 작업 자동 복구, 안전한 취소·재시도
-- 촬영일·카메라·렌즈 선택 보존, GPS 항상 제외
+- 촬영일·카메라·렌즈·설명 선택 보존, GPS·생성 프롬프트는 기본 제외 후 선택 가능
 - 시스템 언어 자동 감지 및 9개 언어 완전 지원
 
 이미지는 외부 서버로 전송되지 않습니다. 최초 AI 기능 사용 시 검증된 모델 파일만 내려받으며, 이후에는 앱 데이터 폴더의 로컬 캐시를 사용합니다. 일반 사용자는 [Releases](../../releases/latest)에서 운영체제에 맞는 설치 파일을 받으면 됩니다.

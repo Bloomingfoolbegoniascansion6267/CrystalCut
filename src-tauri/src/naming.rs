@@ -184,6 +184,7 @@ mod tests {
             camera: Some("FUJIFILM X-T5".to_owned()),
             lens: Some("XF23mmF2 R WR".to_owned()),
             orientation: 1,
+            ..ExifSummary::default()
         }
     }
 

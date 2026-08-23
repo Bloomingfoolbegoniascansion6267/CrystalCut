@@ -52,7 +52,7 @@ Windows/macOS system TLS를 쓰도록 ureq Native TLS Agent를 명시적으로 �
 
 출력 설정이 바뀌면 450ms debounce 후 최대 3개 파일을 실제 선택 encoder로 축소 인코딩해 전체 예상 용량과 원본 대비 증감률을 계산한다. 이는 foreground alpha를 만들기 전의 표본 추정치이므로 UI에서 항상 “예상”으로 표시하고, 처리가 끝나면 실제 저장 용량으로 교체한다.
 
-파일명은 `{taken:yyMMdd_HHmmss}`, `{seq:03}`, `{camera}`, `{lens}` 등의 token을 조합한다. EXIF 누락값은 고정 fallback으로 바꾸고 금지 문자, 제어 문자, Windows 예약 이름을 정리한 뒤 경로 충돌을 검사한다. GPS 필드는 추출 대상에서 제외한다. EXIF orientation 1–8은 미리보기와 실제 추론 입력에 먼저 반영한다.
+파일명은 `{taken:yyMMdd_HHmmss}`, `{seq:03}`, `{camera}`, `{lens}` 등의 token을 조합한다. EXIF 누락값은 고정 fallback으로 바꾸고 금지 문자, 제어 문자, Windows 예약 이름을 정리한 뒤 경로 충돌을 검사한다. EXIF orientation 1–8은 미리보기와 실제 추론 입력에 먼저 반영한다. GPS는 검토·편집할 수 있지만 출력 보존은 기본적으로 꺼져 있다.
 
 현재 batch는 순차 처리한다. 이는 session 재사용과 메모리 상한을 우선 확인하기 위한 선택이며, 병렬도는 모델·provider별 benchmark 후 bounded concurrency로 확장한다.
 
@@ -60,7 +60,7 @@ Windows/macOS system TLS를 쓰도록 ureq Native TLS Agent를 명시적으로 �
 
 worker 표준 입출력이 끊기거나 protocol 응답이 손상되면 해당 요청에 한해 프로세스를 새로 만들고 한 번 재전송한다. 첫 worker가 atomic rename까지 마친 뒤 응답 전에 종료된 경우에는 예약 출력 파일의 존재와 크기를 확인해 성공으로 회수한다. 두 번째 통신도 실패하면 해당 항목만 실패시키고 다음 항목에서 새 worker를 시작한다.
 
-작업 목록, 출력 설정, 회전, 파일별 마스크·가장자리 설정, EXIF 요약과 항목별 처리 결과는 앱 데이터 폴더의 `workspace.sqlite3`에 120ms 단위로 순서대로 자동 저장한다. 미리보기 bitmap과 GPS는 저장하지 않는다. SQLite는 bundled build와 WAL mode를 사용하며, 전체 snapshot을 하나의 transaction으로 교체해 목록과 설정이 서로 다른 시점으로 남지 않게 한다.
+작업 목록, 출력 설정, 회전, 파일별 마스크·가장자리 설정, 검토·편집한 메타데이터 요약과 항목별 처리 결과는 앱 데이터 폴더의 `workspace.sqlite3`에 120ms 단위로 순서대로 자동 저장한다. 미리보기 bitmap은 저장하지 않는다. SQLite는 bundled build와 WAL mode를 사용하며, 전체 snapshot을 하나의 transaction으로 교체해 목록과 설정이 서로 다른 시점으로 남지 않게 한다.
 
 앱 시작 시 원본 경로와 파일 크기, 완료 결과 경로를 다시 검사한다. 사라진 원본은 목록에서 제외하고, 변경된 원본·실행 중 종료된 항목·사라진 결과는 `interrupted`로 복구해 미완료 재시도 대상으로 제공한다. 완료 결과가 남아 있으면 다시 처리하지 않고 결과 미리보기를 복원한다. UI의 작업 비우기는 SQLite snapshot만 제거하며 원본과 결과 파일은 삭제하지 않는다.
 
@@ -76,7 +76,7 @@ SQLite schema v4는 작업 snapshot과 분리된 `app_preferences` table, 파일
 
 출력 설정에는 `배경 제거`와 `이미지만 변환` 처리 방식이 있다. 변환 mode는 AI 모델과 마스크를 완전히 건너뛰고 EXIF 방향 보정, 사용자 회전, resize, PNG/WebP 압축과 안전한 atomic 저장만 수행한다. 기본 하위 폴더도 `Removed Background`와 `Converted Images`로 구분한다. 출력 프리셋은 처리 방식, 형식, 품질·압축, 크기, 저장 위치, 이름 규칙과 메타데이터 선택을 하나의 recipe로 저장·불러오기·삭제한다.
 
-`촬영 메타데이터 보존`을 켜면 원본에서 이미 안전하게 추출한 촬영일·카메라·렌즈만 새 EXIF profile로 만들고 orientation은 픽셀 회전이 반영된 `1`로 정규화한다. PNG에는 `eXIf` chunk, WebP에는 extended RIFF의 `EXIF` chunk로 기록한다. GPS와 원본 전체 EXIF는 복사하지 않으며 ICC profile은 현재 보존하지 않는다.
+`촬영 메타데이터 보존`을 켜면 원본에서 추출하거나 사용자가 편집한 촬영일·카메라·렌즈·설명으로 새 EXIF profile을 만들고 orientation은 픽셀 회전이 반영된 `1`로 정규화한다. GPS와 인식된 생성 프롬프트·워크플로는 별도 옵션을 켠 경우에만 새 profile에 포함한다. PNG에는 `eXIf` chunk, WebP에는 extended RIFF의 `EXIF` chunk로 기록하며 원본 전체 EXIF block은 복사하지 않는다. ICC profile은 현재 보존하지 않는다.
 
 브라우저 기본 context menu는 텍스트 편집 명령과 CrystalCut의 브러시·미리보기·파일 추가·환경설정 명령을 제공하는 앱 메뉴로 교체했다. 작업 목록의 파일을 우클릭하면 해당 파일의 원본 미리보기, 객체 편집, 회전, Explorer/Finder에서 원본·결과 위치 열기와 작업 목록 제거를 제공한다. 목록 제거는 원본·결과 파일을 삭제하지 않는다. Windows release는 GUI subsystem으로 빌드해 console 창을 숨기고 debug build에서는 console을 유지한다.
 

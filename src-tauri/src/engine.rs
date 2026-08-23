@@ -80,8 +80,8 @@ impl InferenceEngine {
 
         let mut source = image::open(input_path)
             .map_err(|error| format!("입력 이미지를 열지 못했습니다: {error}"))?;
-        let exif = metadata::read_exif_summary(input_path);
-        metadata::apply_orientation(&mut source, exif.orientation);
+        let source_metadata = metadata::read_exif_summary(input_path);
+        metadata::apply_orientation(&mut source, source_metadata.orientation);
         let mask = self.infer_mask(&source)?;
         let source = rotate(source, request.rotation)?;
         let mask = rotate_mask(mask, request.rotation)?;
@@ -90,7 +90,8 @@ impl InferenceEngine {
         let mut composed =
             apply_alpha(source, &mask, request.edge_settings.preserve_original_alpha);
         composed = resize(composed, &request.settings);
-        let encoded = encode(&composed, &request.settings, Some(&exif))?;
+        let output_metadata = request.metadata.as_ref().unwrap_or(&source_metadata);
+        let encoded = encode(&composed, &request.settings, Some(output_metadata))?;
         atomic_write(output_path, &encoded)?;
         Ok(encoded.len() as u64)
     }
@@ -194,10 +195,11 @@ pub(crate) fn process_conversion(request: &WorkerRequest) -> Result<u64, String>
     if output_path.exists() {
         return Err("안전을 위해 기존 출력 파일을 덮어쓰지 않았습니다.".to_owned());
     }
-    let exif = metadata::read_exif_summary(input_path);
+    let source_metadata = metadata::read_exif_summary(input_path);
     let source = load_oriented_rotated(input_path, request.rotation)?;
     let converted = resize(source, &request.settings);
-    let encoded = encode(&converted, &request.settings, Some(&exif))?;
+    let output_metadata = request.metadata.as_ref().unwrap_or(&source_metadata);
+    let encoded = encode(&converted, &request.settings, Some(output_metadata))?;
     atomic_write(output_path, &encoded)?;
     Ok(encoded.len() as u64)
 }
@@ -612,7 +614,13 @@ fn encode(
     };
     if settings.preserve_metadata {
         if let Some(profile) = source_metadata
-            .map(metadata::safe_exif_profile)
+            .map(|summary| {
+                metadata::safe_exif_profile(
+                    summary,
+                    settings.preserve_gps,
+                    settings.preserve_prompt,
+                )
+            })
             .transpose()?
             .flatten()
         {
@@ -882,13 +890,20 @@ mod tests {
             taken_at: Some("2026-08-22 15:04:09".to_owned()),
             camera: Some("CrystalCut Camera One".to_owned()),
             lens: Some("Prime 35mm".to_owned()),
+            description: Some("Edited in CrystalCut".to_owned()),
+            prompt: Some("portrait, soft light".to_owned()),
+            gps_latitude: Some(37.5665),
+            gps_longitude: Some(126.9780),
             orientation: 6,
+            ..metadata::ExifSummary::default()
         };
 
         for format in [OutputFormat::Png, OutputFormat::Webp] {
             let mut output_settings = settings(ResizeMode::Original, 1, true);
             output_settings.format = format;
             output_settings.preserve_metadata = true;
+            output_settings.preserve_gps = true;
+            output_settings.preserve_prompt = true;
             output_settings.webp_lossless = true;
             let encoded = encode(&source, &output_settings, Some(&summary))
                 .expect("encode output with safe metadata");
@@ -899,6 +914,14 @@ mod tests {
             assert_eq!(restored.taken_at, summary.taken_at);
             assert_eq!(restored.camera, summary.camera);
             assert_eq!(restored.lens, summary.lens);
+            assert_eq!(restored.description, summary.description);
+            assert_eq!(restored.prompt, summary.prompt);
+            assert!(
+                (restored.gps_latitude.unwrap() - summary.gps_latitude.unwrap()).abs() < 0.000_01
+            );
+            assert!(
+                (restored.gps_longitude.unwrap() - summary.gps_longitude.unwrap()).abs() < 0.000_01
+            );
             assert_eq!(restored.orientation, 1);
         }
 
@@ -930,6 +953,7 @@ mod tests {
             settings: output_settings,
             mask_recipe: ManualMaskRecipe::default(),
             edge_settings: EdgeSettings::default(),
+            metadata: None,
         };
         assert!(process_conversion(&request).expect("run conversion") > 0);
         assert_eq!(

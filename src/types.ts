@@ -55,6 +55,10 @@ export interface ExifSummary {
   takenAt: string | null;
   camera: string | null;
   lens: string | null;
+  description: string | null;
+  prompt: string | null;
+  gpsLatitude: number | null;
+  gpsLongitude: number | null;
   orientation: number;
 }
 
@@ -78,6 +82,8 @@ export interface OutputSettings {
   suffix: string;
   nameTemplate: string;
   preserveMetadata: boolean;
+  preserveGps: boolean;
+  preservePrompt: boolean;
 }
 
 export type PersistedAsset = Omit<ImageAsset, "thumbnailUrl" | "previewUrl" | "resultPreviewUrl" | "editBasePreviewUrl" | "maskPreviewUrl">;

@@ -30,6 +30,8 @@ const DEFAULT_SETTINGS: OutputSettings = {
   suffix: "_bg",
   nameTemplate: "{prefix}{name}{suffix}",
   preserveMetadata: false,
+  preserveGps: false,
+  preservePrompt: false,
 };
 
 const DEFAULT_EDGE_SETTINGS: EdgeSettings = {
@@ -533,7 +535,7 @@ function App() {
         extension: file.name.split(".").pop()?.toLowerCase() ?? "",
         width: null,
         height: null,
-        exif: { takenAt: null, camera: null, lens: null, orientation: 1 },
+        exif: { takenAt: null, camera: null, lens: null, description: null, prompt: null, gpsLatitude: null, gpsLongitude: null, orientation: 1 },
         status: "ready",
         previewUrl: URL.createObjectURL(file),
         rotation: 0,
@@ -621,6 +623,19 @@ function App() {
       error: undefined,
     } : asset));
   }, [selected, selectedId]);
+
+  const updateSelectedMetadata = useCallback((patch: Partial<ImageAsset["exif"]>) => {
+    if (!selectedId) return;
+    setAssets((current) => current.map((asset) => asset.id === selectedId ? {
+      ...asset,
+      exif: { ...asset.exif, ...patch },
+      status: "ready",
+      outputPath: undefined,
+      outputBytes: undefined,
+      resultPreviewUrl: undefined,
+      error: undefined,
+    } : asset));
+  }, [selectedId]);
 
   useEffect(() => {
     setIsMaskEditing(false);
@@ -960,6 +975,15 @@ function App() {
   const locationSummary = t(`output.location.${settings.outputLocation}`);
   const presetSummary = preferences.presets.find((preset) => preset.id === activePresetId)?.name
     ?? t(preferences.presets.length ? "output.currentCustom" : "output.noPresets");
+  const metadataSummary = !settings.preserveMetadata
+    ? t("metadata.none")
+    : settings.preserveGps && settings.preservePrompt
+      ? t("metadata.gpsAndPrompt")
+      : settings.preserveGps
+        ? t("metadata.withGps")
+        : settings.preservePrompt
+          ? t("metadata.withPrompt")
+          : t("metadata.safe");
 
   const setFormat = (format: OutputFormat) => setSettings((current) => ({ ...current, format }));
 
@@ -1392,8 +1416,31 @@ function App() {
                 <p className="setting-help flush">{t("output.pngCompressionHelp")}</p>
               </div>
             )}
-            <label className="check-row metadata-check"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setSettings({ ...settings, preserveMetadata: event.target.checked })} /><span><Icon name="check" size={13} /></span>{t("output.keepMetadata")}</label>
-            <p className="setting-help flush">{t("output.metadataHelp")}</p>
+          </section>
+          </InspectorAccordion>
+
+          <InspectorAccordion title={t("metadata.title")} summary={metadataSummary}>
+          <section className="setting-section metadata-section">
+            <label className="check-row"><input type="checkbox" checked={settings.preserveMetadata} onChange={(event) => setSettings({ ...settings, preserveMetadata: event.target.checked })} /><span><Icon name="check" size={13} /></span>{t("output.keepMetadata")}</label>
+            <p className="setting-help flush">{t("metadata.safeHelp")}</p>
+            <div className="metadata-policy-options">
+              <label className="check-row"><input type="checkbox" checked={settings.preserveGps} onChange={(event) => setSettings({ ...settings, preserveGps: event.target.checked })} disabled={!settings.preserveMetadata} /><span><Icon name="check" size={13} /></span>{t("metadata.keepGps")}</label>
+              <p className="setting-help flush warning-text">{t("metadata.gpsWarning")}</p>
+              <label className="check-row"><input type="checkbox" checked={settings.preservePrompt} onChange={(event) => setSettings({ ...settings, preservePrompt: event.target.checked })} disabled={!settings.preserveMetadata} /><span><Icon name="check" size={13} /></span>{t("metadata.keepPrompt")}</label>
+            </div>
+            {!isMultiSelection && selected && <div className="metadata-editor">
+              <div className="metadata-editor-heading"><strong>{t("metadata.fileValues")}</strong><span title={selected.name}>{selected.name}</span></div>
+              <label><span>{t("metadata.takenAt")}</span><input type="text" value={selected.exif.takenAt ?? ""} placeholder="YYYY-MM-DD HH:MM:SS" onChange={(event) => updateSelectedMetadata({ takenAt: event.target.value || null })} /></label>
+              <label><span>{t("metadata.camera")}</span><input type="text" value={selected.exif.camera ?? ""} onChange={(event) => updateSelectedMetadata({ camera: event.target.value || null })} /></label>
+              <label><span>{t("metadata.lens")}</span><input type="text" value={selected.exif.lens ?? ""} onChange={(event) => updateSelectedMetadata({ lens: event.target.value || null })} /></label>
+              <label><span>{t("metadata.description")}</span><textarea rows={2} value={selected.exif.description ?? ""} onChange={(event) => updateSelectedMetadata({ description: event.target.value || null })} /></label>
+              <label><span>{t("metadata.prompt")}</span><textarea rows={4} value={selected.exif.prompt ?? ""} placeholder={t("metadata.promptEmpty")} onChange={(event) => updateSelectedMetadata({ prompt: event.target.value || null })} /></label>
+              <div className="metadata-coordinate-grid">
+                <label><span>{t("metadata.latitude")}</span><input type="number" min="-90" max="90" step="any" value={selected.exif.gpsLatitude ?? ""} onChange={(event) => updateSelectedMetadata({ gpsLatitude: event.target.value === "" ? null : Number(event.target.value) })} /></label>
+                <label><span>{t("metadata.longitude")}</span><input type="number" min="-180" max="180" step="any" value={selected.exif.gpsLongitude ?? ""} onChange={(event) => updateSelectedMetadata({ gpsLongitude: event.target.value === "" ? null : Number(event.target.value) })} /></label>
+              </div>
+              <p className="setting-help flush">{t("metadata.editHelp")}</p>
+            </div>}
           </section>
           </InspectorAccordion>
 
