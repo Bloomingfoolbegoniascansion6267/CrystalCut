@@ -60,19 +60,28 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: CrystalCut v__VERSION__
           releaseBody: |
-            CrystalCut 1.0.2 makes background-removal previews consistent and adopts the Apache License 2.0 for the CrystalCut source code.
+            CrystalCut 1.0.2 brings the complete local-first background-removal and batch-conversion workflow together in a faster, clearer desktop experience.
 
-            ## What's fixed
+            ## Highlights
 
-            - Background-removal and per-file edge previews now stay active whether the edge settings panel is open or closed.
-            - The edge section now shows the live preview state for the selected file.
-            - Preview zoom percentages now use the original image dimensions as the 100% reference.
-            - Original, result, mask, and comparison tabs now keep one stable canvas size and aspect ratio.
-            - Transparent pixels in the comparison result now reveal the selected preview background instead of the original image underneath.
+            - Choose automatic U2NetP removal, SlimSAM-guided object selection, or a fully manual mask.
+            - Refine objects with keep/remove brushes, undo/redo, and live per-file edge controls.
+            - Inspect Original, Preview, Mask, and draggable Compare views with stable zoom, pan, and fit behavior.
+            - Select multiple files, export their originals or results, and drag individual files or groups to reorder the queue.
+            - Override the global resize for one file by setting an output width or height with the aspect ratio locked.
+            - Convert without background removal and reuse complete output presets for format, quality, size, metadata, naming, and destination.
+            - Review and edit selected metadata, with separate opt-in policies for GPS and generation prompts.
+            - Follow the system language automatically or choose any of nine fully translated languages.
 
-            ## Open-source license
+            ## Reliability and UX fixes
 
-            CrystalCut source code is now available under the Apache License 2.0. Third-party software and AI model assets retain their own licenses and notices.
+            - HTTPS model downloads include the required Rustls transport instead of failing at runtime.
+            - Packaged applications load bundled assets directly and no longer depend on a development server.
+            - Intel macOS uses an ONNX Runtime package that provides an `x86_64-apple-darwin` binary.
+            - Preview zoom uses the original dimensions as 100%, and all preview tabs retain one stable canvas and aspect ratio.
+            - Removed pixels in Compare reveal transparency rather than the original image underneath.
+            - Opening or closing edge settings no longer changes processing state or regenerates the preview.
+            - Thumbnails preload when files are added, temporary notices dismiss automatically, and Windows release builds stay console-free.
 
             ## Downloads
 
@@ -83,6 +92,8 @@ jobs:
             ## First AI run and privacy
 
             AI model files are downloaded and verified when background removal or SlimSAM object selection is used for the first time. Images are always processed locally and are not uploaded.
+
+            CrystalCut source code is licensed under Apache License 2.0. Third-party software and AI model assets retain their own licenses and notices.
 
             ## Installation notice
 

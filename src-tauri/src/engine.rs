@@ -941,7 +941,6 @@ mod tests {
             gps_latitude: Some(37.5665),
             gps_longitude: Some(126.9780),
             orientation: 6,
-            ..metadata::ExifSummary::default()
         };
 
         for format in [OutputFormat::Png, OutputFormat::Webp] {
