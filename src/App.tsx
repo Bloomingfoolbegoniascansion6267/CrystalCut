@@ -1646,7 +1646,7 @@ function App() {
                   : selected.maskRecipe.mode === "refine"
                     ? t("selection.refineSummary", { count: selected.maskRecipe.strokes.length })
                     : t("editor.source.auto")}</p>
-            <button className="button secondary mask-summary-button" onClick={openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={15} />{t("selection.editObject")}</button>
+            <button className={`button secondary mask-summary-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditor} disabled={!selected?.previewUrl || isProcessing || settings.processingMode === "convert"}><Icon name="brush" size={15} />{t(isMaskEditing ? "preview.editing" : "selection.editObject")}</button>
           </section>}
 
           {!isMultiSelection && <button className={`advanced-row current-file-control current-removal-control ${isAdvancedOpen ? "open" : ""}`} onClick={toggleAdvancedSettings} aria-expanded={isAdvancedOpen} aria-controls="advanced-settings" disabled={settings.processingMode === "convert"}>
