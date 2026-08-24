@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const WORKER_PROTOCOL_VERSION: u16 = 6;
+pub const WORKER_PROTOCOL_VERSION: u16 = 7;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -204,6 +204,8 @@ pub struct WorkerRequest {
     pub model_path: Option<String>,
     pub sam_encoder_path: Option<String>,
     pub sam_decoder_path: Option<String>,
+    #[serde(default)]
+    pub compute: crate::compute::ComputePreference,
     pub rotation: u16,
     pub settings: OutputSettings,
     pub mask_recipe: ManualMaskRecipe,
@@ -222,6 +224,8 @@ pub struct WorkerResponse {
     pub output_bytes: Option<u64>,
     pub duration_ms: u128,
     pub error: Option<String>,
+    #[serde(default)]
+    pub compute_status: Option<crate::compute::ComputeRuntimeStatus>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -108,6 +108,7 @@ const DEFAULT_PREFERENCES: AppPreferences = {
   restoreWorkspace: true,
   presets: [],
   language: "system",
+  compute: { mode: "auto", deviceId: null },
 };
 
 const isTauri = () => Boolean(window.__TAURI_INTERNALS__);
@@ -131,13 +132,14 @@ const previewRenderIdentity = (asset: ImageAsset, settings: OutputSettings) => (
   edgeSettings: asset.edgeSettings,
 });
 
-const createPreviewRequestKey = (asset: ImageAsset, recipe: ManualMaskRecipe, settings: OutputSettings) => compactPreviewKey(JSON.stringify({
+const createPreviewRequestKey = (asset: ImageAsset, recipe: ManualMaskRecipe, settings: OutputSettings, compute: AppPreferences["compute"]) => compactPreviewKey(JSON.stringify({
   assetId: asset.id,
   path: asset.path,
   sizeBytes: asset.sizeBytes,
   rotation: asset.rotation,
   recipe,
   render: previewRenderIdentity(asset, settings),
+  compute,
 }));
 
 const estimateFullPreviewBytes = (asset: ImageAsset) => {
@@ -368,8 +370,8 @@ function App() {
     selected?.edgeSettings,
   ]);
   const previewRequestKey = useMemo(() => selected && previewRecipe
-    ? createPreviewRequestKey(selected, previewRecipe, settings)
-    : "", [selected?.id, selected?.path, selected?.sizeBytes, selected?.rotation, previewRecipeKey, previewRenderKey]);
+    ? createPreviewRequestKey(selected, previewRecipe, settings, preferences.compute)
+    : "", [selected?.id, selected?.path, selected?.sizeBytes, selected?.rotation, previewRecipeKey, previewRenderKey, preferences.compute]);
   const retryableAssets = useMemo(
     () => assets.filter((asset) => asset.status === "failed" || asset.status === "cancelled" || asset.status === "interrupted"),
     [assets],
@@ -740,6 +742,7 @@ function App() {
           maskRecipe: previewRecipe,
           edgeSettings: selected.edgeSettings,
           settings: selectedPreviewSettings,
+          compute: preferences.compute,
           requestKey: previewRequestKey,
           cacheKeyHint: hasCacheReference ? selected.previewCacheKey : undefined,
         },
@@ -763,7 +766,7 @@ function App() {
       window.clearTimeout(timer);
       if (activePreviewRequestKey.current === previewRequestKey) activePreviewRequestKey.current = "";
     };
-  }, [retainFullPreview, selected?.id, selected?.path, selected?.rotation, selected?.status, selected?.outputPath, selected?.outputPreviewKey, selected?.editPreviewKey, selected?.previewCacheKey, selected?.editBasePreviewUrl, selected?.maskPreviewUrl, previewRecipeKey, previewRenderKey, previewRequestKey, isMaskEditing, isProcessing]);
+  }, [retainFullPreview, selected?.id, selected?.path, selected?.rotation, selected?.status, selected?.outputPath, selected?.outputPreviewKey, selected?.editPreviewKey, selected?.previewCacheKey, selected?.editBasePreviewUrl, selected?.maskPreviewUrl, previewRecipeKey, previewRenderKey, previewRequestKey, preferences.compute, isMaskEditing, isProcessing]);
 
   useEffect(() => {
     if (!selected?.outputPath || selected.resultPreviewUrl || !isTauri()) return;
@@ -1180,7 +1183,7 @@ function App() {
     setIsCancelling(false);
     setBatchCompleted(0);
     setBatchTotal(targets.length);
-    batchPreviewKeys.current = new Map(targets.map((asset) => [asset.id, createPreviewRequestKey(asset, asset.maskRecipe, settings)]));
+    batchPreviewKeys.current = new Map(targets.map((asset) => [asset.id, createPreviewRequestKey(asset, asset.maskRecipe, settings, preferences.compute)]));
     setAssets((current) => current.map((asset) => targetIds.has(asset.id)
       ? { ...asset, status: "queued", outputPath: undefined, outputBytes: undefined, outputPreviewKey: undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, error: undefined }
       : asset));
@@ -1198,6 +1201,7 @@ function App() {
           resizeOverride: asset.resizeOverride,
         })),
         settings,
+        compute: preferences.compute,
       });
       const resultById = new Map(result.items.map((item) => [item.assetId, item]));
       setAssets((current) => current.map((asset) => {

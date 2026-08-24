@@ -42,7 +42,7 @@ pub struct ComputeCapabilities {
     pub devices: Vec<ComputeDevice>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputeRuntimeStatus {
     pub requested: ComputePreference,
@@ -171,6 +171,21 @@ pub fn open_session(
     Ok(outcome)
 }
 
+pub fn open_cpu_fallback(
+    model_path: &Path,
+    requested: &ComputePreference,
+    reason: impl Into<String>,
+) -> Result<SessionOutcome, String> {
+    let cpu = ComputePreference {
+        mode: ComputeMode::Cpu,
+        device_id: None,
+    };
+    let session = build_session(model_path, &cpu)?;
+    let status = status_for(requested, &cpu, Some(reason.into()));
+    record_runtime_status(&status);
+    Ok(SessionOutcome { session, status })
+}
+
 fn resolve_preference(preference: &ComputePreference) -> ComputePreference {
     if !matches!(preference.mode, ComputeMode::Auto) {
         return preference.clone();
@@ -289,7 +304,7 @@ fn status_for(
     }
 }
 
-fn record_runtime_status(status: &ComputeRuntimeStatus) {
+pub(crate) fn record_runtime_status(status: &ComputeRuntimeStatus) {
     if let Ok(mut current) = LAST_RUNTIME_STATUS
         .get_or_init(|| Mutex::new(ComputeRuntimeStatus::default()))
         .lock()

@@ -188,6 +188,9 @@ impl WorkerClient {
         if response.job_id != request.job_id {
             return Err("AI worker가 다른 작업의 응답을 반환했습니다.".to_owned());
         }
+        if let Some(status) = response.compute_status.as_ref() {
+            compute::record_runtime_status(status);
+        }
         Ok(response)
     }
 
@@ -465,6 +468,8 @@ struct PreviewRequest {
     mask_recipe: protocol::ManualMaskRecipe,
     edge_settings: EdgeSettings,
     settings: OutputSettings,
+    #[serde(default)]
+    compute: compute::ComputePreference,
     request_key: String,
     #[serde(default)]
     cache_key_hint: Option<String>,
@@ -507,6 +512,7 @@ async fn generate_mask_preview(
         mask_recipe,
         edge_settings,
         settings,
+        compute,
         request_key,
         cache_key_hint,
     } = request;
@@ -525,6 +531,7 @@ async fn generate_mask_preview(
             "resizeMode": settings.resize_mode,
             "resizeValue": settings.resize_value,
             "preventUpscale": settings.prevent_upscale,
+            "compute": &compute,
         });
         let fast_cache_key = model::existing_default_model(&app)?.and_then(|model_path| {
             preview_cache::cache_key(Path::new(&path), &[model_path.as_path()], &cache_request).ok()
@@ -591,9 +598,9 @@ async fn generate_mask_preview(
             .map_err(|_| "자동 미리보기 상태 잠금이 손상되었습니다.".to_owned())?;
         if slot
             .as_ref()
-            .is_none_or(|engine| !engine.uses_model(&model_path))
+            .is_none_or(|engine| !engine.uses_configuration(&model_path, &compute))
         {
-            *slot = Some(engine::InferenceEngine::new(&model_path)?);
+            *slot = Some(engine::InferenceEngine::new(&model_path, &compute)?);
         }
         if !controller.gate.is_latest(&request_key) {
             return Err("새 미리보기 요청으로 대체되었습니다.".to_owned());
@@ -646,6 +653,7 @@ async fn generate_sam_preview(
         mask_recipe,
         edge_settings,
         settings,
+        compute,
         request_key,
         cache_key_hint,
     } = request;
@@ -664,6 +672,7 @@ async fn generate_sam_preview(
             "resizeMode": settings.resize_mode,
             "resizeValue": settings.resize_value,
             "preventUpscale": settings.prevent_upscale,
+            "compute": &compute,
         });
         let fast_cache_key = sam::existing_model_paths(&app)?.and_then(|paths| {
             preview_cache::cache_key(
@@ -736,11 +745,10 @@ async fn generate_sam_preview(
             .engine
             .lock()
             .map_err(|_| "SAM 미리보기 상태 잠금이 손상되었습니다.".to_owned())?;
-        if slot
-            .as_ref()
-            .is_none_or(|engine| !engine.uses_models(&paths.encoder, &paths.decoder))
-        {
-            *slot = Some(sam::SamEngine::new(&paths)?);
+        if slot.as_ref().is_none_or(|engine| {
+            !engine.uses_configuration(&paths.encoder, &paths.decoder, &compute)
+        }) {
+            *slot = Some(sam::SamEngine::new(&paths, &compute)?);
         }
         if !controller.gate.is_latest(&request_key) {
             return Err("새 미리보기 요청으로 대체되었습니다.".to_owned());
@@ -800,6 +808,8 @@ struct AppDiagnostics {
     preview_cache_misses: u64,
     preview_inference_runs: u64,
     preview_inference_ms: u64,
+    compute_capabilities: compute::ComputeCapabilities,
+    compute_runtime: compute::ComputeRuntimeStatus,
 }
 
 #[tauri::command]
@@ -822,6 +832,8 @@ fn get_app_diagnostics(app: AppHandle) -> CommandResult<AppDiagnostics> {
         preview_cache_misses: PREVIEW_CACHE_MISSES.load(Ordering::Relaxed),
         preview_inference_runs: PREVIEW_INFERENCE_RUNS.load(Ordering::Relaxed),
         preview_inference_ms: PREVIEW_INFERENCE_MS.load(Ordering::Relaxed),
+        compute_capabilities: compute::capabilities(),
+        compute_runtime: compute::runtime_status(),
     })
 }
 
@@ -989,6 +1001,7 @@ async fn process_batch(
     sam_preview_controller: State<'_, SamPreviewController>,
     items: Vec<ProcessItem>,
     settings: OutputSettings,
+    compute: compute::ComputePreference,
 ) -> CommandResult<BatchResult> {
     validate_settings(&settings)
         .map_err(|error| CommandError::new("batch.invalidSettings", error))?;
@@ -1005,7 +1018,7 @@ async fn process_batch(
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         mask_preview_controller.release();
         sam_preview_controller.release();
-        process_batch_blocking(app, items, settings, blocking_controller)
+        process_batch_blocking(app, items, settings, compute, blocking_controller)
     })
     .await;
     controller.finish();
@@ -1289,6 +1302,7 @@ fn process_batch_blocking(
     app: AppHandle,
     items: Vec<ProcessItem>,
     settings: OutputSettings,
+    compute: compute::ComputePreference,
     controller: BatchController,
 ) -> Result<BatchResult, String> {
     for item in &items {
@@ -1354,6 +1368,7 @@ fn process_batch_blocking(
             model_path: model_path_string.clone(),
             sam_encoder_path: sam_encoder_path.clone(),
             sam_decoder_path: sam_decoder_path.clone(),
+            compute: compute.clone(),
             rotation: item.rotation,
             settings: item_settings,
             mask_recipe: item.mask_recipe.clone(),
@@ -1422,6 +1437,7 @@ fn process_batch_blocking(
                                 output_bytes: Some(metadata.len()),
                                 duration_ms: 0,
                                 error: None,
+                                compute_status: None,
                             });
                         }
                     }

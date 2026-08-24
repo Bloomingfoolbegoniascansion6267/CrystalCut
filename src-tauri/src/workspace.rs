@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::{
+    compute::ComputePreference,
     metadata::ExifSummary,
     protocol::{
         EdgeSettings, ManualMaskRecipe, MetadataOutputPolicy, OutputSettings, ResizeOverride,
@@ -116,6 +117,7 @@ pub struct AppPreferences {
     pub restore_workspace: bool,
     pub presets: Vec<OutputPreset>,
     pub language: LanguagePreference,
+    pub compute: ComputePreference,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +160,7 @@ impl Default for AppPreferences {
             restore_workspace: true,
             presets: Vec::new(),
             language: LanguagePreference::System,
+            compute: ComputePreference::default(),
         }
     }
 }
@@ -1151,6 +1154,7 @@ mod tests {
         let preferences = AppPreferences {
             restore_workspace: false,
             language: LanguagePreference::Ja,
+            compute: ComputePreference::default(),
             default_settings: OutputSettings {
                 format: OutputFormat::Webp,
                 prefix: "default_".to_owned(),

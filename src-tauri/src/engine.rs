@@ -11,12 +11,10 @@ use image::{
     imageops::FilterType as ResizeFilter,
     DynamicImage, ExtendedColorType, GenericImageView, GrayImage, ImageEncoder, RgbaImage,
 };
-use ort::{
-    session::{builder::GraphOptimizationLevel, Session},
-    value::Tensor,
-};
+use ort::{session::Session, value::Tensor};
 
 use crate::{
+    compute::{self, ComputePreference, ComputeRuntimeStatus},
     metadata,
     protocol::{
         BrushMode, BrushStroke, EdgeSettings, ManualMaskRecipe, MaskMode, OutputFormat,
@@ -34,6 +32,8 @@ const PREVIEW_MASK_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
 pub struct InferenceEngine {
     session: Session,
     model_path: PathBuf,
+    compute: ComputePreference,
+    compute_status: ComputeRuntimeStatus,
     cached_preview_masks: VecDeque<CachedPreviewMask>,
     cached_preview_mask_bytes: usize,
 }
@@ -48,30 +48,25 @@ struct CachedPreviewMask {
 }
 
 impl InferenceEngine {
-    pub fn new(model_path: &Path) -> Result<Self, String> {
-        let _ = ort::init().with_name("CrystalCut AI Worker").commit();
-        let threads = std::thread::available_parallelism()
-            .map(|value| value.get().clamp(1, 8))
-            .unwrap_or(2);
-        let session = Session::builder()
-            .map_err(|error| format!("ONNX session builder를 만들지 못했습니다: {error}"))?
-            .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|error| format!("ONNX 최적화 설정에 실패했습니다: {error}"))?
-            .with_intra_threads(threads)
-            .map_err(|error| format!("ONNX thread 설정에 실패했습니다: {error}"))?
-            .commit_from_file(model_path)
-            .map_err(|error| format!("ONNX 모델을 열지 못했습니다: {error}"))?;
+    pub fn new(model_path: &Path, compute: &ComputePreference) -> Result<Self, String> {
+        let outcome = compute::open_session(model_path, compute)?;
 
         Ok(Self {
-            session,
+            session: outcome.session,
             model_path: model_path.to_owned(),
+            compute: compute.clone(),
+            compute_status: outcome.status,
             cached_preview_masks: VecDeque::new(),
             cached_preview_mask_bytes: 0,
         })
     }
 
-    pub fn uses_model(&self, model_path: &Path) -> bool {
-        self.model_path == model_path
+    pub fn uses_configuration(&self, model_path: &Path, compute: &ComputePreference) -> bool {
+        self.model_path == model_path && self.compute == *compute
+    }
+
+    pub fn compute_status(&self) -> &ComputeRuntimeStatus {
+        &self.compute_status
     }
 
     pub fn process(&mut self, request: &WorkerRequest) -> Result<u64, String> {
@@ -808,6 +803,30 @@ fn atomic_write(output_path: &Path, bytes: &[u8]) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test]
+    #[ignore = "requires the checked-in model and a working platform accelerator"]
+    fn accelerated_u2net_inference_smoke_test() {
+        let model = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("models")
+            .join("cache")
+            .join("u2netp.onnx");
+        assert!(
+            model.is_file(),
+            "missing smoke-test model: {}",
+            model.display()
+        );
+        let mut engine = InferenceEngine::new(&model, &ComputePreference::default())
+            .expect("open accelerated U2NetP");
+        assert!(!matches!(
+            engine.compute_status().effective_mode,
+            crate::compute::ComputeMode::Cpu
+        ));
+        let source = DynamicImage::new_rgb8(64, 48);
+        let mask = engine.infer_mask(&source).expect("run accelerated U2NetP");
+        assert_eq!(mask.dimensions(), source.dimensions());
+    }
+
     fn settings(mode: ResizeMode, value: u32, prevent_upscale: bool) -> OutputSettings {
         OutputSettings {
             resize_mode: mode,
@@ -1024,6 +1043,7 @@ mod tests {
             model_path: None,
             sam_encoder_path: None,
             sam_decoder_path: None,
+            compute: ComputePreference::default(),
             rotation: 0,
             settings: output_settings,
             mask_recipe: ManualMaskRecipe::default(),

@@ -210,6 +210,30 @@ export interface AppPreferences {
   restoreWorkspace: boolean;
   presets: OutputPreset[];
   language: LanguagePreference;
+  compute: ComputePreference;
+}
+
+export type ComputeMode = "auto" | "cpu" | "directMl" | "coreMlAll" | "coreMlCpuAndGpu" | "coreMlCpuAndNeuralEngine";
+
+export interface ComputePreference {
+  mode: ComputeMode;
+  deviceId: number | null;
+}
+
+export interface ComputeDevice {
+  mode: ComputeMode;
+  deviceId: number | null;
+  label: string;
+  dedicatedMemoryBytes: number | null;
+  recommended: boolean;
+}
+
+export interface ComputeRuntimeStatus {
+  requested: ComputePreference;
+  effectiveMode: ComputeMode;
+  effectiveDeviceId: number | null;
+  effectiveLabel: string;
+  fallbackReason: string | null;
 }
 
 export interface OutputPreset {
@@ -230,5 +254,10 @@ export interface AppDiagnostics {
   previewCacheMisses: number;
   previewInferenceRuns: number;
   previewInferenceMs: number;
+  computeCapabilities: {
+    platformBackend: string;
+    devices: ComputeDevice[];
+  };
+  computeRuntime: ComputeRuntimeStatus;
 }
 import type { LanguagePreference } from "./i18n/locale";

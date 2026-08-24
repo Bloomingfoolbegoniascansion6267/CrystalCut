@@ -26,6 +26,7 @@ pub fn run_stdio() -> Result<(), String> {
             .map_err(|error| format!("worker 요청 JSON이 올바르지 않습니다: {error}"))?;
         let started = Instant::now();
         let result = process_request(&mut engine, &mut sam_engine, &request);
+        let compute_status = active_compute_status(&engine, &sam_engine, &request);
         let response = match result {
             Ok(output_bytes) => WorkerResponse {
                 protocol_version: WORKER_PROTOCOL_VERSION,
@@ -35,6 +36,7 @@ pub fn run_stdio() -> Result<(), String> {
                 output_bytes: Some(output_bytes),
                 duration_ms: started.elapsed().as_millis(),
                 error: None,
+                compute_status,
             },
             Err(error) => WorkerResponse {
                 protocol_version: WORKER_PROTOCOL_VERSION,
@@ -44,6 +46,7 @@ pub fn run_stdio() -> Result<(), String> {
                 output_bytes: None,
                 duration_ms: started.elapsed().as_millis(),
                 error: Some(error),
+                compute_status,
             },
         };
         serde_json::to_writer(&mut stdout, &response)
@@ -84,12 +87,15 @@ fn process_request(
         let decoder = Path::new(decoder);
         if sam_engine
             .as_ref()
-            .is_none_or(|current| !current.uses_models(encoder, decoder))
+            .is_none_or(|current| !current.uses_configuration(encoder, decoder, &request.compute))
         {
-            *sam_engine = Some(SamEngine::new(&crate::sam::SamModelPaths {
-                encoder: encoder.to_owned(),
-                decoder: decoder.to_owned(),
-            })?);
+            *sam_engine = Some(SamEngine::new(
+                &crate::sam::SamModelPaths {
+                    encoder: encoder.to_owned(),
+                    decoder: decoder.to_owned(),
+                },
+                &request.compute,
+            )?);
         }
         return sam_engine
             .as_mut()
@@ -104,12 +110,30 @@ fn process_request(
     );
     if engine
         .as_ref()
-        .is_none_or(|current| !current.uses_model(model_path))
+        .is_none_or(|current| !current.uses_configuration(model_path, &request.compute))
     {
-        *engine = Some(InferenceEngine::new(model_path)?);
+        *engine = Some(InferenceEngine::new(model_path, &request.compute)?);
     }
     engine
         .as_mut()
         .ok_or_else(|| "AI worker를 초기화하지 못했습니다.".to_owned())?
         .process(request)
+}
+
+fn active_compute_status(
+    engine: &Option<InferenceEngine>,
+    sam_engine: &Option<SamEngine>,
+    request: &WorkerRequest,
+) -> Option<crate::compute::ComputeRuntimeStatus> {
+    if matches!(request.settings.processing_mode, ProcessingMode::Convert) {
+        None
+    } else if matches!(request.mask_recipe.mode, MaskMode::Sam) {
+        sam_engine
+            .as_ref()
+            .map(|engine| engine.compute_status().clone())
+    } else {
+        engine
+            .as_ref()
+            .map(|engine| engine.compute_status().clone())
+    }
 }

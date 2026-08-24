@@ -8,10 +8,7 @@ use std::{
 };
 
 use image::{imageops::FilterType as ResizeFilter, DynamicImage, GenericImageView, GrayImage};
-use ort::{
-    session::{builder::GraphOptimizationLevel, Session},
-    value::Tensor,
-};
+use ort::{session::Session, value::Tensor};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 use ureq::{
@@ -21,6 +18,7 @@ use ureq::{
 };
 
 use crate::{
+    compute::{self, ComputePreference, ComputeRuntimeStatus},
     engine,
     protocol::{BrushMode, EdgeSettings, ManualMaskRecipe, OutputSettings, WorkerRequest},
 };
@@ -285,6 +283,8 @@ pub struct SamEngine {
     encoder: Session,
     decoder: Session,
     paths: SamModelPaths,
+    compute: ComputePreference,
+    compute_status: ComputeRuntimeStatus,
     cached_embeddings: VecDeque<CachedEmbedding>,
     cached_embedding_bytes: usize,
     cached_preview_masks: VecDeque<CachedPromptMask>,
@@ -303,25 +303,26 @@ struct CachedPromptMask {
 }
 
 impl SamEngine {
-    pub fn new(paths: &SamModelPaths) -> Result<Self, String> {
-        let _ = ort::init().with_name("CrystalCut SAM Worker").commit();
-        let threads = std::thread::available_parallelism()
-            .map(|value| value.get().clamp(1, 8))
-            .unwrap_or(2);
-        let open = |path: &Path| {
-            Session::builder()
-                .map_err(|error| format!("SAM ONNX session builder를 만들지 못했습니다: {error}"))?
-                .with_optimization_level(GraphOptimizationLevel::Level3)
-                .map_err(|error| format!("SAM ONNX 최적화 설정에 실패했습니다: {error}"))?
-                .with_intra_threads(threads)
-                .map_err(|error| format!("SAM ONNX thread 설정에 실패했습니다: {error}"))?
-                .commit_from_file(path)
-                .map_err(|error| format!("SAM ONNX 모델을 열지 못했습니다: {error}"))
+    pub fn new(paths: &SamModelPaths, compute: &ComputePreference) -> Result<Self, String> {
+        let accelerated = !matches!(compute.mode, crate::compute::ComputeMode::Cpu);
+        let fallback_reason = "SlimSAM hardware acceleration is disabled because the quantized model is not stable with the current platform provider";
+        let encoder = if accelerated {
+            compute::open_cpu_fallback(&paths.encoder, compute, fallback_reason)?
+        } else {
+            compute::open_session(&paths.encoder, compute)?
         };
+        let decoder = if accelerated {
+            compute::open_cpu_fallback(&paths.decoder, compute, fallback_reason)?
+        } else {
+            compute::open_session(&paths.decoder, compute)?
+        };
+        let status = decoder.status.clone();
         Ok(Self {
-            encoder: open(&paths.encoder)?,
-            decoder: open(&paths.decoder)?,
+            encoder: encoder.session,
+            decoder: decoder.session,
             paths: paths.clone(),
+            compute: compute.clone(),
+            compute_status: status,
             cached_embeddings: VecDeque::new(),
             cached_embedding_bytes: 0,
             cached_preview_masks: VecDeque::new(),
@@ -329,8 +330,17 @@ impl SamEngine {
         })
     }
 
-    pub fn uses_models(&self, encoder: &Path, decoder: &Path) -> bool {
-        self.paths.encoder == encoder && self.paths.decoder == decoder
+    pub fn uses_configuration(
+        &self,
+        encoder: &Path,
+        decoder: &Path,
+        compute: &ComputePreference,
+    ) -> bool {
+        self.paths.encoder == encoder && self.paths.decoder == decoder && self.compute == *compute
+    }
+
+    pub fn compute_status(&self) -> &ComputeRuntimeStatus {
+        &self.compute_status
     }
 
     pub fn process(&mut self, request: &WorkerRequest) -> Result<u64, String> {
@@ -675,7 +685,14 @@ mod tests {
                 points: vec![MaskPoint { x: 0.5, y: 0.5 }],
             }],
         };
-        let mut engine = SamEngine::new(&paths).expect("open cached SlimSAM");
+        let mut engine = SamEngine::new(
+            &paths,
+            &ComputePreference {
+                mode: crate::compute::ComputeMode::Cpu,
+                device_id: None,
+            },
+        )
+        .expect("open cached SlimSAM");
         let mask = engine
             .predict_mask(&source, &recipe, Some("icon-fixture".to_owned()))
             .expect("run SlimSAM prompt");
