@@ -189,6 +189,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   grid-template-columns: 24px 42px minmax(0, 1fr) auto;
   align-items: center;
   width: 100%;
+  height: 56px;
   gap: 8px;
   padding: 7px;
   margin: 0 0 3px;
@@ -200,6 +201,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   touch-action: pan-y;
   transition: opacity 130ms ease, transform 150ms ease, background-color 130ms ease, border-color 130ms ease, box-shadow 130ms ease;
 }
+.asset-list-spacer { width: 100%; pointer-events: none; }
 .asset-row:hover { background: var(--surface-muted); }
 .asset-row.selected { border-color: #d9d1fb; background: var(--accent-soft); }
 .asset-row.selected.active { border-color: #a99af1; box-shadow: inset 3px 0 0 var(--accent); }

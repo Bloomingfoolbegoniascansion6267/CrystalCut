@@ -20,6 +20,8 @@ const TOAST_DURATION_MS = 5000;
 const AUTO_OPEN_OUTPUT_FOLDER_LIMIT = 3;
 const THUMBNAIL_PRELOAD_LIMIT = 32;
 const FULL_PREVIEW_MEMORY_LIMIT = 3;
+const ASSET_ROW_STRIDE = 59;
+const ASSET_LIST_OVERSCAN_ROWS = 8;
 
 const DEFAULT_SETTINGS: OutputSettings = {
   processingMode: "removeBackground",
@@ -227,6 +229,7 @@ function App() {
   const [presetName, setPresetName] = useState("");
   const [libraryDragVisual, setLibraryDragVisual] = useState<LibraryDragVisual | null>(null);
   const [libraryAnnouncement, setLibraryAnnouncement] = useState("");
+  const [libraryViewport, setLibraryViewport] = useState({ scrollTop: 0, height: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const assetListRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -240,6 +243,7 @@ function App() {
   const latestPreviewKeys = useRef(new Map<string, string>());
   const batchPreviewKeys = useRef(new Map<string, string>());
   const fullPreviewLru = useRef<string[]>([]);
+  const assetsRef = useRef<ImageAsset[]>([]);
   const thumbnailLoads = useRef(new Set<string>());
   const thumbnailViewportFrame = useRef<number | null>(null);
   const selectionAnchorId = useRef<string | null>(null);
@@ -253,6 +257,10 @@ function App() {
     const timer = window.setTimeout(() => setNotice(null), TOAST_DURATION_MS);
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    assetsRef.current = assets;
+  }, [assets]);
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -404,21 +412,34 @@ function App() {
     void Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
   }, []);
 
-  const preloadVisibleThumbnails = useCallback(() => {
+  const updateLibraryViewport = useCallback(() => {
     if (thumbnailViewportFrame.current !== null) return;
     thumbnailViewportFrame.current = window.requestAnimationFrame(() => {
       thumbnailViewportFrame.current = null;
       const list = assetListRef.current;
-      const firstRow = list?.querySelector<HTMLElement>("[data-asset-id]");
-      if (!list || !firstRow) return;
-      const marginBottom = Number.parseFloat(window.getComputedStyle(firstRow).marginBottom) || 0;
-      const stride = Math.max(1, firstRow.offsetHeight + marginBottom);
-      const overscan = Math.ceil(list.clientHeight / stride);
-      const start = Math.max(0, Math.floor(list.scrollTop / stride) - overscan);
-      const end = Math.min(assets.length, Math.ceil((list.scrollTop + list.clientHeight) / stride) + overscan);
-      preloadThumbnails(assets.slice(start, end));
+      if (!list) return;
+      const nextViewport = { scrollTop: list.scrollTop, height: list.clientHeight };
+      setLibraryViewport((current) => current.scrollTop === nextViewport.scrollTop && current.height === nextViewport.height ? current : nextViewport);
+      const currentAssets = assetsRef.current;
+      const visibleRows = Math.ceil(list.clientHeight / ASSET_ROW_STRIDE);
+      const start = Math.max(0, Math.floor(list.scrollTop / ASSET_ROW_STRIDE) - visibleRows);
+      const end = Math.min(currentAssets.length, start + visibleRows * 3);
+      preloadThumbnails(currentAssets.slice(start, end));
     });
-  }, [assets, preloadThumbnails]);
+  }, [preloadThumbnails]);
+
+  useEffect(() => {
+    const list = assetListRef.current;
+    if (!list) return;
+    const observer = new ResizeObserver(updateLibraryViewport);
+    observer.observe(list);
+    updateLibraryViewport();
+    return () => {
+      observer.disconnect();
+      if (thumbnailViewportFrame.current !== null) window.cancelAnimationFrame(thumbnailViewportFrame.current);
+      thumbnailViewportFrame.current = null;
+    };
+  }, [updateLibraryViewport]);
 
   const inspectPaths = useCallback(async (paths: string[]) => {
     if (!paths.length) return;
@@ -1543,13 +1564,14 @@ function App() {
     const list = assetListRef.current;
     if (!list) return 0;
     const dragged = new Set(draggedIds);
-    const remainingIds = assets.filter((asset) => !dragged.has(asset.id)).map((asset) => asset.id);
-    const rows = new Map(Array.from(list.querySelectorAll<HTMLElement>("[data-asset-id]")).map((row) => [row.dataset.assetId, row]));
-    for (let index = 0; index < remainingIds.length; index += 1) {
-      const row = rows.get(remainingIds[index]);
-      if (row && clientY < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2) return index;
+    const contentY = clientY - list.getBoundingClientRect().top + list.scrollTop - 8;
+    let remainingIndex = 0;
+    for (let assetIndex = 0; assetIndex < assets.length; assetIndex += 1) {
+      if (dragged.has(assets[assetIndex].id)) continue;
+      if (contentY < assetIndex * ASSET_ROW_STRIDE + ASSET_ROW_STRIDE / 2) return remainingIndex;
+      remainingIndex += 1;
     }
-    return remainingIds.length;
+    return remainingIndex;
   };
 
   const announceLibraryMove = (count: number, position: number) => {
@@ -1799,6 +1821,39 @@ function App() {
       moveLibraryAssets(target, row.dataset.assetId);
       return;
     }
+    if (!event.altKey && !event.ctrlKey && !event.metaKey && ["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      const currentId = row?.dataset.assetId ?? selectedId ?? assets[0]?.id;
+      const currentIndex = Math.max(0, assets.findIndex((asset) => asset.id === currentId));
+      const nextIndex = event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? Math.max(0, assets.length - 1)
+          : Math.max(0, Math.min(assets.length - 1, currentIndex + (event.key === "ArrowDown" ? 1 : -1)));
+      const nextAsset = assets[nextIndex];
+      if (!nextAsset) return;
+      if (event.shiftKey) {
+        const anchorId = selectionAnchorId.current ?? currentId ?? nextAsset.id;
+        const anchorIndex = Math.max(0, assets.findIndex((asset) => asset.id === anchorId));
+        const start = Math.min(anchorIndex, nextIndex);
+        const end = Math.max(anchorIndex, nextIndex);
+        setSelectedIds(assets.slice(start, end + 1).map((asset) => asset.id));
+      } else {
+        setSelectedIds([nextAsset.id]);
+        selectionAnchorId.current = nextAsset.id;
+      }
+      setSelectedId(nextAsset.id);
+      const list = assetListRef.current;
+      if (list) {
+        const rowTop = nextIndex * ASSET_ROW_STRIDE;
+        const rowBottom = rowTop + ASSET_ROW_STRIDE;
+        if (rowTop < list.scrollTop) list.scrollTop = rowTop;
+        else if (rowBottom > list.scrollTop + list.clientHeight) list.scrollTop = rowBottom - list.clientHeight;
+        updateLibraryViewport();
+      }
+      window.requestAnimationFrame(() => assetListRef.current?.querySelector<HTMLElement>(`[data-asset-id="${CSS.escape(nextAsset.id)}"]`)?.focus());
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
       event.preventDefault();
       const allIds = assets.map((asset) => asset.id);
@@ -1824,6 +1879,12 @@ function App() {
   const libraryDropBeforeId = libraryDragVisual ? libraryRemainingAssets[libraryDragVisual.dropIndex]?.id ?? null : null;
   const libraryDropAtEnd = Boolean(libraryDragVisual && libraryDragVisual.dropIndex >= libraryRemainingAssets.length);
   const libraryDragLead = libraryDragVisual ? assets.find((asset) => asset.id === libraryDragVisual.draggedIds[0]) ?? null : null;
+  const visibleRowCount = Math.max(1, Math.ceil(libraryViewport.height / ASSET_ROW_STRIDE));
+  const visibleAssetStart = Math.max(0, Math.floor(libraryViewport.scrollTop / ASSET_ROW_STRIDE) - ASSET_LIST_OVERSCAN_ROWS);
+  const visibleAssetEnd = Math.min(assets.length, visibleAssetStart + visibleRowCount + ASSET_LIST_OVERSCAN_ROWS * 2);
+  const visibleAssets = assets.slice(visibleAssetStart, visibleAssetEnd);
+  const librarySpacerBefore = visibleAssetStart * ASSET_ROW_STRIDE;
+  const librarySpacerAfter = Math.max(0, (assets.length - visibleAssetEnd) * ASSET_ROW_STRIDE);
 
   return (
     <div
@@ -1862,17 +1923,24 @@ function App() {
             {assets.length > 0 && <span className="muted">{formatBytes(totalBytes, formatLocale)}</span>}
             <button className="panel-toggle tooltip-host" onClick={() => setIsLibraryCollapsed((value) => !value)} aria-expanded={!isLibraryCollapsed} aria-label={t(isLibraryCollapsed ? "library.expand" : "library.collapse")}><Icon name="chevron" size={15} /><Tooltip side="right">{t(isLibraryCollapsed ? "library.expand" : "library.collapse")}</Tooltip></button>
           </div>
-          <div ref={assetListRef} className={`asset-list ${libraryDragVisual ? "reordering" : ""}`} role="listbox" aria-multiselectable="true" aria-describedby="library-reorder-help" tabIndex={assets.length ? 0 : undefined} onKeyDown={handleLibraryKeyDown} onScroll={preloadVisibleThumbnails}>
+          <div ref={assetListRef} className={`asset-list ${libraryDragVisual ? "reordering" : ""}`} role="listbox" aria-multiselectable="true" aria-describedby="library-reorder-help" tabIndex={assets.length && !selectedId ? 0 : undefined} onKeyDown={handleLibraryKeyDown} onScroll={updateLibraryViewport}>
             <span id="library-reorder-help" className="sr-only">{t("library.reorderHint")}</span>
             {assets.length === 0 ? (
               <div className="library-empty"><Icon name="image" size={24} /><span>{t(isWorkspaceLoaded ? "library.empty" : "library.loading")}</span></div>
-            ) : assets.map((asset, index) => (
+            ) : <>
+              {librarySpacerBefore > 0 && <div className="asset-list-spacer" style={{ height: librarySpacerBefore }} aria-hidden="true" />}
+              {visibleAssets.map((asset, visibleIndex) => {
+                const index = visibleAssetStart + visibleIndex;
+                return (
               <button
                 key={asset.id}
                 data-asset-id={asset.id}
                 className={`asset-row ${selectedIdSet.has(asset.id) ? "selected" : ""} ${asset.id === selectedId ? "active" : ""} ${libraryDraggedIdSet.has(asset.id) ? "dragging" : ""} ${libraryDropBeforeId === asset.id ? "drop-before" : ""}`}
                 role="option"
                 aria-selected={selectedIdSet.has(asset.id)}
+                aria-posinset={index + 1}
+                aria-setsize={assets.length}
+                tabIndex={asset.id === selectedId ? 0 : -1}
                 onClick={(event) => selectAssetFromList(event, asset.id)}
                 onContextMenu={(event) => openAssetContextMenu(event, asset.id)}
                 onPointerDown={(event) => handleAssetPointerDown(event, asset.id)}
@@ -1888,8 +1956,11 @@ function App() {
                 </span>
                 <span className={`asset-status-badge ${asset.status}`} title={asset.error || t(`status.${asset.status}`)}>{t(`status.short.${asset.status}`)}</span>
               </button>
-            ))}
-            {libraryDropAtEnd && <div className="library-drop-marker end" aria-hidden="true" />}
+                );
+              })}
+              {librarySpacerAfter > 0 && <div className="asset-list-spacer" style={{ height: librarySpacerAfter }} aria-hidden="true" />}
+              {libraryDropAtEnd && <div className="library-drop-marker end" aria-hidden="true" />}
+            </>}
           </div>
           <div className="sr-only" role="status" aria-live="polite">{libraryAnnouncement}</div>
           {libraryDragVisual && libraryDragLead && <div className="library-drag-ghost" style={{ left: libraryDragVisual.clientX + 12, top: libraryDragVisual.clientY + 12 }} aria-hidden="true"><span className="asset-thumb">{libraryDragLead.thumbnailUrl || libraryDragLead.previewUrl ? <img src={libraryDragLead.thumbnailUrl ?? libraryDragLead.previewUrl} alt="" draggable={false} style={{ transform: `rotate(${libraryDragLead.rotation}deg)` }} /> : <Icon name="image" size={16} />}</span><strong>{libraryDragVisual.draggedIds.length > 1 ? t("library.draggingMany", { count: libraryDragVisual.draggedIds.length }) : libraryDragLead.name}</strong></div>}
