@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -11,7 +12,9 @@ use tauri::{AppHandle, Manager};
 const CACHE_DIRECTORY: &str = "preview-cache";
 const CACHE_SCHEMA_VERSION: u8 = 1;
 const CACHE_MAX_BYTES: u64 = 512 * 1024 * 1024;
+const CACHE_TRIM_WRITE_INTERVAL: usize = 16;
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+static CACHE_WRITES: AtomicUsize = AtomicUsize::new(0);
 
 pub struct CachedPreviewBundle {
     pub result_png: Vec<u8>,
@@ -84,7 +87,7 @@ pub fn store(app: &AppHandle, key: &str, result_png: &[u8], mask_png: &[u8]) -> 
     atomic_write(&directory.join(format!("{key}.result.png")), result_png)?;
     atomic_write(&directory.join(format!("{key}.mask.png")), mask_png)?;
     touch(&directory, key)?;
-    trim(&directory, CACHE_MAX_BYTES)
+    trim_periodically(&directory)
 }
 
 pub fn load_image(app: &AppHandle, key: &str, variant: &str) -> Result<Option<Vec<u8>>, String> {
@@ -112,7 +115,7 @@ pub fn store_image(app: &AppHandle, key: &str, variant: &str, png: &[u8]) -> Res
         .map_err(|error| format!("미리보기 캐시 폴더를 만들지 못했습니다: {error}"))?;
     atomic_write(&directory.join(format!("{key}.{variant}.png")), png)?;
     touch(&directory, key)?;
-    trim(&directory, CACHE_MAX_BYTES)
+    trim_periodically(&directory)
 }
 
 pub fn size(app: &AppHandle) -> Result<u64, String> {
@@ -190,6 +193,14 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         let _ = fs::remove_file(&temporary);
         format!("미리보기 캐시를 확정하지 못했습니다: {error}")
     })
+}
+
+fn trim_periodically(directory: &Path) -> Result<(), String> {
+    let write = CACHE_WRITES.fetch_add(1, Ordering::Relaxed);
+    if write.is_multiple_of(CACHE_TRIM_WRITE_INTERVAL) {
+        trim(directory, CACHE_MAX_BYTES)?;
+    }
+    Ok(())
 }
 
 fn trim(directory: &Path, max_bytes: u64) -> Result<(), String> {

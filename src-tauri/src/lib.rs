@@ -70,6 +70,30 @@ impl PreviewRequestGate {
             .lock()
             .is_ok_and(|latest| latest.as_deref() == Some(key))
     }
+
+    fn invalidate(&self) {
+        if let Ok(mut latest) = self.latest.lock() {
+            *latest = None;
+        }
+    }
+}
+
+impl SamPreviewController {
+    fn release(&self) {
+        self.gate.invalidate();
+        if let Ok(mut engine) = self.engine.lock() {
+            *engine = None;
+        }
+    }
+}
+
+impl MaskPreviewController {
+    fn release(&self) {
+        self.gate.invalidate();
+        if let Ok(mut engine) = self.engine.lock() {
+            *engine = None;
+        }
+    }
 }
 
 impl BatchController {
@@ -491,6 +515,9 @@ async fn generate_mask_preview(
             .as_deref()
             .and_then(|key| preview_cache::load(&app, key).ok().flatten())
         {
+            if !controller.gate.is_latest(&request_key) {
+                return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
+            }
             return Ok::<MaskPreviewBundle, String>(mask_preview_bundle_from_png(
                 &cached.result_png,
                 &cached.mask_png,
@@ -523,7 +550,14 @@ async fn generate_mask_preview(
                 &settings,
                 &edge_settings,
             )?;
+        drop(slot);
+        if !controller.gate.is_latest(&request_key) {
+            return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
+        }
         let (bundle, result_png, mask_png) = encode_mask_preview_bundle(result, mask)?;
+        if !controller.gate.is_latest(&request_key) {
+            return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
+        }
         if let Some(key) = cache_key.as_deref() {
             let _ = preview_cache::store(&app, key, &result_png, &mask_png);
         }
@@ -575,6 +609,9 @@ async fn generate_sam_preview(
             .as_deref()
             .and_then(|key| preview_cache::load(&app, key).ok().flatten())
         {
+            if !controller.gate.is_latest(&request_key) {
+                return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
+            }
             return Ok::<MaskPreviewBundle, String>(mask_preview_bundle_from_png(
                 &cached.result_png,
                 &cached.mask_png,
@@ -607,7 +644,14 @@ async fn generate_sam_preview(
                 &settings,
                 &edge_settings,
             )?;
+        drop(slot);
+        if !controller.gate.is_latest(&request_key) {
+            return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
+        }
         let (bundle, result_png, mask_png) = encode_mask_preview_bundle(result, mask)?;
+        if !controller.gate.is_latest(&request_key) {
+            return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
+        }
         if let Some(key) = cache_key.as_deref() {
             let _ = preview_cache::store(&app, key, &result_png, &mask_png);
         }
@@ -798,6 +842,8 @@ fn output_settings_for_item(settings: &OutputSettings, item: &ProcessItem) -> Ou
 async fn process_batch(
     app: AppHandle,
     controller: State<'_, BatchController>,
+    mask_preview_controller: State<'_, MaskPreviewController>,
+    sam_preview_controller: State<'_, SamPreviewController>,
     items: Vec<ProcessItem>,
     settings: OutputSettings,
 ) -> CommandResult<BatchResult> {
@@ -811,7 +857,11 @@ async fn process_batch(
         .begin()
         .map_err(|error| CommandError::new("batch.busy", error))?;
     let blocking_controller = controller.clone();
+    let mask_preview_controller = mask_preview_controller.inner().clone();
+    let sam_preview_controller = sam_preview_controller.inner().clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
+        mask_preview_controller.release();
+        sam_preview_controller.release();
         process_batch_blocking(app, items, settings, blocking_controller)
     })
     .await;
@@ -1634,6 +1684,8 @@ mod tests {
         gate.mark_latest("second".to_owned());
         assert!(!gate.is_latest("first"));
         assert!(gate.is_latest("second"));
+        gate.invalidate();
+        assert!(!gate.is_latest("second"));
     }
 
     #[test]

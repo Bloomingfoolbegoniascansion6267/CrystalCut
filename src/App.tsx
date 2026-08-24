@@ -19,6 +19,7 @@ const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const TOAST_DURATION_MS = 5000;
 const AUTO_OPEN_OUTPUT_FOLDER_LIMIT = 3;
 const THUMBNAIL_PRELOAD_LIMIT = 32;
+const FULL_PREVIEW_MEMORY_LIMIT = 3;
 
 const DEFAULT_SETTINGS: OutputSettings = {
   processingMode: "removeBackground",
@@ -238,6 +239,7 @@ function App() {
   const maskPreviewSnapshot = useRef<{ editBasePreviewUrl?: string; maskPreviewUrl?: string; editPreviewKey?: string } | null>(null);
   const latestPreviewKeys = useRef(new Map<string, string>());
   const batchPreviewKeys = useRef(new Map<string, string>());
+  const fullPreviewLru = useRef<string[]>([]);
   const thumbnailLoads = useRef(new Set<string>());
   const thumbnailViewportFrame = useRef<number | null>(null);
   const selectionAnchorId = useRef<string | null>(null);
@@ -343,6 +345,26 @@ function App() {
 
   const invalidateExportPlan = useCallback(() => setExportPlanRevision((revision) => revision + 1), []);
   const invalidateSavedOutput = useCallback(() => setSavedOutputRevision((revision) => revision + 1), []);
+  const retainFullPreview = useCallback((assetId: string, patch: Partial<ImageAsset>) => {
+    const retainedIds = [
+      assetId,
+      ...fullPreviewLru.current.filter((id) => id !== assetId),
+    ].slice(0, FULL_PREVIEW_MEMORY_LIMIT);
+    fullPreviewLru.current = retainedIds;
+    const retained = new Set(retainedIds);
+    setAssets((current) => current.map((asset) => {
+      if (asset.id === assetId) return { ...asset, ...patch };
+      if (retained.has(asset.id) || (!asset.previewUrl && !asset.resultPreviewUrl && !asset.editBasePreviewUrl && !asset.maskPreviewUrl)) return asset;
+      return {
+        ...asset,
+        previewUrl: undefined,
+        resultPreviewUrl: undefined,
+        editBasePreviewUrl: undefined,
+        maskPreviewUrl: undefined,
+        editPreviewKey: undefined,
+      };
+    }));
+  }, []);
 
   const addAssets = useCallback((incoming: ImageAsset[]) => {
     if (!incoming.length) return;
@@ -586,16 +608,16 @@ function App() {
     invoke<string>("load_preview", { path: selected.path })
       .then((previewUrl) => {
         if (!cancelled) {
-          setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, previewUrl } : asset));
+          retainFullPreview(selected.id, { previewUrl });
         }
       })
       .catch(() => !cancelled && setNotice(t("notice.previewFailed")));
     return () => { cancelled = true; };
-  }, [selected?.id, selected?.path, selected?.previewUrl]);
+  }, [retainFullPreview, selected?.id, selected?.path, selected?.previewUrl]);
 
   useEffect(() => {
     const revision = ++maskPreviewRevision.current;
-    if (!isTauri() || !selected || !previewRecipe || settings.processingMode !== "removeBackground") {
+    if (!isTauri() || !selected || !previewRecipe || settings.processingMode !== "removeBackground" || isProcessing) {
       setMaskPreviewStatus("idle");
       setMaskPreviewError(null);
       return;
@@ -637,10 +659,10 @@ function App() {
       }, 200);
       void request.then(({ resultPreviewUrl: editBasePreviewUrl, maskPreviewUrl }) => {
         if (statusTimer !== null) window.clearTimeout(statusTimer);
-        if (latestPreviewKeys.current.get(selected.id) === previewRequestKey) {
-          setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, editBasePreviewUrl, maskPreviewUrl, editPreviewKey: previewRequestKey } : asset));
-        }
         if (maskPreviewRevision.current !== revision) return;
+        if (latestPreviewKeys.current.get(selected.id) === previewRequestKey) {
+          retainFullPreview(selected.id, { editBasePreviewUrl, maskPreviewUrl, editPreviewKey: previewRequestKey });
+        }
         setMaskPreviewStatus("current");
         setViewMode((current) => current === "mask" ? "mask" : "result");
       }).catch((error) => {
@@ -656,7 +678,7 @@ function App() {
       window.clearTimeout(timer);
       if (statusTimer !== null) window.clearTimeout(statusTimer);
     };
-  }, [selected?.id, selected?.path, selected?.rotation, selected?.status, selected?.outputPath, selected?.outputPreviewKey, selected?.editPreviewKey, selected?.editBasePreviewUrl, selected?.maskPreviewUrl, previewRecipeKey, previewRenderKey, previewRequestKey, isMaskEditing]);
+  }, [retainFullPreview, selected?.id, selected?.path, selected?.rotation, selected?.status, selected?.outputPath, selected?.outputPreviewKey, selected?.editPreviewKey, selected?.editBasePreviewUrl, selected?.maskPreviewUrl, previewRecipeKey, previewRenderKey, previewRequestKey, isMaskEditing, isProcessing]);
 
   useEffect(() => {
     if (!selected?.outputPath || selected.resultPreviewUrl || !isTauri()) return;
@@ -664,12 +686,12 @@ function App() {
     invoke<string>("load_preview", { path: selected.outputPath })
       .then((resultPreviewUrl) => {
         if (!cancelled) {
-          setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, resultPreviewUrl } : asset));
+          retainFullPreview(selected.id, { resultPreviewUrl });
         }
       })
       .catch(() => !cancelled && setNotice(t("notice.resultPreviewFailed")));
     return () => { cancelled = true; };
-  }, [selected?.id, selected?.outputPath, selected?.resultPreviewUrl]);
+  }, [retainFullPreview, selected?.id, selected?.outputPath, selected?.resultPreviewUrl]);
 
   const addFilesFromDialog = async () => {
     if (!isTauri()) {

@@ -908,10 +908,8 @@ mod tests {
     fn repeated_workspace_save_updates_only_changed_rows() {
         let mut connection = Connection::open_in_memory().expect("open in-memory database");
         migrate(&connection).expect("migrate database");
-        let directory = std::env::temp_dir().join(format!(
-            "crystalcut-workspace-delta-{}",
-            std::process::id()
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("crystalcut-workspace-delta-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("create fixture directory");
         let first = directory.join("first.jpg");
         let second = directory.join("second.jpg");
