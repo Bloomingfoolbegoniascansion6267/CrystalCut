@@ -12,6 +12,7 @@ import type { BrushMode, BrushStroke, ImageAsset, ManualMaskRecipe, MaskPoint } 
 import { useI18n } from "./i18n/I18nProvider";
 import BrushActionIcon from "./BrushActionIcon";
 import SelectionSourceIcon from "./SelectionSourceIcon";
+import { matchesShortcut } from "./lib/shortcuts";
 import { isMaskRecipeReady, selectionSourceForMode, type SelectionSource } from "./lib/mask";
 
 export type PreviewViewMode = "original" | "result" | "mask" | "compare";
@@ -309,11 +310,26 @@ export default function PreviewEditor({
       spacePressed.current = true;
       event.preventDefault();
     }
+    if (matchesShortcut(event, "zoomOut")) {
+      event.preventDefault();
+      changeZoom(effectiveZoom / 1.2);
+      return;
+    }
+    if (matchesShortcut(event, "zoomIn")) {
+      event.preventDefault();
+      changeZoom(effectiveZoom * 1.2);
+      return;
+    }
+    if (matchesShortcut(event, "zoomFit")) {
+      event.preventDefault();
+      fitToScreen();
+      return;
+    }
     if (!editing) return;
     if (event.key === "Escape") onCancel();
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+    if (matchesShortcut(event, "undo") || matchesShortcut(event, "redo") || (!event.metaKey && event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === "y")) {
       event.preventDefault();
-      if (event.shiftKey) redo(); else undo();
+      if (matchesShortcut(event, "redo") || event.key.toLowerCase() === "y") redo(); else undo();
     }
     if (event.key === "[") setBrushSize((value) => clamp(value - 4, 4, 240));
     if (event.key === "]") setBrushSize((value) => clamp(value + 4, 4, 240));

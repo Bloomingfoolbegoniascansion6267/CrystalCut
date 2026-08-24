@@ -14,6 +14,7 @@ import type { LanguagePreference } from "./i18n/locale";
 import { localizeCommandError } from "./i18n/errors";
 import SelectionSourceIcon from "./SelectionSourceIcon";
 import { isMaskRecipeReady, selectionSourceForMode } from "./lib/mask";
+import { isEditableTarget, matchesShortcut } from "./lib/shortcuts";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const TOAST_DURATION_MS = 5000;
@@ -832,9 +833,10 @@ function App() {
   };
 
   const rotateSelected = (direction: -1 | 1) => {
-    if (!selectedId) return;
+    if (!selectedIds.length) return;
+    const rotating = new Set(selectedIds);
     setAssets((current) => current.map((asset) => {
-      if (asset.id !== selectedId) return asset;
+      if (!rotating.has(asset.id)) return asset;
       const rotatePoint = (point: MaskPoint): MaskPoint => direction === 1
         ? { x: 1 - point.y, y: point.x }
         : { x: point.y, y: 1 - point.x };
@@ -1854,6 +1856,15 @@ function App() {
     removeAssets(selectedAssets.map((asset) => asset.id));
   };
 
+  const removeCurrentSelection = () => {
+    if (!selectedAssets.length || isProcessing) return;
+    if (selectedAssets.length > 1) {
+      removeMultiSelection();
+      return;
+    }
+    removeAssets([selectedAssets[0].id]);
+  };
+
   const exportSelectedOriginals = async () => {
     if (!selectedAssets.length) return;
     if (!isTauri()) {
@@ -1934,6 +1945,65 @@ function App() {
       selectionAnchorId.current = selectedId ?? allIds[0] ?? null;
     }
   };
+
+  useEffect(() => {
+    const handleAppShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isEditableTarget(event.target) || isSettingsOpen || isPresetNaming || contextMenu || isMaskEditing) return;
+
+      if (matchesShortcut(event, "addFiles")) {
+        if (isProcessing || !isWorkspaceLoaded) return;
+        event.preventDefault();
+        void addFilesFromDialog();
+        return;
+      }
+      if (matchesShortcut(event, "addFolder")) {
+        if (isProcessing || !isWorkspaceLoaded) return;
+        event.preventDefault();
+        void addFolderFromDialog();
+        return;
+      }
+      if (matchesShortcut(event, "settings")) {
+        event.preventDefault();
+        openSettings("general");
+        return;
+      }
+      if (matchesShortcut(event, "rotateLeft") || matchesShortcut(event, "rotateRight")) {
+        if (!selectedAssets.length || isProcessing) return;
+        event.preventDefault();
+        if (event.repeat) return;
+        rotateSelected(matchesShortcut(event, "rotateLeft") ? -1 : 1);
+        return;
+      }
+      if (matchesShortcut(event, "remove")) {
+        if (!selectedAssets.length || isProcessing) return;
+        event.preventDefault();
+        if (event.repeat) return;
+        removeCurrentSelection();
+        return;
+      }
+
+      const requestedView: PreviewViewMode | null = matchesShortcut(event, "viewOriginal") ? "original"
+        : matchesShortcut(event, "viewResult") ? "result"
+          : matchesShortcut(event, "viewMask") ? "mask"
+            : matchesShortcut(event, "viewCompare") ? "compare"
+              : null;
+      if (!requestedView || !selected) return;
+      event.preventDefault();
+      if (event.repeat) return;
+      if (requestedView === "original") {
+        setViewMode("original");
+      } else if (requestedView === "mask" && !hasMaskView) {
+        setNotice(t("notice.maskNeeded"));
+      } else if ((requestedView === "result" || requestedView === "compare") && !hasResultView) {
+        setNotice(t(requestedView === "result" ? "notice.previewNeeded" : "notice.compareNeeded"));
+      } else {
+        setViewMode(requestedView);
+      }
+    };
+
+    window.addEventListener("keydown", handleAppShortcut);
+    return () => window.removeEventListener("keydown", handleAppShortcut);
+  }, [contextMenu, hasMaskView, hasResultView, isMaskEditing, isPresetNaming, isProcessing, isSettingsOpen, isWorkspaceLoaded, selected, selectedAssets]);
 
   const handleInspectorTabKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
