@@ -104,30 +104,27 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: CrystalCut v__VERSION__
           releaseBody: |
-            CrystalCut 1.0.4 fixes macOS release installation and keeps the complete local-first background-removal and batch-conversion workflow available on both Windows and macOS.
+            CrystalCut 1.0.5 adds platform-aware AI acceleration, faster preview reuse, and a more efficient keyboard-driven editing workflow while keeping all image processing local.
 
             ## Highlights
 
-            - Choose automatic U2NetP removal, SlimSAM-guided object selection, or a fully manual mask.
-            - Refine objects with keep/remove brushes, undo/redo, and live per-file edge controls.
-            - Inspect Original, Preview, Mask, and draggable Compare views with stable zoom, pan, and fit behavior.
-            - Select multiple files, export their originals or results, and drag individual files or groups to reorder the queue.
-            - Override the global resize for one file by setting an output width or height with the aspect ratio locked.
-            - Convert without background removal and reuse complete output presets for format, quality, size, metadata, naming, and destination.
-            - Review and edit selected metadata, with separate opt-in policies for GPS and generation prompts.
+            - Run ONNX inference with DirectML on Windows or CoreML on macOS, with automatic high-performance GPU selection, an isolated device test, and safe CPU fallback.
+            - Reuse persisted preview results across file switches and application restarts instead of repeating identical AI inference.
+            - Edit objects faster with 1–4 view switching, B/E brush selection, H or Space panning, bracket brush sizing, undo/redo, and visible shortcut hints.
+            - Use consistent keyboard shortcuts and context menus for adding, selecting, reordering, rotating, exporting, and removing work-list items.
+            - Work smoothly with large queues through virtualized rendering, keyboard navigation, and bounded preview-memory usage.
+            - Export multiple originals or results and automatically open the appropriate output folder or folder-selection dialog.
+            - Choose automatic U2NetP removal, SlimSAM-guided object selection, or a fully manual mask with clearer mode colors and edge-control availability.
             - Follow the system language automatically or choose any of nine fully translated languages.
 
             ## Reliability and UX fixes
 
-            - macOS apps are code-signed, DMG integrity is checked, and only a fully verified release is published.
-            - Developer ID credentials automatically enable Apple notarization; otherwise a bundle-preserving ad-hoc signature is used.
-            - HTTPS model downloads include the required Rustls transport instead of failing at runtime.
-            - Packaged applications load bundled assets directly and no longer depend on a development server.
-            - Intel macOS uses an ONNX Runtime package that provides an `x86_64-apple-darwin` binary.
-            - Preview zoom uses the original dimensions as 100%, and all preview tabs retain one stable canvas and aspect ratio.
-            - Removed pixels in Compare reveal transparency rather than the original image underneath.
-            - Opening or closing edge settings no longer changes processing state or regenerates the preview.
-            - Thumbnails preload when files are added, temporary notices dismiss automatically, and Windows release builds stay console-free.
+            - Preview request races are discarded safely, cache keys now reflect processing inputs precisely, and cache limits prevent unbounded memory growth.
+            - Switching images no longer exposes the previous image's zoom before the new fit calculation is ready.
+            - Workspace persistence is serialized so reorder, rotation, edge, resize, and other rapid edits no longer produce misleading save-failure notices.
+            - Object-selection controls clearly explain when edge settings are unavailable and disable sliders that cannot affect the current preview.
+            - AI model installation and per-file processing failures expose actionable progress and error states.
+            - macOS apps remain code-signed, DMG integrity is checked, and only a fully verified cross-platform release is published.
 
             ## Downloads
 

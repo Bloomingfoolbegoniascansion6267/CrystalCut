@@ -1,6 +1,6 @@
 [package]
 name = "crystalcut"
-version = "1.0.4"
+version = "1.0.5"
 description = "Fast local-first background removal for Windows and macOS"
 authors = ["CrystalCut contributors"]
 edition = "2021"
