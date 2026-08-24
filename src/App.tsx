@@ -208,6 +208,8 @@ function App() {
   const [lastOutputBytes, setLastOutputBytes] = useState<number | null>(null);
   const [exportPlan, setExportPlan] = useState<ExportPlan | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
+  const [exportPlanRevision, setExportPlanRevision] = useState(0);
+  const [savedOutputRevision, setSavedOutputRevision] = useState(0);
   const [isExportingOriginals, setIsExportingOriginals] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [isWorkspaceLoaded, setIsWorkspaceLoaded] = useState(!isTauri());
@@ -337,10 +339,10 @@ function App() {
   const activePresetId = preferences.presets.find((preset) => JSON.stringify(preset.settings) === JSON.stringify(settings))?.id ?? "";
   const persistedAssets = useMemo(() => assets.map(toPersistedAsset), [assets]);
   const workspaceKey = useMemo(() => JSON.stringify({ items: persistedAssets, settings }), [persistedAssets, settings]);
-  const planKey = useMemo(() => JSON.stringify({
-    items: assets.map(({ path, rotation, maskRecipe, edgeSettings, metadataPolicy, resizeOverride }) => ({ path, rotation, maskRecipe, edgeSettings, metadataPolicy, resizeOverride })),
-    settings,
-  }), [assets, settings]);
+  const planKey = useMemo(() => JSON.stringify({ revision: exportPlanRevision, settings }), [exportPlanRevision, settings]);
+
+  const invalidateExportPlan = useCallback(() => setExportPlanRevision((revision) => revision + 1), []);
+  const invalidateSavedOutput = useCallback(() => setSavedOutputRevision((revision) => revision + 1), []);
 
   const addAssets = useCallback((incoming: ImageAsset[]) => {
     if (!incoming.length) return;
@@ -349,11 +351,12 @@ function App() {
       const unique = incoming.filter((asset) => !known.has(asset.path.toLocaleLowerCase()));
       return [...current, ...unique];
     });
+    invalidateExportPlan();
     setSelectedId((current) => current ?? incoming[0].id);
     setSelectedIds((current) => current.length ? current : [incoming[0].id]);
     if (!selectionAnchorId.current) selectionAnchorId.current = incoming[0].id;
     setNotice(t("notice.filesLoaded", { count: incoming.length }));
-  }, [t]);
+  }, [invalidateExportPlan, t]);
 
   const preloadThumbnails = useCallback((incoming: ImageAsset[]) => {
     if (!isTauri()) return;
@@ -437,6 +440,7 @@ function App() {
         setSettings(restored.settings);
         const restoredItems = restored.items.map((asset) => ({ ...asset, metadataPolicy: asset.metadataPolicy ?? null, resizeOverride: asset.resizeOverride ?? null }));
         setAssets(restoredItems);
+        invalidateExportPlan();
         preloadThumbnails(restoredItems.slice(0, THUMBNAIL_PRELOAD_LIMIT));
         setSelectedId(restored.items[0]?.id ?? null);
         setSelectedIds(restored.items[0] ? [restored.items[0].id] : []);
@@ -455,7 +459,7 @@ function App() {
     })().finally(() => !disposed && setIsWorkspaceLoaded(true));
 
     return () => { disposed = true; };
-  }, [preloadThumbnails, setLanguagePreference]);
+  }, [invalidateExportPlan, preloadThumbnails, setLanguagePreference]);
 
   useEffect(() => {
     if (!isTauri() || !isWorkspaceLoaded || !preferences.restoreWorkspace) return;
@@ -574,7 +578,7 @@ function App() {
 
   useEffect(() => {
     setLastOutputBytes(null);
-  }, [planKey]);
+  }, [planKey, savedOutputRevision]);
 
   useEffect(() => {
     if (!selected || selected.previewUrl || !isTauri()) return;
@@ -752,6 +756,7 @@ function App() {
         maskPreviewUrl: undefined,
       };
     }));
+    invalidateExportPlan();
   };
 
   const updateSelectedMask = useCallback((maskRecipe: ManualMaskRecipe) => {
@@ -773,8 +778,9 @@ function App() {
         error: invalidatesResult ? undefined : asset.error,
       };
     }));
+    invalidateSavedOutput();
     if (isMaskEditing) setViewMode((current) => current === "mask" ? "mask" : "result");
-  }, [isMaskEditing, selectedId]);
+  }, [invalidateSavedOutput, isMaskEditing, selectedId]);
 
   const updateSelectedEdgeSettings = useCallback((patch: Partial<EdgeSettings>) => {
     if (!selectedId || !selected || settings.processingMode === "convert" || !isMaskRecipeReady(previewRecipe) || isProcessing) return;
@@ -790,7 +796,8 @@ function App() {
       resultPreviewUrl: undefined,
       error: undefined,
     } : asset));
-  }, [isProcessing, previewRecipe, selected, selectedId, settings.processingMode]);
+    invalidateSavedOutput();
+  }, [invalidateSavedOutput, isProcessing, previewRecipe, selected, selectedId, settings.processingMode]);
 
   const updateSelectedResizeOverride = useCallback((patch: Partial<ResizeOverride>) => {
     if (!selectedId || !selected) return;
@@ -822,8 +829,9 @@ function App() {
       maskPreviewUrl: undefined,
       error: undefined,
     } : asset));
+    invalidateExportPlan();
     if (settings.processingMode === "removeBackground") setMaskPreviewStatus("updating");
-  }, [selected, selectedId, settings.preventUpscale, settings.processingMode]);
+  }, [invalidateExportPlan, selected, selectedId, settings.preventUpscale, settings.processingMode]);
 
   const resetSelectedResizeOverride = useCallback(() => {
     if (!selectedId) return;
@@ -838,8 +846,9 @@ function App() {
       maskPreviewUrl: undefined,
       error: undefined,
     } : asset));
+    invalidateExportPlan();
     if (settings.processingMode === "removeBackground") setMaskPreviewStatus("updating");
-  }, [selectedId, settings.processingMode]);
+  }, [invalidateExportPlan, selectedId, settings.processingMode]);
 
   const updateSelectedMetadata = useCallback((patch: Partial<ImageAsset["exif"]>) => {
     if (!selectedId) return;
@@ -852,7 +861,8 @@ function App() {
       resultPreviewUrl: undefined,
       error: undefined,
     } : asset));
-  }, [selectedId]);
+    invalidateExportPlan();
+  }, [invalidateExportPlan, selectedId]);
 
   const updateSelectedMetadataPolicy = useCallback((patch: Partial<MetadataOutputPolicy>) => {
     if (!selectedId) return;
@@ -877,7 +887,8 @@ function App() {
         error: undefined,
       };
     }));
-  }, [selectedId, settings.preserveGps, settings.preserveMetadata, settings.preservePrompt]);
+    invalidateExportPlan();
+  }, [invalidateExportPlan, selectedId, settings.preserveGps, settings.preserveMetadata, settings.preservePrompt]);
 
   const resetSelectedMetadataPolicy = useCallback(() => {
     if (!selectedId) return;
@@ -889,7 +900,8 @@ function App() {
       outputBytes: undefined,
       error: undefined,
     } : asset));
-  }, [selectedId]);
+    invalidateExportPlan();
+  }, [invalidateExportPlan, selectedId]);
 
   useEffect(() => {
     setIsMaskEditing(false);
@@ -940,6 +952,7 @@ function App() {
       : retainedSelection.at(-1) ?? adjacent?.id ?? null;
     const nextSelection = retainedSelection.length ? retainedSelection : nextActiveId ? [nextActiveId] : [];
     setAssets(next);
+    invalidateExportPlan();
     setSelectedIds(nextSelection);
     setSelectedId(nextActiveId);
     if (!selectionAnchorId.current || removing.has(selectionAnchorId.current)) selectionAnchorId.current = nextActiveId;
@@ -1530,6 +1543,7 @@ function App() {
       const insertion = Math.max(0, Math.min(dropIndex, remaining.length));
       return [...remaining.slice(0, insertion), ...moving, ...remaining.slice(insertion)];
     });
+    invalidateExportPlan();
     announceLibraryMove(draggedIds.length, dropIndex + 1);
   };
 

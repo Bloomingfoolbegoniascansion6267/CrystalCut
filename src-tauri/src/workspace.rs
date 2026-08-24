@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -430,9 +431,28 @@ fn save_to_connection(
     let transaction = connection
         .transaction()
         .map_err(|error| format!("작업 목록 저장 transaction을 시작하지 못했습니다: {error}"))?;
-    transaction
-        .execute("DELETE FROM workspace_items", [])
-        .map_err(|error| format!("이전 작업 항목을 정리하지 못했습니다: {error}"))?;
+    let retained_ids = snapshot
+        .items
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect::<HashSet<_>>();
+    let removed_ids = {
+        let mut statement = transaction
+            .prepare("SELECT id FROM workspace_items")
+            .map_err(|error| format!("기존 작업 항목을 확인하지 못했습니다: {error}"))?;
+        let ids = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("기존 작업 항목을 읽지 못했습니다: {error}"))?
+            .filter_map(Result::ok)
+            .filter(|id| !retained_ids.contains(id.as_str()))
+            .collect::<Vec<_>>();
+        ids
+    };
+    for id in removed_ids {
+        transaction
+            .execute("DELETE FROM workspace_items WHERE id = ?1", [id])
+            .map_err(|error| format!("삭제된 작업 항목을 정리하지 못했습니다: {error}"))?;
+    }
     transaction
         .execute(
             "INSERT INTO workspace_state(singleton, settings_json, saved_at_ms)
@@ -444,14 +464,14 @@ fn save_to_connection(
         )
         .map_err(|error| format!("작업 설정을 저장하지 못했습니다: {error}"))?;
     for (position, item) in snapshot.items.iter().enumerate() {
-        insert_asset(&transaction, position, item)?;
+        upsert_asset(&transaction, position, item)?;
     }
     transaction
         .commit()
         .map_err(|error| format!("작업 목록 저장을 확정하지 못했습니다: {error}"))
 }
 
-fn insert_asset(
+fn upsert_asset(
     transaction: &Transaction<'_>,
     position: usize,
     item: &PersistedAsset,
@@ -479,7 +499,46 @@ fn insert_asset(
                 id, position, name, path, size_bytes, modified_at_ms, extension, width, height,
                 exif_json, status, rotation, mask_recipe_json, edge_settings_json, metadata_policy_json,
                 resize_override_json, output_path, output_bytes, output_preview_key, error
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+             ON CONFLICT(id) DO UPDATE SET
+                position = excluded.position,
+                name = excluded.name,
+                path = excluded.path,
+                size_bytes = excluded.size_bytes,
+                modified_at_ms = excluded.modified_at_ms,
+                extension = excluded.extension,
+                width = excluded.width,
+                height = excluded.height,
+                exif_json = excluded.exif_json,
+                status = excluded.status,
+                rotation = excluded.rotation,
+                mask_recipe_json = excluded.mask_recipe_json,
+                edge_settings_json = excluded.edge_settings_json,
+                metadata_policy_json = excluded.metadata_policy_json,
+                resize_override_json = excluded.resize_override_json,
+                output_path = excluded.output_path,
+                output_bytes = excluded.output_bytes,
+                output_preview_key = excluded.output_preview_key,
+                error = excluded.error
+             WHERE workspace_items.position IS NOT excluded.position
+                OR workspace_items.name IS NOT excluded.name
+                OR workspace_items.path IS NOT excluded.path
+                OR workspace_items.size_bytes IS NOT excluded.size_bytes
+                OR workspace_items.modified_at_ms IS NOT excluded.modified_at_ms
+                OR workspace_items.extension IS NOT excluded.extension
+                OR workspace_items.width IS NOT excluded.width
+                OR workspace_items.height IS NOT excluded.height
+                OR workspace_items.exif_json IS NOT excluded.exif_json
+                OR workspace_items.status IS NOT excluded.status
+                OR workspace_items.rotation IS NOT excluded.rotation
+                OR workspace_items.mask_recipe_json IS NOT excluded.mask_recipe_json
+                OR workspace_items.edge_settings_json IS NOT excluded.edge_settings_json
+                OR workspace_items.metadata_policy_json IS NOT excluded.metadata_policy_json
+                OR workspace_items.resize_override_json IS NOT excluded.resize_override_json
+                OR workspace_items.output_path IS NOT excluded.output_path
+                OR workspace_items.output_bytes IS NOT excluded.output_bytes
+                OR workspace_items.output_preview_key IS NOT excluded.output_preview_key
+                OR workspace_items.error IS NOT excluded.error",
             params![
                 item.id,
                 to_i64(position as u64),
@@ -839,6 +898,51 @@ mod tests {
         );
         assert_eq!(restored.items[1].status, PersistedStatus::Failed);
         assert_eq!(restored.settings.suffix, "_bg");
+
+        std::fs::remove_file(first).expect("remove first fixture");
+        std::fs::remove_file(second).expect("remove second fixture");
+        std::fs::remove_dir(directory).expect("remove fixture directory");
+    }
+
+    #[test]
+    fn repeated_workspace_save_updates_only_changed_rows() {
+        let mut connection = Connection::open_in_memory().expect("open in-memory database");
+        migrate(&connection).expect("migrate database");
+        let directory = std::env::temp_dir().join(format!(
+            "crystalcut-workspace-delta-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("create fixture directory");
+        let first = directory.join("first.jpg");
+        let second = directory.join("second.jpg");
+        std::fs::write(&first, b"first").expect("write first fixture");
+        std::fs::write(&second, b"second").expect("write second fixture");
+        let snapshot = WorkspaceSnapshot {
+            items: vec![
+                asset(&first, PersistedStatus::Ready),
+                asset(&second, PersistedStatus::Ready),
+            ],
+            settings: settings(),
+        };
+        save_to_connection(&mut connection, &snapshot).expect("save initial snapshot");
+
+        let before_same = connection.total_changes();
+        save_to_connection(&mut connection, &snapshot).expect("save unchanged snapshot");
+        assert_eq!(connection.total_changes() - before_same, 1);
+
+        let mut changed = snapshot.clone();
+        changed.items[1].status = PersistedStatus::Failed;
+        let before_change = connection.total_changes();
+        save_to_connection(&mut connection, &changed).expect("save changed snapshot");
+        assert_eq!(connection.total_changes() - before_change, 2);
+
+        let removed = WorkspaceSnapshot {
+            items: vec![changed.items[0].clone()],
+            settings: changed.settings,
+        };
+        let before_remove = connection.total_changes();
+        save_to_connection(&mut connection, &removed).expect("save removed snapshot");
+        assert_eq!(connection.total_changes() - before_remove, 2);
 
         std::fs::remove_file(first).expect("remove first fixture");
         std::fs::remove_file(second).expect("remove second fixture");
