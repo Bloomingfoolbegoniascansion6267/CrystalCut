@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -471,6 +471,7 @@ fn save_to_connection(
             .execute("DELETE FROM workspace_items WHERE id = ?1", [id])
             .map_err(|error| format!("삭제된 작업 항목을 정리하지 못했습니다: {error}"))?;
     }
+    move_reordered_positions_out_of_way(&transaction, &snapshot.items)?;
     transaction
         .execute(
             "INSERT INTO workspace_state(singleton, settings_json, saved_at_ms)
@@ -487,6 +488,43 @@ fn save_to_connection(
     transaction
         .commit()
         .map_err(|error| format!("작업 목록 저장을 확정하지 못했습니다: {error}"))
+}
+
+fn move_reordered_positions_out_of_way(
+    transaction: &Transaction<'_>,
+    items: &[PersistedAsset],
+) -> Result<(), String> {
+    let desired_positions = items
+        .iter()
+        .enumerate()
+        .map(|(position, item)| (item.id.as_str(), to_i64(position as u64)))
+        .collect::<HashMap<_, _>>();
+    let positions_changed = {
+        let mut statement = transaction
+            .prepare("SELECT id, position FROM workspace_items")
+            .map_err(|error| format!("기존 작업 순서를 확인하지 못했습니다: {error}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| format!("기존 작업 순서를 읽지 못했습니다: {error}"))?;
+        let mut changed = false;
+        for row in rows {
+            let (id, position) =
+                row.map_err(|error| format!("기존 작업 순서가 올바르지 않습니다: {error}"))?;
+            if desired_positions.get(id.as_str()).copied() != Some(position) {
+                changed = true;
+                break;
+            }
+        }
+        changed
+    };
+    if positions_changed {
+        transaction
+            .execute("UPDATE workspace_items SET position = -position - 1", [])
+            .map_err(|error| format!("작업 순서를 안전하게 재배치하지 못했습니다: {error}"))?;
+    }
+    Ok(())
 }
 
 fn upsert_asset(
@@ -989,6 +1027,57 @@ mod tests {
         let before_remove = connection.total_changes();
         save_to_connection(&mut connection, &removed).expect("save removed snapshot");
         assert_eq!(connection.total_changes() - before_remove, 2);
+
+        std::fs::remove_file(first).expect("remove first fixture");
+        std::fs::remove_file(second).expect("remove second fixture");
+        std::fs::remove_dir(directory).expect("remove fixture directory");
+    }
+
+    #[test]
+    fn reordered_workspace_items_save_without_unique_position_conflicts() {
+        let mut connection = Connection::open_in_memory().expect("open in-memory database");
+        migrate(&connection).expect("migrate database");
+        let directory =
+            std::env::temp_dir().join(format!("crystalcut-workspace-order-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create fixture directory");
+        let first = directory.join("first.jpg");
+        let second = directory.join("second.jpg");
+        std::fs::write(&first, b"first").expect("write first fixture");
+        std::fs::write(&second, b"second").expect("write second fixture");
+
+        let initial = WorkspaceSnapshot {
+            items: vec![
+                asset(&first, PersistedStatus::Ready),
+                asset(&second, PersistedStatus::Ready),
+            ],
+            settings: settings(),
+        };
+        save_to_connection(&mut connection, &initial).expect("save initial order");
+
+        let mut reordered = WorkspaceSnapshot {
+            items: vec![initial.items[1].clone(), initial.items[0].clone()],
+            settings: initial.settings.clone(),
+        };
+        save_to_connection(&mut connection, &reordered).expect("save reordered items");
+        reordered.items[0].rotation = 90;
+        reordered.items[0].edge_settings.edge_feather = 4;
+        reordered.items[0].resize_override = Some(ResizeOverride {
+            axis: crate::protocol::ResizeAxis::Width,
+            value: 960,
+            prevent_upscale: true,
+        });
+        save_to_connection(&mut connection, &reordered).expect("save edits after reordered items");
+
+        let restored = load_from_connection(&connection)
+            .expect("load reordered workspace")
+            .expect("workspace exists");
+        assert_eq!(restored.items[0].path, second.to_string_lossy());
+        assert_eq!(restored.items[0].rotation, 90);
+        assert_eq!(restored.items[0].edge_settings.edge_feather, 4);
+        assert_eq!(
+            restored.items[0].resize_override,
+            reordered.items[0].resize_override
+        );
 
         std::fs::remove_file(first).expect("remove first fixture");
         std::fs::remove_file(second).expect("remove second fixture");

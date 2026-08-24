@@ -1101,11 +1101,12 @@ function App() {
   };
 
   const openSavedOutputDirectories = async (directories: string[]) => {
-    if (!directories.length || !isTauri()) return;
+    const uniqueDirectories = [...new Set(directories)];
+    if (!uniqueDirectories.length || !isTauri()) return;
     try {
       let shouldOpen = true;
-      if (directories.length > AUTO_OPEN_OUTPUT_FOLDER_LIMIT) {
-        shouldOpen = await confirmDialog(t("dialog.openManyOutputFolders", { count: directories.length }), {
+      if (uniqueDirectories.length > AUTO_OPEN_OUTPUT_FOLDER_LIMIT) {
+        shouldOpen = await confirmDialog(t("dialog.openManyOutputFolders", { count: uniqueDirectories.length }), {
           title: t("dialog.openOutputFoldersTitle"),
           kind: "warning",
           okLabel: t("dialog.openOutputFolders"),
@@ -1113,7 +1114,7 @@ function App() {
         });
       }
       if (!shouldOpen) return;
-      await invoke<void>("open_directories", { paths: directories });
+      await invoke<void>("open_directories", { paths: uniqueDirectories });
     } catch {
       setNotice(t("notice.openOutputFoldersFailed"));
     }
@@ -1871,6 +1872,7 @@ function App() {
         t("management.originalsExported", { count: result.exported, size: formatBytes(result.bytes, formatLocale) }),
         result.failed ? t("management.exportFailed", { count: result.failed }) : null,
       ].filter(Boolean).join(" · "));
+      if (result.exported > 0) await openSavedOutputDirectories([outputDirectory]);
     } catch (error) {
       setNotice(localizeCommandError(error, t, "error.originals.export"));
     } finally {
