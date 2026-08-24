@@ -45,6 +45,7 @@ pub struct ComputeCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputeRuntimeStatus {
+    pub initialized: bool,
     pub requested: ComputePreference,
     pub effective_mode: ComputeMode,
     pub effective_device_id: Option<i32>,
@@ -55,6 +56,7 @@ pub struct ComputeRuntimeStatus {
 impl Default for ComputeRuntimeStatus {
     fn default() -> Self {
         Self {
+            initialized: false,
             requested: ComputePreference::default(),
             effective_mode: ComputeMode::Cpu,
             effective_device_id: None,
@@ -296,6 +298,7 @@ fn status_for(
         ComputeMode::CoreMlCpuAndNeuralEngine => "CoreML · CPU + Neural Engine".to_owned(),
     };
     ComputeRuntimeStatus {
+        initialized: true,
         requested: requested.clone(),
         effective_mode: effective.mode,
         effective_device_id: effective.device_id,

@@ -30,7 +30,7 @@ use protocol::{
     ProcessingMode, ResizeMode, WorkerRequest, WorkerResponse, WORKER_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use walkdir::WalkDir;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
@@ -39,6 +39,7 @@ static PREVIEW_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
 static PREVIEW_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
 static PREVIEW_INFERENCE_RUNS: AtomicU64 = AtomicU64::new(0);
 static PREVIEW_INFERENCE_MS: AtomicU64 = AtomicU64::new(0);
+static COMPUTE_PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const MAX_THUMBNAIL_EDGE: u32 = 160;
 
 #[derive(Clone, Default)]
@@ -840,6 +841,94 @@ fn get_app_diagnostics(app: AppHandle) -> CommandResult<AppDiagnostics> {
 #[tauri::command]
 fn clear_preview_cache(app: AppHandle) -> CommandResult<()> {
     preview_cache::clear(&app).map_err(|error| CommandError::new("preview.cacheClear", error))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComputeProbeResult {
+    success: bool,
+    duration_ms: u128,
+    status: Option<compute::ComputeRuntimeStatus>,
+    error: Option<String>,
+}
+
+#[tauri::command]
+async fn probe_compute_device(
+    app: AppHandle,
+    preference: compute::ComputePreference,
+) -> CommandResult<ComputeProbeResult> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        let model_path = model::ensure_default_model(&app)?;
+        let probe_directory = app
+            .path()
+            .app_cache_dir()
+            .map_err(|error| format!("처리 장치 테스트 폴더를 찾지 못했습니다: {error}"))?
+            .join("compute-probe");
+        std::fs::create_dir_all(&probe_directory)
+            .map_err(|error| format!("처리 장치 테스트 폴더를 만들지 못했습니다: {error}"))?;
+        let sequence = COMPUTE_PROBE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let input_path =
+            probe_directory.join(format!("input-{}-{sequence}.png", std::process::id()));
+        let output_path =
+            probe_directory.join(format!("output-{}-{sequence}.png", std::process::id()));
+        let fixture = image::RgbaImage::from_fn(320, 320, |x, y| {
+            image::Rgba([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8, 255])
+        });
+        fixture
+            .save(&input_path)
+            .map_err(|error| format!("처리 장치 테스트 이미지를 만들지 못했습니다: {error}"))?;
+        let request = WorkerRequest {
+            protocol_version: WORKER_PROTOCOL_VERSION,
+            job_id: format!("compute-probe-{sequence}"),
+            input_path: input_path.to_string_lossy().into_owned(),
+            output_path: output_path.to_string_lossy().into_owned(),
+            model_path: Some(model_path.to_string_lossy().into_owned()),
+            sam_encoder_path: None,
+            sam_decoder_path: None,
+            compute: preference,
+            rotation: 0,
+            settings: OutputSettings::default(),
+            mask_recipe: protocol::ManualMaskRecipe::default(),
+            edge_settings: EdgeSettings::default(),
+            metadata: None,
+        };
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("처리 장치 테스트 실행 파일을 찾지 못했습니다: {error}"))?;
+        let result = match WorkerClient::spawn(&executable) {
+            Ok(mut worker) => match worker.request(&request) {
+                Ok(response) => {
+                    worker.shutdown();
+                    ComputeProbeResult {
+                        success: response.success,
+                        duration_ms: response.duration_ms,
+                        status: response.compute_status,
+                        error: response.error,
+                    }
+                }
+                Err(error) => {
+                    worker.terminate();
+                    ComputeProbeResult {
+                        success: false,
+                        duration_ms: 0,
+                        status: None,
+                        error: Some(error),
+                    }
+                }
+            },
+            Err(error) => ComputeProbeResult {
+                success: false,
+                duration_ms: 0,
+                status: None,
+                error: Some(error),
+            },
+        };
+        let _ = std::fs::remove_file(&input_path);
+        let _ = std::fs::remove_file(&output_path);
+        Ok::<ComputeProbeResult, String>(result)
+    })
+    .await
+    .map_err(|error| CommandError::new("compute.probe", error))?;
+    outcome.map_err(|error| CommandError::new("compute.probe", error))
 }
 
 #[tauri::command]
@@ -1803,6 +1892,7 @@ pub fn run() {
             generate_sam_preview,
             get_model_status,
             get_app_diagnostics,
+            probe_compute_device,
             clear_preview_cache,
             install_model,
             delete_model,

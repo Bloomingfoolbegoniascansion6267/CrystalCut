@@ -1,5 +1,5 @@
 import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import type { AppDiagnostics, AppPreferences, ModelStatus, OutputSettings } from "./types";
+import type { AppDiagnostics, AppPreferences, ComputeProbeResult, ModelStatus, OutputSettings } from "./types";
 import { formatBytes } from "./lib/format";
 import { useI18n } from "./i18n/I18nProvider";
 import { LOCALE_OPTIONS, type LanguagePreference } from "./i18n/locale";
@@ -13,7 +13,7 @@ interface SettingsModalProps {
   currentSettings: OutputSettings;
   modelStatus: ModelStatus | null;
   diagnostics: AppDiagnostics | null;
-  busyAction: "save" | "model" | "cache" | "reset" | null;
+  busyAction: "save" | "model" | "cache" | "reset" | "compute" | null;
   modelDownloadProgress: number | null;
   processing: boolean;
   onClose: () => void;
@@ -24,6 +24,7 @@ interface SettingsModalProps {
   onClearPreviewCache: () => Promise<void>;
   onChooseDefaultDirectory: () => Promise<string | null>;
   onRefreshDiagnostics: () => Promise<void>;
+  onProbeCompute: (preference: AppPreferences["compute"]) => Promise<ComputeProbeResult>;
   onPreviewLanguage: (language: LanguagePreference) => void;
 }
 
@@ -51,11 +52,13 @@ export default function SettingsModal({
   onClearPreviewCache,
   onChooseDefaultDirectory,
   onRefreshDiagnostics,
+  onProbeCompute,
   onPreviewLanguage,
 }: SettingsModalProps) {
   const { t, formatLocale, systemLocale } = useI18n();
   const [tab, setTab] = useState<SettingsTab>("general");
   const [draft, setDraft] = useState(() => clonePreferences(preferences));
+  const [computeProbe, setComputeProbe] = useState<ComputeProbeResult | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const tabLabels = useMemo<Array<{ id: SettingsTab; label: string; description: string }>>(() => [
@@ -71,10 +74,29 @@ export default function SettingsModal({
       return systemLocale;
     }
   }, [formatLocale, systemLocale]);
+  const computeKey = (mode: AppPreferences["compute"]["mode"], deviceId: number | null) => `${mode}:${deviceId ?? ""}`;
+  const computeDevices = diagnostics?.computeCapabilities.devices ?? [
+    { mode: "auto" as const, deviceId: null, label: "Automatic", dedicatedMemoryBytes: null, recommended: true },
+    { mode: "cpu" as const, deviceId: null, label: "CPU", dedicatedMemoryBytes: null, recommended: false },
+  ];
+  const computeLabel = (device: (typeof computeDevices)[number]) => {
+    const memory = device.dedicatedMemoryBytes ? ` · ${formatBytes(device.dedicatedMemoryBytes, formatLocale)}` : "";
+    if (device.mode === "auto") return t("settings.compute.auto", { backend: diagnostics?.computeCapabilities.platformBackend ?? "GPU" });
+    if (device.mode === "cpu") return t("settings.compute.cpu");
+    if (device.mode === "directMl") return `${device.label} · DirectML${memory}`;
+    if (device.mode === "coreMlCpuAndGpu") return t("settings.compute.coreMlGpu");
+    if (device.mode === "coreMlCpuAndNeuralEngine") return t("settings.compute.coreMlNeural");
+    return t("settings.compute.coreMlAll");
+  };
+  const effectiveComputeLabel = diagnostics?.computeRuntime.initialized
+    ? computeDevices.find((device) => device.mode === diagnostics.computeRuntime.effectiveMode && device.deviceId === diagnostics.computeRuntime.effectiveDeviceId)
+    : null;
+  const lastComputeLabel = effectiveComputeLabel ? computeLabel(effectiveComputeLabel) : diagnostics?.computeRuntime.effectiveLabel;
 
   useEffect(() => {
     if (!open) return;
     setDraft(clonePreferences(preferences));
+    setComputeProbe(null);
     setTab(initialTab);
     const frame = window.requestAnimationFrame(() => headingRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
@@ -141,6 +163,14 @@ export default function SettingsModal({
   const selectLanguage = (language: LanguagePreference) => {
     setDraft((current) => ({ ...current, language }));
     onPreviewLanguage(language);
+  };
+
+  const probeCompute = async () => {
+    try {
+      setComputeProbe(await onProbeCompute(draft.compute));
+    } catch {
+      setComputeProbe({ success: false, durationMs: 0, status: null, error: "probe failed" });
+    }
   };
 
   const renderGeneral = () => (
@@ -214,9 +244,21 @@ export default function SettingsModal({
       </section>
       <section className="preferences-card">
         <div className="preferences-card-heading"><div><strong>{t("settings.storage.title")}</strong><span>{t("settings.storage.help")}</span></div></div>
-        <dl className="metric-list"><div><dt>{t("settings.storage.database")}</dt><dd>{formatBytes(diagnostics?.databaseBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.previewCache")}</dt><dd>{formatBytes(diagnostics?.previewCacheBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.model")}</dt><dd>{formatBytes(modelStatus?.installedBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.device")}</dt><dd>{t("settings.storage.deviceValue")}</dd></div></dl>
+        <dl className="metric-list"><div><dt>{t("settings.storage.database")}</dt><dd>{formatBytes(diagnostics?.databaseBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.previewCache")}</dt><dd>{formatBytes(diagnostics?.previewCacheBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.model")}</dt><dd>{formatBytes(modelStatus?.installedBytes ?? 0, formatLocale)}</dd></div></dl>
         <div className="preferences-actions left"><button className="button secondary compact" type="button" disabled={busyAction !== null || processing || !diagnostics?.previewCacheBytes} onClick={() => void onClearPreviewCache()}>{busyAction === "cache" ? t("common.processing") : t("settings.storage.clearPreviewCache")}</button></div>
-        <p className="preferences-note">{t(processing ? "settings.storage.locked" : "settings.storage.gpuLater")}</p>
+      </section>
+      <section className="preferences-card compute-card">
+        <div className="preferences-card-heading"><div><strong>{t("settings.compute.title")}</strong><span>{t("settings.compute.help")}</span></div></div>
+        <label className="preferences-wide-field"><span>{t("settings.compute.selected")}</span><select value={computeKey(draft.compute.mode, draft.compute.deviceId)} disabled={processing || busyAction !== null} onChange={(event) => {
+          const selected = computeDevices.find((device) => computeKey(device.mode, device.deviceId) === event.target.value);
+          if (selected) setDraft((current) => ({ ...current, compute: { mode: selected.mode, deviceId: selected.deviceId } }));
+        }}>{computeDevices.map((device) => <option key={computeKey(device.mode, device.deviceId)} value={computeKey(device.mode, device.deviceId)}>{computeLabel(device)}{device.recommended ? ` · ${t("editor.recommended")}` : ""}</option>)}</select></label>
+        <dl className="metric-list"><div><dt>{t("settings.compute.effective")}</dt><dd>{diagnostics?.computeRuntime.initialized ? lastComputeLabel : t("settings.compute.notRun")}</dd></div></dl>
+        <div className="preferences-actions left"><button className="button secondary compact" type="button" disabled={processing || busyAction !== null || !modelStatus?.installed} onClick={() => void probeCompute()}>{busyAction === "compute" ? t("settings.compute.testing") : t("settings.compute.test")}</button></div>
+        {computeProbe && <p className={`preferences-note ${computeProbe.success && !computeProbe.status?.fallbackReason ? "success" : "warning"}`}>{computeProbe.success ? t(computeProbe.status?.fallbackReason ? "settings.compute.testFallback" : "settings.compute.testSuccess", { device: computeProbe.status?.effectiveLabel ?? t("settings.compute.cpu"), duration: computeProbe.durationMs }) : t("settings.compute.testFailed")}</p>}
+        {diagnostics?.computeRuntime.fallbackReason && <p className="preferences-note warning">{t("settings.compute.fallback")}</p>}
+        <p className="preferences-note">{t(processing ? "settings.storage.locked" : "settings.compute.applyHelp")}</p>
+        <p className="preferences-note">{t("settings.compute.samCpu")}</p>
       </section>
     </div>
   );
@@ -237,7 +279,7 @@ export default function SettingsModal({
     <div className="preferences-sections">
       <section className="preferences-card">
         <div className="preferences-card-heading stacked"><div><strong>{t("settings.diagnostics.app")}</strong><span>{t("settings.diagnostics.appHelp")}</span></div><button className="small-action" type="button" onClick={() => void onRefreshDiagnostics()}>{t("common.refresh")}</button></div>
-        <dl className="metric-list diagnostics-list"><div><dt>CrystalCut</dt><dd>v{diagnostics?.appVersion ?? "-"}</dd></div><div><dt>{t("settings.diagnostics.engine")}</dt><dd>v{diagnostics?.workerProtocolVersion ?? "-"}</dd></div><div><dt>{t("settings.diagnostics.os")}</dt><dd>{diagnostics ? `${diagnostics.operatingSystem} · ${diagnostics.architecture}` : "-"}</dd></div><div><dt>{t("settings.diagnostics.model")}</dt><dd>{modelStatus ? `${modelStatus.id} · ${t(modelStatus.installed ? "settings.model.installed" : "settings.model.notInstalled")}` : "-"}</dd></div><div><dt>{t("settings.diagnostics.previewCacheActivity")}</dt><dd>{diagnostics ? `${diagnostics.previewCacheHits.toLocaleString(formatLocale)} / ${diagnostics.previewCacheMisses.toLocaleString(formatLocale)}` : "-"}</dd></div><div><dt>{t("settings.diagnostics.previewInference")}</dt><dd>{diagnostics ? `${diagnostics.previewInferenceRuns.toLocaleString(formatLocale)} · ${diagnostics.previewInferenceMs.toLocaleString(formatLocale)} ms` : "-"}</dd></div></dl>
+        <dl className="metric-list diagnostics-list"><div><dt>CrystalCut</dt><dd>v{diagnostics?.appVersion ?? "-"}</dd></div><div><dt>{t("settings.diagnostics.engine")}</dt><dd>v{diagnostics?.workerProtocolVersion ?? "-"}</dd></div><div><dt>{t("settings.diagnostics.os")}</dt><dd>{diagnostics ? `${diagnostics.operatingSystem} · ${diagnostics.architecture}` : "-"}</dd></div><div><dt>{t("settings.diagnostics.model")}</dt><dd>{modelStatus ? `${modelStatus.id} · ${t(modelStatus.installed ? "settings.model.installed" : "settings.model.notInstalled")}` : "-"}</dd></div><div><dt>{t("settings.diagnostics.compute")}</dt><dd>{diagnostics?.computeRuntime.initialized ? lastComputeLabel : t("settings.compute.notRun")}</dd></div><div><dt>{t("settings.diagnostics.previewCacheActivity")}</dt><dd>{diagnostics ? `${diagnostics.previewCacheHits.toLocaleString(formatLocale)} / ${diagnostics.previewCacheMisses.toLocaleString(formatLocale)}` : "-"}</dd></div><div><dt>{t("settings.diagnostics.previewInference")}</dt><dd>{diagnostics ? `${diagnostics.previewInferenceRuns.toLocaleString(formatLocale)} · ${diagnostics.previewInferenceMs.toLocaleString(formatLocale)} ms` : "-"}</dd></div></dl>
       </section>
       <section className="preferences-card"><div className="preferences-card-heading"><div><strong>{t("settings.diagnostics.dataFolder")}</strong><span>{t("settings.diagnostics.dataFolderHelp")}</span></div></div><code className="path-code">{diagnostics?.appDataDirectory ?? t("common.checking")}</code></section>
     </div>

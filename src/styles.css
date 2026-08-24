@@ -798,6 +798,7 @@ select:disabled { color: var(--ink-faint); background-color: var(--surface-muted
 .model-download-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), #9b83f3); transition: width 120ms linear; }
 .model-download-progress output { min-width: 34px; color: var(--accent-dark); font-size: 11px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
 .preferences-note.warning { color: #9a681b; }
+.preferences-note.success { color: #39764e; }
 .small-action { flex: 0 0 auto; min-height: 32px; padding: 6px 9px; color: var(--accent-dark); border: 1px solid #dcd4fa; border-radius: 7px; background: var(--accent-soft); font-size: 10.5px; font-weight: 700; cursor: pointer; }
 .small-action:hover { border-color: #bfb2f7; }
 .preferences-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-top: 16px; }

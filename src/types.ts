@@ -229,11 +229,19 @@ export interface ComputeDevice {
 }
 
 export interface ComputeRuntimeStatus {
+  initialized: boolean;
   requested: ComputePreference;
   effectiveMode: ComputeMode;
   effectiveDeviceId: number | null;
   effectiveLabel: string;
   fallbackReason: string | null;
+}
+
+export interface ComputeProbeResult {
+  success: boolean;
+  durationMs: number;
+  status: ComputeRuntimeStatus | null;
+  error: string | null;
 }
 
 export interface OutputPreset {

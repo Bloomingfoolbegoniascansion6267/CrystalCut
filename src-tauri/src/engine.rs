@@ -172,28 +172,25 @@ impl InferenceEngine {
 
     fn infer_mask(&mut self, source: &DynamicImage) -> Result<GrayImage, String> {
         let plane = (INPUT_WIDTH * INPUT_HEIGHT) as usize;
-        let input = prepare_input(source);
-
-        let tensor = Tensor::from_array((
-            [1_usize, 3, INPUT_HEIGHT as usize, INPUT_WIDTH as usize],
-            input,
-        ))
-        .map_err(|error| format!("ONNX 입력 tensor를 만들지 못했습니다: {error}"))?;
-        let outputs = self
-            .session
-            .run(ort::inputs![tensor])
-            .map_err(|error| format!("배경 제거 추론에 실패했습니다: {error}"))?;
-        let output = outputs[0]
-            .try_extract_array::<f32>()
-            .map_err(|error| format!("ONNX 출력 mask를 읽지 못했습니다: {error}"))?;
-        let shape = output.shape();
-        if shape != [1, 1, INPUT_HEIGHT as usize, INPUT_WIDTH as usize] {
-            return Err(format!("지원하지 않는 ONNX mask shape입니다: {shape:?}"));
-        }
-        let raw = output.iter().copied().take(plane).collect::<Vec<_>>();
-        if raw.len() != plane {
-            return Err(format!("ONNX mask 크기가 올바르지 않습니다: {}", raw.len()));
-        }
+        let raw = match Self::run_mask_session(&mut self.session, prepare_input(source), plane) {
+            Ok(raw) => raw,
+            Err(accelerator_error)
+                if !matches!(
+                    self.compute_status.effective_mode,
+                    crate::compute::ComputeMode::Cpu
+                ) =>
+            {
+                let outcome = compute::open_cpu_fallback(
+                    &self.model_path,
+                    &self.compute,
+                    format!("accelerated inference failed: {accelerator_error}"),
+                )?;
+                self.session = outcome.session;
+                self.compute_status = outcome.status;
+                Self::run_mask_session(&mut self.session, prepare_input(source), plane)?
+            }
+            Err(error) => return Err(error),
+        };
 
         let min = raw.iter().copied().fold(f32::INFINITY, f32::min);
         let max = raw.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -210,6 +207,33 @@ impl InferenceEngine {
             source.height(),
             ResizeFilter::Lanczos3,
         ))
+    }
+
+    fn run_mask_session(
+        session: &mut Session,
+        input: Vec<f32>,
+        plane: usize,
+    ) -> Result<Vec<f32>, String> {
+        let tensor = Tensor::from_array((
+            [1_usize, 3, INPUT_HEIGHT as usize, INPUT_WIDTH as usize],
+            input,
+        ))
+        .map_err(|error| format!("ONNX 입력 tensor를 만들지 못했습니다: {error}"))?;
+        let outputs = session
+            .run(ort::inputs![tensor])
+            .map_err(|error| format!("배경 제거 추론에 실패했습니다: {error}"))?;
+        let output = outputs[0]
+            .try_extract_array::<f32>()
+            .map_err(|error| format!("ONNX 출력 mask를 읽지 못했습니다: {error}"))?;
+        let shape = output.shape();
+        if shape != [1, 1, INPUT_HEIGHT as usize, INPUT_WIDTH as usize] {
+            return Err(format!("지원하지 않는 ONNX mask shape입니다: {shape:?}"));
+        }
+        let raw = output.iter().copied().take(plane).collect::<Vec<_>>();
+        if raw.len() != plane {
+            return Err(format!("ONNX mask 크기가 올바르지 않습니다: {}", raw.len()));
+        }
+        Ok(raw)
     }
 }
 

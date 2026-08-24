@@ -2,7 +2,7 @@ import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, lazy, Mous
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, MetadataOutputPolicy, ModelStatus, OriginalExportResult, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, ResizeOverride, RestoredWorkspace, WorkspaceSnapshot } from "./types";
+import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, ComputeProbeResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, MetadataOutputPolicy, ModelStatus, OriginalExportResult, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, ResizeOverride, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 import type { SettingsTab } from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewCommand, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
@@ -250,7 +250,7 @@ function App() {
   const [isLibraryCollapsed, setIsLibraryCollapsed] = useState(false);
   const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
   const [inspectorMode, setInspectorMode] = useState<InspectorMode>("output");
-  const [settingsBusyAction, setSettingsBusyAction] = useState<"save" | "model" | "cache" | "reset" | null>(null);
+  const [settingsBusyAction, setSettingsBusyAction] = useState<"save" | "model" | "cache" | "reset" | "compute" | null>(null);
   const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [previewCommand, setPreviewCommand] = useState<PreviewCommand | null>(null);
@@ -1268,6 +1268,17 @@ function App() {
       setNotice(t("notice.previewCacheCleared"));
     } catch (error) {
       setNotice(localizeCommandError(error, t, "error.preview.cacheClear"));
+    } finally {
+      setSettingsBusyAction(null);
+    }
+  };
+
+  const probeComputeFromSettings = async (preference: AppPreferences["compute"]) => {
+    setSettingsBusyAction("compute");
+    try {
+      const result = await invoke<ComputeProbeResult>("probe_compute_device", { preference });
+      await refreshSettingsData();
+      return result;
     } finally {
       setSettingsBusyAction(null);
     }
@@ -2699,6 +2710,7 @@ function App() {
         onClearPreviewCache={clearPreviewCacheFromSettings}
         onChooseDefaultDirectory={chooseDefaultOutputDirectory}
         onRefreshDiagnostics={refreshSettingsData}
+        onProbeCompute={probeComputeFromSettings}
         onPreviewLanguage={setLanguagePreference}
       /></Suspense>}
 
