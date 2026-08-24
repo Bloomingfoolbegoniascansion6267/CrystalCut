@@ -1,21 +1,28 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 interface TooltipProps {
   children: ReactNode;
   side?: "top" | "right" | "bottom" | "left";
   align?: "start" | "center" | "end";
+  shortcut?: string;
 }
 
-export default function Tooltip({ children, side = "top", align = "center" }: TooltipProps) {
+export default function Tooltip({ children, side = "top", align = "center", shortcut }: TooltipProps) {
+  const tooltipId = useId();
   const anchorRef = useRef<HTMLSpanElement>(null);
   const timerRef = useRef<number | null>(null);
   const pointerPressedRef = useRef(false);
+  const visibleRef = useRef(false);
   const [position, setPosition] = useState<CSSProperties | null>(null);
 
   useEffect(() => {
     const anchor = anchorRef.current?.parentElement;
     if (!anchor) return;
+    const previousDescription = anchor.getAttribute("aria-describedby");
+    const descriptionIds = new Set((previousDescription ?? "").split(/\s+/).filter(Boolean));
+    descriptionIds.add(tooltipId);
+    anchor.setAttribute("aria-describedby", [...descriptionIds].join(" "));
 
     const clearTimer = () => {
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
@@ -24,6 +31,7 @@ export default function Tooltip({ children, side = "top", align = "center" }: To
     const place = () => {
       const rect = anchor.getBoundingClientRect();
       const gap = 8;
+      visibleRef.current = true;
       if (side === "left") {
         setPosition({ top: rect.top + rect.height / 2, left: rect.left - gap, transform: "translate(-100%, -50%)" });
       } else if (side === "right") {
@@ -42,6 +50,7 @@ export default function Tooltip({ children, side = "top", align = "center" }: To
     };
     const hide = () => {
       clearTimer();
+      visibleRef.current = false;
       setPosition(null);
     };
     const handlePointerEnter = () => {
@@ -59,12 +68,18 @@ export default function Tooltip({ children, side = "top", align = "center" }: To
     const handleFocus = () => {
       if (!pointerPressedRef.current) show(0);
     };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !visibleRef.current) return;
+      event.stopPropagation();
+      hide();
+    };
 
     anchor.addEventListener("pointerenter", handlePointerEnter);
     anchor.addEventListener("pointerleave", handlePointerLeave);
     anchor.addEventListener("pointerdown", handlePointerDown);
     anchor.addEventListener("focus", handleFocus);
     anchor.addEventListener("blur", hide);
+    anchor.addEventListener("keydown", handleKeyDown);
     window.addEventListener("resize", hide);
     window.addEventListener("scroll", hide, true);
     return () => {
@@ -74,13 +89,16 @@ export default function Tooltip({ children, side = "top", align = "center" }: To
       anchor.removeEventListener("pointerdown", handlePointerDown);
       anchor.removeEventListener("focus", handleFocus);
       anchor.removeEventListener("blur", hide);
+      anchor.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("resize", hide);
       window.removeEventListener("scroll", hide, true);
+      if (previousDescription === null) anchor.removeAttribute("aria-describedby");
+      else anchor.setAttribute("aria-describedby", previousDescription);
     };
-  }, [align, side]);
+  }, [align, side, tooltipId]);
 
   return <>
     <span ref={anchorRef} className="tooltip-anchor" aria-hidden="true" />
-    {position && createPortal(<span className="app-tooltip portal" role="tooltip" aria-hidden="true" style={position}>{children}</span>, document.body)}
+    {createPortal(<span id={tooltipId} className="app-tooltip portal" role="tooltip" style={position ?? { display: "none" }}><span>{children}</span>{shortcut && <kbd>{shortcut}</kbd>}</span>, document.body)}
   </>;
 }

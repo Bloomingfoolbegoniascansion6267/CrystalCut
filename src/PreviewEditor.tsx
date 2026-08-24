@@ -12,7 +12,8 @@ import type { BrushMode, BrushStroke, ImageAsset, ManualMaskRecipe, MaskPoint } 
 import { useI18n } from "./i18n/I18nProvider";
 import BrushActionIcon from "./BrushActionIcon";
 import SelectionSourceIcon from "./SelectionSourceIcon";
-import { matchesShortcut } from "./lib/shortcuts";
+import Tooltip from "./Tooltip";
+import { ariaShortcut, formatShortcut, isMacPlatform, matchesShortcut } from "./lib/shortcuts";
 import { isMaskRecipeReady, selectionSourceForMode, type SelectionSource } from "./lib/mask";
 
 export type PreviewViewMode = "original" | "result" | "mask" | "compare";
@@ -474,20 +475,20 @@ export default function PreviewEditor({
           </div>
           <div className="editor-commit-actions" onPointerDown={(event) => event.stopPropagation()}><button className="editor-cancel" onClick={onCancel}>{t("common.cancel")}</button><button className="editor-apply" onClick={onApply} disabled={previewStatus === "loadingCache" || previewStatus === "updating"}>{t("editor.apply")}</button></div>
           <div className="editor-toolrail" aria-label={t("editor.tools")} onPointerDown={(event) => event.stopPropagation()}>
-            <button className={tool === "keep" ? "active keep" : ""} onClick={() => selectBrush("keep")} title={t("editor.brush", { tool: keepLabel })}><BrushActionIcon action="add" /><small>{keepLabel}</small></button>
-            <button className={tool === "remove" ? "active remove" : ""} onClick={() => selectBrush("remove")} title={t("editor.brush", { tool: removeLabel })}><BrushActionIcon action="subtract" /><small>{removeLabel}</small></button>
-            <button className={tool === "pan" ? "active" : ""} onClick={() => setTool("pan")} title={t("editor.pan")}><span>✥</span><small>{t("editor.pan")}</small></button>
+            <button className={`tooltip-host ${tool === "keep" ? "active keep" : ""}`} onClick={() => selectBrush("keep")}><BrushActionIcon action="add" /><small>{keepLabel}</small><Tooltip side="right">{t("editor.brush", { tool: keepLabel })}</Tooltip></button>
+            <button className={`tooltip-host ${tool === "remove" ? "active remove" : ""}`} onClick={() => selectBrush("remove")}><BrushActionIcon action="subtract" /><small>{removeLabel}</small><Tooltip side="right">{t("editor.brush", { tool: removeLabel })}</Tooltip></button>
+            <button className={`tooltip-host ${tool === "pan" ? "active" : ""}`} onClick={() => setTool("pan")}><span>✥</span><small>{t("editor.pan")}</small><Tooltip side="right" shortcut="Space">{t("editor.pan")}</Tooltip></button>
           </div>
           {inactiveStrokeCount > 0 && <div className="inactive-corrections" onPointerDown={(event) => event.stopPropagation()}><span>{t("editor.inactive", { count: inactiveStrokeCount })}</span><button onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "refine" })}>{t("editor.reapply")}</button><button onClick={() => onMaskChange({ mode: "automatic", strokes: [] })}>{t("editor.clear")}</button></div>}
           <div className="editor-properties" onPointerDown={(event) => event.stopPropagation()}>
             <div className={`editor-mode-summary source-${selectionSource}`}><SelectionSourceIcon source={selectionSource} size={20} /><strong>{sourceLabel}</strong><span>{tool === "pan" ? t("editor.pan") : t("editor.brush", { tool: tool === "keep" ? keepLabel : removeLabel })}</span></div>
             <label className="brush-size-control">{t("editor.size")} <input type="range" min="4" max="240" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} disabled={tool === "pan"} /><output>{brushSize}px</output></label>
-            <div className="editor-history-actions"><button className="toolbar-icon" onClick={undo} disabled={!asset.maskRecipe.strokes.length} title={t("editor.undo")}>↶</button><button className="toolbar-icon" onClick={redo} disabled={!redoStack.length} title={t("editor.redo")}>↷</button><button className="toolbar-text" onClick={() => { onMaskChange({ ...asset.maskRecipe, strokes: [] }); setRedoStack([]); }} disabled={!asset.maskRecipe.strokes.length}>{t("editor.clearRefinements")}</button></div>
+            <div className="editor-history-actions"><button className="toolbar-icon tooltip-host" onClick={undo} disabled={!asset.maskRecipe.strokes.length} aria-label={t("context.undo")} aria-keyshortcuts={ariaShortcut("undo")}>↶<Tooltip shortcut={formatShortcut("undo")}>{t("context.undo")}</Tooltip></button><button className="toolbar-icon tooltip-host" onClick={redo} disabled={!redoStack.length} aria-label={t("editor.redo")} aria-keyshortcuts={isMacPlatform() ? ariaShortcut("redo") : "Control+Y"}>↷<Tooltip shortcut={isMacPlatform() ? formatShortcut("redo") : "Ctrl+Y"}>{t("editor.redo")}</Tooltip></button><button className="toolbar-text" onClick={() => { onMaskChange({ ...asset.maskRecipe, strokes: [] }); setRedoStack([]); }} disabled={!asset.maskRecipe.strokes.length}>{t("editor.clearRefinements")}</button></div>
           </div>
         </>
       )}
 
-      <div className="zoom-controls" onPointerDown={(event) => event.stopPropagation()}><button onClick={() => changeZoom(effectiveZoom / 1.2)} aria-label={t("editor.zoomOut")}>−</button><button className="zoom-value" onClick={fitToScreen} title={t("editor.fitTitle")}>{Math.round(effectiveZoom * 100)}%</button><button onClick={() => changeZoom(effectiveZoom * 1.2)} aria-label={t("editor.zoomIn")}>+</button><button className="fit-button" onClick={fitToScreen}>{t("editor.fit")}</button></div>
+      <div className="zoom-controls" onPointerDown={(event) => event.stopPropagation()}><button className="tooltip-host" onClick={() => changeZoom(effectiveZoom / 1.2)} aria-label={t("editor.zoomOut")} aria-keyshortcuts={ariaShortcut("zoomOut")}>−<Tooltip shortcut={formatShortcut("zoomOut")}>{t("editor.zoomOut")}</Tooltip></button><button className="zoom-value tooltip-host" onClick={fitToScreen} aria-label={t("editor.fitTitle")} aria-keyshortcuts={ariaShortcut("zoomFit")}>{Math.round(effectiveZoom * 100)}%<Tooltip shortcut={formatShortcut("zoomFit")}>{t("editor.fitTitle")}</Tooltip></button><button className="tooltip-host" onClick={() => changeZoom(effectiveZoom * 1.2)} aria-label={t("editor.zoomIn")} aria-keyshortcuts={ariaShortcut("zoomIn")}>+<Tooltip shortcut={formatShortcut("zoomIn")}>{t("editor.zoomIn")}</Tooltip></button><button className="fit-button tooltip-host" onClick={fitToScreen} aria-keyshortcuts={ariaShortcut("zoomFit")}>{t("editor.fit")}<Tooltip shortcut={formatShortcut("zoomFit")}>{t("editor.fitTitle")}</Tooltip></button></div>
     </div>
   );
 }

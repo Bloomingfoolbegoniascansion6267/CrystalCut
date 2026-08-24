@@ -1,6 +1,8 @@
 import type { ImageAsset } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 import { useI18n } from "./i18n/I18nProvider";
+import Tooltip from "./Tooltip";
+import { ariaShortcut, formatShortcut } from "./lib/shortcuts";
 
 interface SelectionManagerProps {
   assets: ImageAsset[];
@@ -53,7 +55,7 @@ export default function SelectionManager({
       <div className="selection-manager-actions">
         <button className="button secondary compact" type="button" onClick={onExportOriginals} disabled={disabled || exportingOriginals}>{t(exportingOriginals ? "management.exportingOriginals" : "management.exportOriginals")}</button>
         <button className="button primary compact" type="button" onClick={onExportResults} disabled={disabled}>{t("management.exportResults")}</button>
-        <button className="button danger-outline compact" type="button" onClick={onRemoveSelected} disabled={disabled}>{t("management.remove")}</button>
+        <button className="button danger-outline compact tooltip-host" type="button" onClick={onRemoveSelected} disabled={disabled} aria-keyshortcuts={ariaShortcut("remove")}>{t("management.remove")}<Tooltip shortcut={formatShortcut("remove")}>{t("preview.removeFromList")}</Tooltip></button>
       </div>
 
       <div className="selection-manager-list" role="list">

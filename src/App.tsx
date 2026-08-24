@@ -14,7 +14,7 @@ import type { LanguagePreference } from "./i18n/locale";
 import { localizeCommandError } from "./i18n/errors";
 import SelectionSourceIcon from "./SelectionSourceIcon";
 import { isMaskRecipeReady, selectionSourceForMode } from "./lib/mask";
-import { formatShortcut, isEditableTarget, isMacPlatform, matchesShortcut } from "./lib/shortcuts";
+import { ariaShortcut, formatShortcut, isEditableTarget, isMacPlatform, matchesShortcut } from "./lib/shortcuts";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const TOAST_DURATION_MS = 5000;
@@ -2144,12 +2144,12 @@ function App() {
           <button type="button" className={`tooltip-host ${settings.processingMode === "convert" ? "active" : ""}`} aria-pressed={settings.processingMode === "convert"} onClick={() => setProcessingMode("convert")}><span>{t("output.convertOnly")}</span><Tooltip side="bottom" align="end">{t("output.convertHelp")}</Tooltip></button>
         </div>
         <div className="topbar-actions">
-          <button className={`model-pill ${modelStatus?.installed ? "ready" : ""}`} title={t("model.openSettings")} onClick={() => openSettings("model")}>
-            <span />{t("model.autoRemove")} {t(modelStatus?.installed ? "status.ready" : "model.installWhenNeeded")}
+          <button className={`model-pill tooltip-host ${modelStatus?.installed ? "ready" : ""}`} onClick={() => openSettings("model")}>
+            <span />{t("model.autoRemove")} {t(modelStatus?.installed ? "status.ready" : "model.installWhenNeeded")}<Tooltip side="bottom">{t("model.openSettings")}</Tooltip>
           </button>
-          <button className="button secondary" onClick={addFilesFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="add" />{t("app.addFiles")}</button>
-          <button className="button secondary desktop-only" onClick={addFolderFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="folder" />{t("app.addFolder")}</button>
-          <button ref={settingsButtonRef} className="icon-button" aria-label={t("app.settings")} title={t("app.settings")} aria-haspopup="dialog" aria-expanded={isSettingsOpen} aria-controls="preferences-dialog" onClick={() => openSettings("general")}><Icon name="settings" /></button>
+          <button className="button secondary tooltip-host" aria-keyshortcuts={ariaShortcut("addFiles")} onClick={addFilesFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="add" />{t("app.addFiles")}<Tooltip side="bottom" shortcut={formatShortcut("addFiles")}>{t("app.addFiles")}</Tooltip></button>
+          <button className="button secondary desktop-only tooltip-host" aria-keyshortcuts={ariaShortcut("addFolder")} onClick={addFolderFromDialog} disabled={isProcessing || !isWorkspaceLoaded}><Icon name="folder" />{t("app.addFolder")}<Tooltip side="bottom" shortcut={formatShortcut("addFolder")}>{t("app.addFolder")}</Tooltip></button>
+          <button ref={settingsButtonRef} className="icon-button tooltip-host" aria-label={t("app.settings")} aria-keyshortcuts={ariaShortcut("settings")} aria-haspopup="dialog" aria-expanded={isSettingsOpen} aria-controls="preferences-dialog" onClick={() => openSettings("general")}><Icon name="settings" /><Tooltip side="bottom" align="end" shortcut={formatShortcut("settings")}>{t("app.settings")}</Tooltip></button>
         </div>
       </header>
 
@@ -2213,24 +2213,24 @@ function App() {
           <div className="canvas-toolbar">
             {isMultiSelection ? <div className="multi-selection-toolbar"><strong>{t("management.selected", { count: selectedAssets.length })}</strong><span>{t("management.toolbarHelp")}</span></div> : <>
             <div className="view-tabs" role="tablist" aria-label={t("preview.mode")}>
-              <button className={effectiveViewMode === "original" ? "active" : ""} onClick={() => setViewMode("original")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "original"}>{t("common.original")}</button>
+              <button className={`tooltip-host ${effectiveViewMode === "original" ? "active" : ""}`} onClick={() => setViewMode("original")} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "original"} aria-keyshortcuts={ariaShortcut("viewOriginal")}>{t("common.original")}<Tooltip side="bottom" shortcut={formatShortcut("viewOriginal")}>{t("common.original")}</Tooltip></button>
               {settings.processingMode === "removeBackground" && <>
-              <button className={effectiveViewMode === "result" ? "active" : ""} onClick={() => hasResultView ? setViewMode("result") : setNotice(t("notice.previewNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "result"} aria-disabled={!hasResultView}>{t("common.preview")}</button>
-              <button className={effectiveViewMode === "mask" ? "active" : ""} onClick={() => hasMaskView ? setViewMode("mask") : setNotice(t("notice.maskNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "mask"} aria-disabled={!hasMaskView}>{t("common.mask")}</button>
-              <button className={effectiveViewMode === "compare" ? "active" : ""} onClick={() => hasResultView ? setViewMode("compare") : setNotice(t("notice.compareNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "compare"} aria-disabled={!hasResultView}>{t("common.compare")}</button>
+              <button className={`tooltip-host ${effectiveViewMode === "result" ? "active" : ""}`} onClick={() => hasResultView ? setViewMode("result") : setNotice(t("notice.previewNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "result"} aria-disabled={!hasResultView} aria-keyshortcuts={ariaShortcut("viewResult")}>{t("common.preview")}<Tooltip side="bottom" shortcut={formatShortcut("viewResult")}>{t(hasResultView ? "common.preview" : "notice.previewNeeded")}</Tooltip></button>
+              <button className={`tooltip-host ${effectiveViewMode === "mask" ? "active" : ""}`} onClick={() => hasMaskView ? setViewMode("mask") : setNotice(t("notice.maskNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "mask"} aria-disabled={!hasMaskView} aria-keyshortcuts={ariaShortcut("viewMask")}>{t("common.mask")}<Tooltip side="bottom" shortcut={formatShortcut("viewMask")}>{t(hasMaskView ? "common.mask" : "notice.maskNeeded")}</Tooltip></button>
+              <button className={`tooltip-host ${effectiveViewMode === "compare" ? "active" : ""}`} onClick={() => hasResultView ? setViewMode("compare") : setNotice(t("notice.compareNeeded"))} onKeyDown={handleViewTabKeyDown} role="tab" aria-selected={effectiveViewMode === "compare"} aria-disabled={!hasResultView} aria-keyshortcuts={ariaShortcut("viewCompare")}>{t("common.compare")}<Tooltip side="bottom" shortcut={formatShortcut("viewCompare")}>{t(hasResultView ? "common.compare" : "notice.compareNeeded")}</Tooltip></button>
               </>}
             </div>
             <div className="canvas-actions">
               <div className="preview-backgrounds" aria-label={t("preview.background")}>
-                <button className={`background-swatch checker ${previewBackground === "checker" ? "active" : ""}`} onClick={() => setPreviewBackground("checker")} title={t("preview.background.checker")} aria-label={t("preview.background.checker")} />
-                <button className={`background-swatch light ${previewBackground === "light" ? "active" : ""}`} onClick={() => setPreviewBackground("light")} title={t("preview.background.light")} aria-label={t("preview.background.light")} />
-                <button className={`background-swatch dark ${previewBackground === "dark" ? "active" : ""}`} onClick={() => setPreviewBackground("dark")} title={t("preview.background.dark")} aria-label={t("preview.background.dark")} />
+                <button className={`background-swatch checker tooltip-host ${previewBackground === "checker" ? "active" : ""}`} onClick={() => setPreviewBackground("checker")} aria-label={t("preview.background.checker")}><Tooltip>{t("preview.background.checker")}</Tooltip></button>
+                <button className={`background-swatch light tooltip-host ${previewBackground === "light" ? "active" : ""}`} onClick={() => setPreviewBackground("light")} aria-label={t("preview.background.light")}><Tooltip>{t("preview.background.light")}</Tooltip></button>
+                <button className={`background-swatch dark tooltip-host ${previewBackground === "dark" ? "active" : ""}`} onClick={() => setPreviewBackground("dark")} aria-label={t("preview.background.dark")}><Tooltip>{t("preview.background.dark")}</Tooltip></button>
               </div>
               {settings.processingMode === "removeBackground" && <><span className="divider" /><button className={`mask-edit-button ${isMaskEditing ? "active" : ""}`} onClick={isMaskEditing ? applyMaskEditor : openMaskEditorFromToolbar} disabled={!selected?.previewUrl || isProcessing}><Icon name="brush" size={16} />{t(isMaskEditing ? "preview.editing" : "selection.editObject")}</button><span className="divider" /></>}
-              <button className="icon-button" aria-label={t("preview.rotateLeft")} title={t("preview.rotateLeft")} onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /></button>
-              <button className="icon-button" aria-label={t("preview.rotateRight")} title={t("preview.rotateRight")} onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /></button>
+              <button className="icon-button tooltip-host" aria-label={t("preview.rotateLeft")} aria-keyshortcuts={ariaShortcut("rotateLeft")} onClick={() => rotateSelected(-1)} disabled={!selected}><Icon name="rotateLeft" /><Tooltip shortcut={formatShortcut("rotateLeft")}>{t("preview.rotateLeft")}</Tooltip></button>
+              <button className="icon-button tooltip-host" aria-label={t("preview.rotateRight")} aria-keyshortcuts={ariaShortcut("rotateRight")} onClick={() => rotateSelected(1)} disabled={!selected}><Icon name="rotateRight" /><Tooltip shortcut={formatShortcut("rotateRight")}>{t("preview.rotateRight")}</Tooltip></button>
               <span className="divider" />
-              <button className="icon-button danger-hover" aria-label={t("preview.removeFromList")} title={t("preview.removeFromList")} onClick={removeSelected} disabled={!selected}><Icon name="trash" /></button>
+              <button className="icon-button danger-hover tooltip-host" aria-label={t("preview.removeFromList")} aria-keyshortcuts={ariaShortcut("remove")} onClick={removeSelected} disabled={!selected}><Icon name="trash" /><Tooltip shortcut={formatShortcut("remove")}>{t("preview.removeFromList")}</Tooltip></button>
             </div>
             </>}
           </div>
