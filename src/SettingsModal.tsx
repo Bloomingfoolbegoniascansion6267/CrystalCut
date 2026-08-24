@@ -13,13 +13,14 @@ interface SettingsModalProps {
   currentSettings: OutputSettings;
   modelStatus: ModelStatus | null;
   diagnostics: AppDiagnostics | null;
-  busyAction: "save" | "model" | "reset" | null;
+  busyAction: "save" | "model" | "cache" | "reset" | null;
   processing: boolean;
   onClose: () => void;
   onSave: (preferences: AppPreferences) => Promise<void>;
   onReset: () => Promise<AppPreferences>;
   onInstallModel: () => Promise<void>;
   onDeleteModel: () => Promise<void>;
+  onClearPreviewCache: () => Promise<void>;
   onChooseDefaultDirectory: () => Promise<string | null>;
   onRefreshDiagnostics: () => Promise<void>;
   onPreviewLanguage: (language: LanguagePreference) => void;
@@ -45,6 +46,7 @@ export default function SettingsModal({
   onReset,
   onInstallModel,
   onDeleteModel,
+  onClearPreviewCache,
   onChooseDefaultDirectory,
   onRefreshDiagnostics,
   onPreviewLanguage,
@@ -207,7 +209,8 @@ export default function SettingsModal({
       </section>
       <section className="preferences-card">
         <div className="preferences-card-heading"><div><strong>{t("settings.storage.title")}</strong><span>{t("settings.storage.help")}</span></div></div>
-        <dl className="metric-list"><div><dt>{t("settings.storage.database")}</dt><dd>{formatBytes(diagnostics?.databaseBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.model")}</dt><dd>{formatBytes(modelStatus?.installedBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.device")}</dt><dd>{t("settings.storage.deviceValue")}</dd></div></dl>
+        <dl className="metric-list"><div><dt>{t("settings.storage.database")}</dt><dd>{formatBytes(diagnostics?.databaseBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.previewCache")}</dt><dd>{formatBytes(diagnostics?.previewCacheBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.model")}</dt><dd>{formatBytes(modelStatus?.installedBytes ?? 0, formatLocale)}</dd></div><div><dt>{t("settings.storage.device")}</dt><dd>{t("settings.storage.deviceValue")}</dd></div></dl>
+        <div className="preferences-actions left"><button className="button secondary compact" type="button" disabled={busyAction !== null || processing || !diagnostics?.previewCacheBytes} onClick={() => void onClearPreviewCache()}>{busyAction === "cache" ? t("common.processing") : t("settings.storage.clearPreviewCache")}</button></div>
         <p className="preferences-note">{t(processing ? "settings.storage.locked" : "settings.storage.gpuLater")}</p>
       </section>
     </div>

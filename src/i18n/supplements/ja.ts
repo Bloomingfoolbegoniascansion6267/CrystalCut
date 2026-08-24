@@ -262,4 +262,8 @@ export const jaSupplement: MessageCatalog = {
   "context.addImages": "画像を追加…",
   "context.settings": "設定…",
   "dialog.resetSettings": "設定を推奨値に戻しますか？ファイルと現在の一覧は残ります。",
+  "notice.previewCacheCleared": "プレビューキャッシュを消去しました。",
+  "error.preview.cacheClear": "プレビューキャッシュを消去できませんでした。",
+  "settings.storage.previewCache": "プレビューキャッシュ",
+  "settings.storage.clearPreviewCache": "プレビューキャッシュを消去",
 };

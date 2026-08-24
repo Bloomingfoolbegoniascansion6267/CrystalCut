@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 const DATABASE_FILE: &str = "workspace.sqlite3";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +47,8 @@ pub struct PersistedAsset {
     pub resize_override: Option<ResizeOverride>,
     pub output_path: Option<String>,
     pub output_bytes: Option<u64>,
+    #[serde(default)]
+    pub output_preview_key: Option<String>,
     pub error: Option<String>,
 }
 
@@ -347,6 +349,16 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                 format!("파일별 크기 변경 설정 schema를 만들지 못했습니다: {error}")
             })?;
     }
+    if version <= 6 {
+        connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 ALTER TABLE workspace_items ADD COLUMN output_preview_key TEXT;
+                 PRAGMA user_version = 7;
+                 COMMIT;",
+            )
+            .map_err(|error| format!("출력 미리보기 식별자 schema를 만들지 못했습니다: {error}"))?;
+    }
     Ok(())
 }
 
@@ -466,8 +478,8 @@ fn insert_asset(
             "INSERT INTO workspace_items(
                 id, position, name, path, size_bytes, modified_at_ms, extension, width, height,
                 exif_json, status, rotation, mask_recipe_json, edge_settings_json, metadata_policy_json,
-                resize_override_json, output_path, output_bytes, error
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                resize_override_json, output_path, output_bytes, output_preview_key, error
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 item.id,
                 to_i64(position as u64),
@@ -487,6 +499,7 @@ fn insert_asset(
                 resize_override_json,
                 item.output_path,
                 item.output_bytes.map(to_i64),
+                item.output_preview_key,
                 item.error,
             ],
         )
@@ -512,7 +525,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
         .prepare(
             "SELECT id, name, path, size_bytes, modified_at_ms, extension, width, height, exif_json,
                     status, rotation, mask_recipe_json, edge_settings_json, metadata_policy_json,
-                    resize_override_json, output_path, output_bytes, error
+                    resize_override_json, output_path, output_bytes, output_preview_key, error
              FROM workspace_items ORDER BY position",
         )
         .map_err(|error| format!("저장된 작업 항목 query를 준비하지 못했습니다: {error}"))?;
@@ -537,6 +550,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
                 row.get::<_, Option<String>>(15)?,
                 row.get::<_, Option<i64>>(16)?,
                 row.get::<_, Option<String>>(17)?,
+                row.get::<_, Option<String>>(18)?,
             ))
         })
         .map_err(|error| format!("저장된 작업 항목을 읽지 못했습니다: {error}"))?;
@@ -563,6 +577,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             resize_override_json,
             output_path,
             output_bytes,
+            output_preview_key,
             error,
         ) = row.map_err(|error| format!("저장된 작업 항목이 올바르지 않습니다: {error}"))?;
         if !Path::new(&path).is_file() {
@@ -602,6 +617,7 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             resize_override,
             output_path,
             output_bytes: output_bytes.map(to_u64),
+            output_preview_key,
             error,
         };
         if normalize_restored_asset(&mut item, modified_at_ms) {
@@ -639,6 +655,7 @@ fn normalize_restored_asset(item: &mut PersistedAsset, saved_modified_at_ms: Opt
         item.status = PersistedStatus::Interrupted;
         item.output_path = None;
         item.output_bytes = None;
+        item.output_preview_key = None;
         item.error = Some(if source_changed {
             "원본 파일이 변경되어 다시 처리가 필요합니다.".to_owned()
         } else if output_missing {
@@ -742,6 +759,7 @@ mod tests {
             resize_override: None,
             output_path: None,
             output_bytes: None,
+            output_preview_key: None,
             error: None,
         }
     }
@@ -781,6 +799,7 @@ mod tests {
             value: 1_280,
             prevent_upscale: true,
         });
+        edited.output_preview_key = Some("preview-v1-fixture".to_owned());
         let snapshot = WorkspaceSnapshot {
             items: vec![edited, asset(&second, PersistedStatus::Failed)],
             settings: settings(),
@@ -813,6 +832,10 @@ mod tests {
                 value: 1_280,
                 prevent_upscale: true,
             })
+        );
+        assert_eq!(
+            restored.items[0].output_preview_key.as_deref(),
+            Some("preview-v1-fixture")
         );
         assert_eq!(restored.items[1].status, PersistedStatus::Failed);
         assert_eq!(restored.settings.suffix, "_bg");

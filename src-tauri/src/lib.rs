@@ -2,6 +2,7 @@ mod engine;
 mod metadata;
 mod model;
 mod naming;
+mod preview_cache;
 mod protocol;
 mod sam;
 pub mod worker;
@@ -43,11 +44,32 @@ struct BatchController {
 #[derive(Clone, Default)]
 struct SamPreviewController {
     engine: Arc<Mutex<Option<sam::SamEngine>>>,
+    gate: PreviewRequestGate,
 }
 
 #[derive(Clone, Default)]
 struct MaskPreviewController {
     engine: Arc<Mutex<Option<engine::InferenceEngine>>>,
+    gate: PreviewRequestGate,
+}
+
+#[derive(Clone, Default)]
+struct PreviewRequestGate {
+    latest: Arc<Mutex<Option<String>>>,
+}
+
+impl PreviewRequestGate {
+    fn mark_latest(&self, key: String) {
+        if let Ok(mut latest) = self.latest.lock() {
+            *latest = Some(key);
+        }
+    }
+
+    fn is_latest(&self, key: &str) -> bool {
+        self.latest
+            .lock()
+            .is_ok_and(|latest| latest.as_deref() == Some(key))
+    }
 }
 
 impl BatchController {
@@ -302,26 +324,49 @@ fn push_supported_file(path: PathBuf, files: &mut Vec<ImageAsset>, seen: &mut Ha
 }
 
 #[tauri::command]
-async fn load_preview(path: String) -> CommandResult<String> {
-    let outcome =
-        tauri::async_runtime::spawn_blocking(move || load_preview_blocking(Path::new(&path)))
-            .await
-            .map_err(|error| CommandError::new("preview.load", error))?;
+async fn load_preview(app: AppHandle, path: String) -> CommandResult<String> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        load_cached_image_preview(&app, Path::new(&path), MAX_PREVIEW_EDGE, "preview")
+    })
+    .await
+    .map_err(|error| CommandError::new("preview.load", error))?;
     outcome.map_err(|error| CommandError::new("preview.load", error))
 }
 
-fn load_preview_blocking(path: &Path) -> Result<String, String> {
-    load_image_data_url_blocking(path, MAX_PREVIEW_EDGE)
-}
-
 #[tauri::command]
-async fn load_thumbnail(path: String) -> CommandResult<String> {
+async fn load_thumbnail(app: AppHandle, path: String) -> CommandResult<String> {
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        load_image_data_url_blocking(Path::new(&path), MAX_THUMBNAIL_EDGE)
+        load_cached_image_preview(&app, Path::new(&path), MAX_THUMBNAIL_EDGE, "thumbnail")
     })
     .await
     .map_err(|error| CommandError::new("preview.thumbnail", error))?;
     outcome.map_err(|error| CommandError::new("preview.thumbnail", error))
+}
+
+fn load_cached_image_preview(
+    app: &AppHandle,
+    path: &Path,
+    max_edge: u32,
+    variant: &str,
+) -> Result<String, String> {
+    let request = serde_json::json!({ "kind": variant, "maxEdge": max_edge });
+    let cache_key = preview_cache::cache_key(path, &[], &request).ok();
+    if let Some(png) = cache_key
+        .as_deref()
+        .and_then(|key| preview_cache::load_image(app, key, variant).ok().flatten())
+    {
+        return Ok(format!("data:image/png;base64,{}", STANDARD.encode(png)));
+    }
+    let data_url = load_image_data_url_blocking(path, max_edge)?;
+    if let (Some(key), Some(encoded)) = (
+        cache_key.as_deref(),
+        data_url.strip_prefix("data:image/png;base64,"),
+    ) {
+        if let Ok(png) = STANDARD.decode(encoded) {
+            let _ = preview_cache::store_image(app, key, variant, &png);
+        }
+    }
+    Ok(data_url)
 }
 
 fn load_image_data_url_blocking(path: &Path, max_edge: u32) -> Result<String, String> {
@@ -353,7 +398,7 @@ fn load_image_data_url_blocking(path: &Path, max_edge: u32) -> Result<String, St
     ))
 }
 
-fn encode_preview_data_url(image: image::DynamicImage) -> Result<String, String> {
+fn encode_preview_png(image: image::DynamicImage) -> Result<Vec<u8>, String> {
     let (width, height) = image.dimensions();
     let preview = if width > MAX_PREVIEW_EDGE || height > MAX_PREVIEW_EDGE {
         image.thumbnail(MAX_PREVIEW_EDGE, MAX_PREVIEW_EDGE)
@@ -364,10 +409,7 @@ fn encode_preview_data_url(image: image::DynamicImage) -> Result<String, String>
     preview
         .write_to(&mut encoded, ImageFormat::Png)
         .map_err(|error| format!("결과 미리보기를 인코딩할 수 없습니다: {error}"))?;
-    Ok(format!(
-        "data:image/png;base64,{}",
-        STANDARD.encode(encoded.into_inner())
-    ))
+    Ok(encoded.into_inner())
 }
 
 #[derive(Debug, Serialize)]
@@ -375,35 +417,89 @@ fn encode_preview_data_url(image: image::DynamicImage) -> Result<String, String>
 struct MaskPreviewBundle {
     result_preview_url: String,
     mask_preview_url: String,
+    cache_hit: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewRequest {
+    path: String,
+    rotation: u16,
+    mask_recipe: protocol::ManualMaskRecipe,
+    edge_settings: EdgeSettings,
+    settings: OutputSettings,
+    request_key: String,
 }
 
 fn encode_mask_preview_bundle(
     result: image::DynamicImage,
     mask: image::DynamicImage,
-) -> Result<MaskPreviewBundle, String> {
-    Ok(MaskPreviewBundle {
-        result_preview_url: encode_preview_data_url(result)?,
-        mask_preview_url: encode_preview_data_url(mask)?,
-    })
+) -> Result<(MaskPreviewBundle, Vec<u8>, Vec<u8>), String> {
+    let result_png = encode_preview_png(result)?;
+    let mask_png = encode_preview_png(mask)?;
+    let bundle = mask_preview_bundle_from_png(&result_png, &mask_png, false);
+    Ok((bundle, result_png, mask_png))
+}
+
+fn mask_preview_bundle_from_png(
+    result_png: &[u8],
+    mask_png: &[u8],
+    cache_hit: bool,
+) -> MaskPreviewBundle {
+    MaskPreviewBundle {
+        result_preview_url: format!("data:image/png;base64,{}", STANDARD.encode(result_png)),
+        mask_preview_url: format!("data:image/png;base64,{}", STANDARD.encode(mask_png)),
+        cache_hit,
+    }
 }
 
 #[tauri::command]
 async fn generate_mask_preview(
     app: AppHandle,
     controller: State<'_, MaskPreviewController>,
-    path: String,
-    rotation: u16,
-    mask_recipe: protocol::ManualMaskRecipe,
-    edge_settings: EdgeSettings,
-    settings: OutputSettings,
+    request: PreviewRequest,
 ) -> CommandResult<MaskPreviewBundle> {
+    let PreviewRequest {
+        path,
+        rotation,
+        mask_recipe,
+        edge_settings,
+        settings,
+        request_key,
+    } = request;
     validate_mask_recipe(&mask_recipe)
         .map_err(|error| CommandError::new("preview.invalidMask", error))?;
     validate_edge_settings(&edge_settings)
         .map_err(|error| CommandError::new("preview.invalidEdge", error))?;
     let controller = controller.inner().clone();
+    controller.gate.mark_latest(request_key.clone());
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         let model_path = model::ensure_default_model(&app)?;
+        let cache_request = serde_json::json!({
+            "kind": "automatic",
+            "rotation": rotation,
+            "maskRecipe": &mask_recipe,
+            "edgeSettings": &edge_settings,
+            "resizeMode": settings.resize_mode,
+            "resizeValue": settings.resize_value,
+            "preventUpscale": settings.prevent_upscale,
+        });
+        let cache_key =
+            preview_cache::cache_key(Path::new(&path), &[model_path.as_path()], &cache_request)
+                .ok();
+        if let Some(cached) = cache_key
+            .as_deref()
+            .and_then(|key| preview_cache::load(&app, key).ok().flatten())
+        {
+            return Ok::<MaskPreviewBundle, String>(mask_preview_bundle_from_png(
+                &cached.result_png,
+                &cached.mask_png,
+                true,
+            ));
+        }
+        if !controller.gate.is_latest(&request_key) {
+            return Err("새 미리보기 요청으로 대체되었습니다.".to_owned());
+        }
         let mut slot = controller
             .engine
             .lock()
@@ -413,6 +509,9 @@ async fn generate_mask_preview(
             .is_none_or(|engine| !engine.uses_model(&model_path))
         {
             *slot = Some(engine::InferenceEngine::new(&model_path)?);
+        }
+        if !controller.gate.is_latest(&request_key) {
+            return Err("새 미리보기 요청으로 대체되었습니다.".to_owned());
         }
         let (result, mask) = slot
             .as_mut()
@@ -424,7 +523,11 @@ async fn generate_mask_preview(
                 &settings,
                 &edge_settings,
             )?;
-        encode_mask_preview_bundle(result, mask)
+        let (bundle, result_png, mask_png) = encode_mask_preview_bundle(result, mask)?;
+        if let Some(key) = cache_key.as_deref() {
+            let _ = preview_cache::store(&app, key, &result_png, &mask_png);
+        }
+        Ok(bundle)
     })
     .await
     .map_err(|error| CommandError::new("preview.generateMask", error))?;
@@ -435,19 +538,52 @@ async fn generate_mask_preview(
 async fn generate_sam_preview(
     app: AppHandle,
     controller: State<'_, SamPreviewController>,
-    path: String,
-    rotation: u16,
-    mask_recipe: protocol::ManualMaskRecipe,
-    edge_settings: EdgeSettings,
-    settings: OutputSettings,
+    request: PreviewRequest,
 ) -> CommandResult<MaskPreviewBundle> {
+    let PreviewRequest {
+        path,
+        rotation,
+        mask_recipe,
+        edge_settings,
+        settings,
+        request_key,
+    } = request;
     validate_mask_recipe(&mask_recipe)
         .map_err(|error| CommandError::new("preview.invalidMask", error))?;
     validate_edge_settings(&edge_settings)
         .map_err(|error| CommandError::new("preview.invalidEdge", error))?;
     let controller = controller.inner().clone();
+    controller.gate.mark_latest(request_key.clone());
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         let paths = sam::ensure_models(&app)?;
+        let cache_request = serde_json::json!({
+            "kind": "sam",
+            "rotation": rotation,
+            "maskRecipe": &mask_recipe,
+            "edgeSettings": &edge_settings,
+            "resizeMode": settings.resize_mode,
+            "resizeValue": settings.resize_value,
+            "preventUpscale": settings.prevent_upscale,
+        });
+        let cache_key = preview_cache::cache_key(
+            Path::new(&path),
+            &[paths.encoder.as_path(), paths.decoder.as_path()],
+            &cache_request,
+        )
+        .ok();
+        if let Some(cached) = cache_key
+            .as_deref()
+            .and_then(|key| preview_cache::load(&app, key).ok().flatten())
+        {
+            return Ok::<MaskPreviewBundle, String>(mask_preview_bundle_from_png(
+                &cached.result_png,
+                &cached.mask_png,
+                true,
+            ));
+        }
+        if !controller.gate.is_latest(&request_key) {
+            return Err("새 미리보기 요청으로 대체되었습니다.".to_owned());
+        }
         let mut slot = controller
             .engine
             .lock()
@@ -457,6 +593,9 @@ async fn generate_sam_preview(
             .is_none_or(|engine| !engine.uses_models(&paths.encoder, &paths.decoder))
         {
             *slot = Some(sam::SamEngine::new(&paths)?);
+        }
+        if !controller.gate.is_latest(&request_key) {
+            return Err("새 미리보기 요청으로 대체되었습니다.".to_owned());
         }
         let (result, mask) = slot
             .as_mut()
@@ -468,7 +607,11 @@ async fn generate_sam_preview(
                 &settings,
                 &edge_settings,
             )?;
-        encode_mask_preview_bundle(result, mask)
+        let (bundle, result_png, mask_png) = encode_mask_preview_bundle(result, mask)?;
+        if let Some(key) = cache_key.as_deref() {
+            let _ = preview_cache::store(&app, key, &result_png, &mask_png);
+        }
+        Ok(bundle)
     })
     .await
     .map_err(|error| CommandError::new("preview.generateSam", error))?;
@@ -489,6 +632,7 @@ struct AppDiagnostics {
     architecture: &'static str,
     app_data_directory: String,
     database_bytes: u64,
+    preview_cache_bytes: u64,
 }
 
 #[tauri::command]
@@ -497,6 +641,8 @@ fn get_app_diagnostics(app: AppHandle) -> CommandResult<AppDiagnostics> {
         .map_err(|error| CommandError::new("diagnostics.load", error))?;
     let database_bytes = workspace::database_size(&app)
         .map_err(|error| CommandError::new("diagnostics.load", error))?;
+    let preview_cache_bytes =
+        preview_cache::size(&app).map_err(|error| CommandError::new("diagnostics.load", error))?;
     Ok(AppDiagnostics {
         app_version: app.package_info().version.to_string(),
         worker_protocol_version: WORKER_PROTOCOL_VERSION,
@@ -504,7 +650,13 @@ fn get_app_diagnostics(app: AppHandle) -> CommandResult<AppDiagnostics> {
         architecture: std::env::consts::ARCH,
         app_data_directory,
         database_bytes,
+        preview_cache_bytes,
     })
+}
+
+#[tauri::command]
+fn clear_preview_cache(app: AppHandle) -> CommandResult<()> {
+    preview_cache::clear(&app).map_err(|error| CommandError::new("preview.cacheClear", error))
 }
 
 #[tauri::command]
@@ -1442,6 +1594,7 @@ pub fn run() {
             generate_sam_preview,
             get_model_status,
             get_app_diagnostics,
+            clear_preview_cache,
             install_model,
             delete_model,
             prepare_export_plan,
@@ -1471,6 +1624,16 @@ mod tests {
             output_location: OutputLocation::SameFolder,
             ..OutputSettings::default()
         }
+    }
+
+    #[test]
+    fn preview_request_gate_keeps_only_the_latest_key() {
+        let gate = PreviewRequestGate::default();
+        gate.mark_latest("first".to_owned());
+        assert!(gate.is_latest("first"));
+        gate.mark_latest("second".to_owned());
+        assert!(!gate.is_latest("first"));
+        assert!(gate.is_latest("second"));
     }
 
     #[test]

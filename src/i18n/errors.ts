@@ -8,6 +8,7 @@ const ERROR_MESSAGE_IDS: Record<string, string> = {
   "preview.invalidEdge": "error.preview.invalidEdge",
   "preview.generateMask": "error.preview.generate",
   "preview.generateSam": "error.preview.generateSam",
+  "preview.cacheClear": "error.preview.cacheClear",
   "model.status": "error.model.status",
   "model.install": "error.model.install",
   "model.delete": "error.model.delete",

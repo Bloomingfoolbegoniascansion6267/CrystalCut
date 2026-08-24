@@ -15,8 +15,10 @@ export interface ImageAsset {
   resultPreviewUrl?: string;
   editBasePreviewUrl?: string;
   maskPreviewUrl?: string;
+  editPreviewKey?: string;
   outputPath?: string;
   outputBytes?: number;
+  outputPreviewKey?: string;
   error?: string;
   rotation: 0 | 90 | 180 | 270;
   maskRecipe: ManualMaskRecipe;
@@ -101,7 +103,7 @@ export interface ResizeOverride {
   preventUpscale: boolean;
 }
 
-export type PersistedAsset = Omit<ImageAsset, "thumbnailUrl" | "previewUrl" | "resultPreviewUrl" | "editBasePreviewUrl" | "maskPreviewUrl">;
+export type PersistedAsset = Omit<ImageAsset, "thumbnailUrl" | "previewUrl" | "resultPreviewUrl" | "editBasePreviewUrl" | "maskPreviewUrl" | "editPreviewKey">;
 
 export interface WorkspaceSnapshot {
   items: PersistedAsset[];
@@ -222,5 +224,6 @@ export interface AppDiagnostics {
   architecture: string;
   appDataDirectory: string;
   databaseBytes: number;
+  previewCacheBytes: number;
 }
 import type { LanguagePreference } from "./i18n/locale";

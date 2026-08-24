@@ -60,7 +60,9 @@ Windows/macOS system TLS를 쓰도록 ureq Native TLS Agent를 명시적으로 �
 
 worker 표준 입출력이 끊기거나 protocol 응답이 손상되면 해당 요청에 한해 프로세스를 새로 만들고 한 번 재전송한다. 첫 worker가 atomic rename까지 마친 뒤 응답 전에 종료된 경우에는 예약 출력 파일의 존재와 크기를 확인해 성공으로 회수한다. 두 번째 통신도 실패하면 해당 항목만 실패시키고 다음 항목에서 새 worker를 시작한다.
 
-작업 목록, 출력 설정, 회전, 파일별 마스크·가장자리 설정, 검토·편집한 메타데이터 요약과 항목별 처리 결과는 앱 데이터 폴더의 `workspace.sqlite3`에 120ms 단위로 순서대로 자동 저장한다. 미리보기 bitmap은 저장하지 않는다. SQLite는 bundled build와 WAL mode를 사용하며, 전체 snapshot을 하나의 transaction으로 교체해 목록과 설정이 서로 다른 시점으로 남지 않게 한다.
+작업 목록, 출력 설정, 회전, 파일별 마스크·가장자리 설정, 검토·편집한 메타데이터 요약과 항목별 처리 결과는 앱 데이터 폴더의 `workspace.sqlite3`에 120ms 단위로 순서대로 자동 저장한다. 미리보기 bitmap은 SQLite에 저장하지 않는다. SQLite는 bundled build와 WAL mode를 사용하며, 전체 snapshot을 하나의 transaction으로 교체해 목록과 설정이 서로 다른 시점으로 남지 않게 한다.
+
+원본·썸네일·편집 결과·마스크 미리보기는 원본 fingerprint, 모델 fingerprint, 회전, 마스크 recipe와 실제 픽셀에 영향을 주는 설정을 묶은 키로 앱 데이터 폴더의 PNG cache에 저장한다. 같은 키는 파일을 다시 선택하거나 앱을 재실행해도 재사용하며, 최대 512MB를 넘으면 최근 사용 시각 기준으로 정리한다. 자동 마스크와 SlimSAM embedding은 별도의 메모리 LRU를 사용하고, 환경설정에서 disk preview cache 용량을 확인하거나 비울 수 있다.
 
 앱 시작 시 원본 경로와 파일 크기, 완료 결과 경로를 다시 검사한다. 사라진 원본은 목록에서 제외하고, 변경된 원본·실행 중 종료된 항목·사라진 결과는 `interrupted`로 복구해 미완료 재시도 대상으로 제공한다. 완료 결과가 남아 있으면 다시 처리하지 않고 결과 미리보기를 복원한다. UI의 작업 비우기는 SQLite snapshot만 제거하며 원본과 결과 파일은 삭제하지 않는다.
 

@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     fs::{self, File},
     io::{self, Read},
     path::{Path, PathBuf},
@@ -29,6 +30,10 @@ const ENCODER_URL: &str = "https://huggingface.co/Xenova/slimsam-77-uniform/reso
 const DECODER_URL: &str = "https://huggingface.co/Xenova/slimsam-77-uniform/resolve/69c9d2e880cd421621781e9ded1f0bf1c20e1f74/onnx/prompt_encoder_mask_decoder_quantized.onnx?download=true";
 const ENCODER_BYTES: u64 = 8_882_165;
 const DECODER_BYTES: u64 = 4_903_810;
+const EMBEDDING_CACHE_MAX_ENTRIES: usize = 4;
+const EMBEDDING_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+const PROMPT_MASK_CACHE_MAX_ENTRIES: usize = 8;
+const PROMPT_MASK_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
 const ENCODER_SHA256: &str = "cce23c7b2e5d4f330932738fb67ba518e04b0d99ccdd1cccd22a7da4e01f2971";
 const DECODER_SHA256: &str = "cb90b279f549d2cab7fd6e20c38522438c65d84bdcca3d2a764cff7d857fdce2";
 const IMAGE_SIZE: u32 = 1024;
@@ -224,8 +229,10 @@ pub struct SamEngine {
     encoder: Session,
     decoder: Session,
     paths: SamModelPaths,
-    cached_embedding: Option<CachedEmbedding>,
-    cached_preview_mask: Option<CachedPromptMask>,
+    cached_embeddings: VecDeque<CachedEmbedding>,
+    cached_embedding_bytes: usize,
+    cached_preview_masks: VecDeque<CachedPromptMask>,
+    cached_preview_mask_bytes: usize,
 }
 
 struct CachedEmbedding {
@@ -259,8 +266,10 @@ impl SamEngine {
             encoder: open(&paths.encoder)?,
             decoder: open(&paths.decoder)?,
             paths: paths.clone(),
-            cached_embedding: None,
-            cached_preview_mask: None,
+            cached_embeddings: VecDeque::new(),
+            cached_embedding_bytes: 0,
+            cached_preview_masks: VecDeque::new(),
+            cached_preview_mask_bytes: 0,
         })
     }
 
@@ -302,15 +311,21 @@ impl SamEngine {
             serde_json::to_string(recipe)
                 .map_err(|error| format!("SAM 프롬프트 키를 만들지 못했습니다: {error}"))?
         );
-        let mask = if let Some(cached) = self
-            .cached_preview_mask
-            .as_ref()
-            .filter(|cached| cached.key == prompt_key)
-        {
-            cached.mask.clone()
+        let cached_index = self
+            .cached_preview_masks
+            .iter()
+            .position(|cached| cached.key == prompt_key);
+        let mask = if let Some(index) = cached_index {
+            let cached = self
+                .cached_preview_masks
+                .remove(index)
+                .expect("SAM prompt cache index must remain valid");
+            let mask = cached.mask.clone();
+            self.cached_preview_masks.push_back(cached);
+            mask
         } else {
             let mask = self.predict_mask(&source, recipe, Some(image_key))?;
-            self.cached_preview_mask = Some(CachedPromptMask {
+            self.cache_prompt_mask(CachedPromptMask {
                 key: prompt_key,
                 mask: mask.clone(),
             });
@@ -330,14 +345,30 @@ impl SamEngine {
         recipe: &ManualMaskRecipe,
         cache_key: Option<String>,
     ) -> Result<GrayImage, String> {
-        let (pixels, resized_width, resized_height, scale) = prepare_image(source);
-        let (image_embeddings, positional_embeddings) = if let Some(cached) = self
-            .cached_embedding
-            .as_ref()
-            .filter(|cached| cache_key.as_deref() == Some(cached.key.as_str()))
-        {
-            (cached.image.clone(), cached.positional.clone())
+        let (source_width, source_height) = source.dimensions();
+        let scale = IMAGE_SIZE as f32 / source_width.max(source_height).max(1) as f32;
+        let resized_width = (source_width as f32 * scale)
+            .round()
+            .clamp(1.0, IMAGE_SIZE as f32) as u32;
+        let resized_height = (source_height as f32 * scale)
+            .round()
+            .clamp(1.0, IMAGE_SIZE as f32) as u32;
+        let cached_index = cache_key.as_deref().and_then(|key| {
+            self.cached_embeddings
+                .iter()
+                .position(|cached| cached.key == key)
+        });
+        let (image_embeddings, positional_embeddings) = if let Some(index) = cached_index {
+            let cached = self
+                .cached_embeddings
+                .remove(index)
+                .expect("SAM embedding cache index must remain valid");
+            let image = cached.image.clone();
+            let positional = cached.positional.clone();
+            self.cached_embeddings.push_back(cached);
+            (image, positional)
         } else {
+            let (pixels, _, _, _) = prepare_image(source);
             let input = Tensor::from_array(([1_usize, 3, 1024, 1024], pixels))
                 .map_err(|error| format!("SAM 이미지 tensor를 만들지 못했습니다: {error}"))?;
             let encoder_outputs = self
@@ -358,7 +389,7 @@ impl SamEngine {
                 .collect::<Vec<_>>();
             drop(encoder_outputs);
             if let Some(key) = cache_key {
-                self.cached_embedding = Some(CachedEmbedding {
+                self.cache_embedding(CachedEmbedding {
                     key,
                     image: image.clone(),
                     positional: positional.clone(),
@@ -422,6 +453,44 @@ impl SamEngine {
             source.height(),
             ResizeFilter::Lanczos3,
         ))
+    }
+
+    fn cache_embedding(&mut self, cached: CachedEmbedding) {
+        let bytes = (cached.image.len() + cached.positional.len()) * std::mem::size_of::<f32>();
+        if bytes > EMBEDDING_CACHE_MAX_BYTES {
+            return;
+        }
+        while self.cached_embeddings.len() >= EMBEDDING_CACHE_MAX_ENTRIES
+            || self.cached_embedding_bytes.saturating_add(bytes) > EMBEDDING_CACHE_MAX_BYTES
+        {
+            let Some(evicted) = self.cached_embeddings.pop_front() else {
+                break;
+            };
+            let evicted_bytes =
+                (evicted.image.len() + evicted.positional.len()) * std::mem::size_of::<f32>();
+            self.cached_embedding_bytes = self.cached_embedding_bytes.saturating_sub(evicted_bytes);
+        }
+        self.cached_embedding_bytes = self.cached_embedding_bytes.saturating_add(bytes);
+        self.cached_embeddings.push_back(cached);
+    }
+
+    fn cache_prompt_mask(&mut self, cached: CachedPromptMask) {
+        let bytes = cached.mask.as_raw().len();
+        if bytes > PROMPT_MASK_CACHE_MAX_BYTES {
+            return;
+        }
+        while self.cached_preview_masks.len() >= PROMPT_MASK_CACHE_MAX_ENTRIES
+            || self.cached_preview_mask_bytes.saturating_add(bytes) > PROMPT_MASK_CACHE_MAX_BYTES
+        {
+            let Some(evicted) = self.cached_preview_masks.pop_front() else {
+                break;
+            };
+            self.cached_preview_mask_bytes = self
+                .cached_preview_mask_bytes
+                .saturating_sub(evicted.mask.as_raw().len());
+        }
+        self.cached_preview_mask_bytes = self.cached_preview_mask_bytes.saturating_add(bytes);
+        self.cached_preview_masks.push_back(cached);
     }
 }
 

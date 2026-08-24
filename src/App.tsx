@@ -16,6 +16,7 @@ import { localizeCommandError } from "./i18n/errors";
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const TOAST_DURATION_MS = 5000;
 const AUTO_OPEN_OUTPUT_FOLDER_LIMIT = 3;
+const THUMBNAIL_PRELOAD_LIMIT = 32;
 
 const DEFAULT_SETTINGS: OutputSettings = {
   processingMode: "removeBackground",
@@ -50,6 +51,7 @@ const DEFAULT_MASK_RECIPE: ManualMaskRecipe = { mode: "automatic", strokes: [] }
 interface MaskPreviewBundle {
   resultPreviewUrl: string;
   maskPreviewUrl: string;
+  cacheHit?: boolean;
 }
 
 interface ContextMenuState {
@@ -93,6 +95,34 @@ const DEFAULT_PREFERENCES: AppPreferences = {
 
 const isTauri = () => Boolean(window.__TAURI_INTERNALS__);
 
+const compactPreviewKey = (value: string) => {
+  let left = 0x811c9dc5;
+  let right = 0x9e3779b9;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    left = Math.imul(left ^ code, 0x01000193);
+    right = Math.imul(right ^ code, 0x85ebca6b);
+  }
+  return `preview-v1-${(left >>> 0).toString(16).padStart(8, "0")}${(right >>> 0).toString(16).padStart(8, "0")}`;
+};
+
+const previewRenderIdentity = (asset: ImageAsset, settings: OutputSettings) => ({
+  processingMode: settings.processingMode,
+  resizeMode: asset.resizeOverride?.axis ?? settings.resizeMode,
+  resizeValue: asset.resizeOverride?.value ?? settings.resizeValue,
+  preventUpscale: asset.resizeOverride?.preventUpscale ?? settings.preventUpscale,
+  edgeSettings: asset.edgeSettings,
+});
+
+const createPreviewRequestKey = (asset: ImageAsset, recipe: ManualMaskRecipe, settings: OutputSettings) => compactPreviewKey(JSON.stringify({
+  assetId: asset.id,
+  path: asset.path,
+  sizeBytes: asset.sizeBytes,
+  rotation: asset.rotation,
+  recipe,
+  render: previewRenderIdentity(asset, settings),
+}));
+
 const toPersistedAsset = (asset: ImageAsset): PersistedAsset => ({
   id: asset.id,
   name: asset.name,
@@ -106,6 +136,7 @@ const toPersistedAsset = (asset: ImageAsset): PersistedAsset => ({
   rotation: asset.rotation,
   outputPath: asset.outputPath,
   outputBytes: asset.outputBytes,
+  outputPreviewKey: asset.outputPreviewKey,
   error: asset.error,
   maskRecipe: asset.maskRecipe,
   edgeSettings: asset.edgeSettings,
@@ -184,7 +215,7 @@ function App() {
   const [isLibraryCollapsed, setIsLibraryCollapsed] = useState(false);
   const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
   const [inspectorMode, setInspectorMode] = useState<InspectorMode>("output");
-  const [settingsBusyAction, setSettingsBusyAction] = useState<"save" | "model" | "reset" | null>(null);
+  const [settingsBusyAction, setSettingsBusyAction] = useState<"save" | "model" | "cache" | "reset" | null>(null);
   const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isPresetNaming, setIsPresetNaming] = useState(false);
@@ -200,8 +231,11 @@ function App() {
   const workspaceSaveTimer = useRef<number | null>(null);
   const workspaceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const maskPreviewRevision = useRef(0);
-  const maskPreviewSnapshot = useRef<{ editBasePreviewUrl?: string; maskPreviewUrl?: string } | null>(null);
+  const maskPreviewSnapshot = useRef<{ editBasePreviewUrl?: string; maskPreviewUrl?: string; editPreviewKey?: string } | null>(null);
+  const latestPreviewKeys = useRef(new Map<string, string>());
+  const batchPreviewKeys = useRef(new Map<string, string>());
   const thumbnailLoads = useRef(new Set<string>());
+  const thumbnailViewportFrame = useRef<number | null>(null);
   const selectionAnchorId = useRef<string | null>(null);
   const hadSingleInspectorSelection = useRef(false);
   const libraryDragSession = useRef<LibraryDragSession | null>(null);
@@ -277,19 +311,16 @@ function App() {
     setIsAdvancedOpen(false);
     switchInspectorMode("output");
   }, [settings.processingMode]);
-  const previewRenderKey = useMemo(() => JSON.stringify({
-    processingMode: settings.processingMode,
-    resizeMode: selectedPreviewSettings.resizeMode,
-    resizeValue: selectedPreviewSettings.resizeValue,
-    preventUpscale: selectedPreviewSettings.preventUpscale,
-    edgeSettings: selected?.edgeSettings,
-  }), [
+  const previewRenderKey = useMemo(() => selected ? JSON.stringify(previewRenderIdentity(selected, settings)) : "", [
     settings.processingMode,
     selectedPreviewSettings.resizeMode,
     selectedPreviewSettings.resizeValue,
     selectedPreviewSettings.preventUpscale,
     selected?.edgeSettings,
   ]);
+  const previewRequestKey = useMemo(() => selected && previewRecipe
+    ? createPreviewRequestKey(selected, previewRecipe, settings)
+    : "", [selected?.id, selected?.path, selected?.sizeBytes, selected?.rotation, previewRecipeKey, previewRenderKey]);
   const retryableAssets = useMemo(
     () => assets.filter((asset) => asset.status === "failed" || asset.status === "cancelled" || asset.status === "interrupted"),
     [assets],
@@ -344,13 +375,29 @@ function App() {
     void Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
   }, []);
 
+  const preloadVisibleThumbnails = useCallback(() => {
+    if (thumbnailViewportFrame.current !== null) return;
+    thumbnailViewportFrame.current = window.requestAnimationFrame(() => {
+      thumbnailViewportFrame.current = null;
+      const list = assetListRef.current;
+      const firstRow = list?.querySelector<HTMLElement>("[data-asset-id]");
+      if (!list || !firstRow) return;
+      const marginBottom = Number.parseFloat(window.getComputedStyle(firstRow).marginBottom) || 0;
+      const stride = Math.max(1, firstRow.offsetHeight + marginBottom);
+      const overscan = Math.ceil(list.clientHeight / stride);
+      const start = Math.max(0, Math.floor(list.scrollTop / stride) - overscan);
+      const end = Math.min(assets.length, Math.ceil((list.scrollTop + list.clientHeight) / stride) + overscan);
+      preloadThumbnails(assets.slice(start, end));
+    });
+  }, [assets, preloadThumbnails]);
+
   const inspectPaths = useCallback(async (paths: string[]) => {
     if (!paths.length) return;
     try {
       const inspected = await invoke<Omit<ImageAsset, "status" | "rotation">[]>("inspect_paths", { paths });
       const incoming: ImageAsset[] = inspected.map((asset) => ({ ...asset, status: "ready", rotation: 0, maskRecipe: DEFAULT_MASK_RECIPE, edgeSettings: { ...DEFAULT_EDGE_SETTINGS }, metadataPolicy: null, resizeOverride: null }));
       addAssets(incoming);
-      preloadThumbnails(incoming);
+      preloadThumbnails(incoming.slice(0, THUMBNAIL_PRELOAD_LIMIT));
     } catch (error) {
       setNotice(localizeCommandError(error, t, "error.files.inspect"));
     }
@@ -386,7 +433,7 @@ function App() {
         setSettings(restored.settings);
         const restoredItems = restored.items.map((asset) => ({ ...asset, metadataPolicy: asset.metadataPolicy ?? null, resizeOverride: asset.resizeOverride ?? null }));
         setAssets(restoredItems);
-        preloadThumbnails(restoredItems);
+        preloadThumbnails(restoredItems.slice(0, THUMBNAIL_PRELOAD_LIMIT));
         setSelectedId(restored.items[0]?.id ?? null);
         setSelectedIds(restored.items[0] ? [restored.items[0].id] : []);
         selectionAnchorId.current = restored.items[0]?.id ?? null;
@@ -473,7 +520,7 @@ function App() {
         if (payload.status === "processing") return { ...asset, status: "processing", error: undefined };
         if (payload.status === "retryingWorker") return { ...asset, status: "retrying", error: t("status.retrying") };
         if (payload.status === "completed") {
-          return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, error: undefined };
+          return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, outputPreviewKey: batchPreviewKeys.current.get(asset.id), resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, editPreviewKey: undefined, error: undefined };
         }
         if (payload.status === "failed") return { ...asset, status: "failed", error: t("notice.processingFailed") };
         if (payload.status === "cancelled") return { ...asset, status: "cancelled", error: t("notice.userCancelled") };
@@ -551,22 +598,45 @@ function App() {
       setMaskPreviewError(null);
       return;
     }
-    setMaskPreviewStatus("updating");
+    latestPreviewKeys.current.set(selected.id, previewRequestKey);
+    if (selected.status === "done" && selected.outputPath && selected.outputPreviewKey === previewRequestKey && !isMaskEditing) {
+      setMaskPreviewStatus("idle");
+      setMaskPreviewError(null);
+      return;
+    }
+    if (selected.editPreviewKey === previewRequestKey && selected.editBasePreviewUrl && selected.maskPreviewUrl) {
+      setMaskPreviewStatus("current");
+      setMaskPreviewError(null);
+      return;
+    }
+    setMaskPreviewStatus("idle");
     setMaskPreviewError(null);
+    let statusTimer: number | null = null;
     const timer = window.setTimeout(() => {
       const command = previewRecipe.mode === "sam" ? "generate_sam_preview" : "generate_mask_preview";
-      void invoke<MaskPreviewBundle>(command, {
-        path: selected.path,
-        rotation: selected.rotation,
-        maskRecipe: previewRecipe,
-        edgeSettings: selected.edgeSettings,
-        settings: selectedPreviewSettings,
-      }).then(({ resultPreviewUrl: editBasePreviewUrl, maskPreviewUrl }) => {
+      const request = invoke<MaskPreviewBundle>(command, {
+        request: {
+          path: selected.path,
+          rotation: selected.rotation,
+          maskRecipe: previewRecipe,
+          edgeSettings: selected.edgeSettings,
+          settings: selectedPreviewSettings,
+          requestKey: previewRequestKey,
+        },
+      });
+      statusTimer = window.setTimeout(() => {
+        if (maskPreviewRevision.current === revision) setMaskPreviewStatus("updating");
+      }, 200);
+      void request.then(({ resultPreviewUrl: editBasePreviewUrl, maskPreviewUrl }) => {
+        if (statusTimer !== null) window.clearTimeout(statusTimer);
+        if (latestPreviewKeys.current.get(selected.id) === previewRequestKey) {
+          setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, editBasePreviewUrl, maskPreviewUrl, editPreviewKey: previewRequestKey } : asset));
+        }
         if (maskPreviewRevision.current !== revision) return;
-        setAssets((current) => current.map((asset) => asset.id === selected.id ? { ...asset, editBasePreviewUrl, maskPreviewUrl } : asset));
         setMaskPreviewStatus("current");
         setViewMode((current) => current === "mask" ? "mask" : "result");
       }).catch((error) => {
+        if (statusTimer !== null) window.clearTimeout(statusTimer);
         if (maskPreviewRevision.current !== revision) return;
         const message = String(error);
         setMaskPreviewStatus("error");
@@ -574,8 +644,11 @@ function App() {
         setNotice(t("notice.maskPreviewFailed"));
       });
     }, 180);
-    return () => window.clearTimeout(timer);
-  }, [selected?.id, selected?.path, selected?.rotation, previewRecipeKey, previewRenderKey]);
+    return () => {
+      window.clearTimeout(timer);
+      if (statusTimer !== null) window.clearTimeout(statusTimer);
+    };
+  }, [selected?.id, selected?.path, selected?.rotation, selected?.status, selected?.outputPath, selected?.outputPreviewKey, selected?.editPreviewKey, selected?.editBasePreviewUrl, selected?.maskPreviewUrl, previewRecipeKey, previewRenderKey, previewRequestKey, isMaskEditing]);
 
   useEffect(() => {
     if (!selected?.outputPath || selected.resultPreviewUrl || !isTauri()) return;
@@ -825,6 +898,7 @@ function App() {
     maskPreviewSnapshot.current = {
       editBasePreviewUrl: selected.editBasePreviewUrl,
       maskPreviewUrl: selected.maskPreviewUrl,
+      editPreviewKey: selected.editPreviewKey,
     };
     setMaskDraft({
       ...selected.maskRecipe,
@@ -951,8 +1025,9 @@ function App() {
     setIsCancelling(false);
     setBatchCompleted(0);
     setBatchTotal(targets.length);
+    batchPreviewKeys.current = new Map(targets.map((asset) => [asset.id, createPreviewRequestKey(asset, asset.maskRecipe, settings)]));
     setAssets((current) => current.map((asset) => targetIds.has(asset.id)
-      ? { ...asset, status: "queued", outputPath: undefined, outputBytes: undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, error: undefined }
+      ? { ...asset, status: "queued", outputPath: undefined, outputBytes: undefined, outputPreviewKey: undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, editPreviewKey: undefined, error: undefined }
       : asset));
     try {
       const result = await invoke<BatchResult>("process_batch", {
@@ -990,6 +1065,7 @@ function App() {
       setAssets((current) => current.map((asset) => asset.status === "queued" || asset.status === "processing" || asset.status === "retrying" ? { ...asset, status: "failed", error: message } : asset));
       setNotice(message);
     } finally {
+      batchPreviewKeys.current.clear();
       setIsProcessing(false);
       setIsCancelling(false);
     }
@@ -1019,6 +1095,20 @@ function App() {
       setModelStatus(nextModelStatus);
     } catch (error) {
       setNotice(t("notice.diagnosticsFailed"));
+    }
+  };
+
+  const clearPreviewCacheFromSettings = async () => {
+    if (!isTauri() || isProcessing) return;
+    setSettingsBusyAction("cache");
+    try {
+      await invoke<void>("clear_preview_cache");
+      await refreshSettingsData();
+      setNotice(t("notice.previewCacheCleared"));
+    } catch (error) {
+      setNotice(localizeCommandError(error, t, "error.preview.cacheClear"));
+    } finally {
+      setSettingsBusyAction(null);
     }
   };
 
@@ -1286,6 +1376,7 @@ function App() {
     maskPreviewSnapshot.current = {
       editBasePreviewUrl: selected.editBasePreviewUrl,
       maskPreviewUrl: selected.maskPreviewUrl,
+      editPreviewKey: selected.editPreviewKey,
     };
     setMaskDraft({
       ...selected.maskRecipe,
@@ -1321,6 +1412,7 @@ function App() {
         ...asset,
         editBasePreviewUrl: snapshot.editBasePreviewUrl,
         maskPreviewUrl: snapshot.maskPreviewUrl,
+        editPreviewKey: snapshot.editPreviewKey,
       } : asset));
     }
     maskPreviewSnapshot.current = null;
@@ -1730,7 +1822,7 @@ function App() {
             {assets.length > 0 && <span className="muted">{formatBytes(totalBytes, formatLocale)}</span>}
             <button className="panel-toggle tooltip-host" onClick={() => setIsLibraryCollapsed((value) => !value)} aria-expanded={!isLibraryCollapsed} aria-label={t(isLibraryCollapsed ? "library.expand" : "library.collapse")}><Icon name="chevron" size={15} /><Tooltip side="right">{t(isLibraryCollapsed ? "library.expand" : "library.collapse")}</Tooltip></button>
           </div>
-          <div ref={assetListRef} className={`asset-list ${libraryDragVisual ? "reordering" : ""}`} role="listbox" aria-multiselectable="true" aria-describedby="library-reorder-help" tabIndex={assets.length ? 0 : undefined} onKeyDown={handleLibraryKeyDown}>
+          <div ref={assetListRef} className={`asset-list ${libraryDragVisual ? "reordering" : ""}`} role="listbox" aria-multiselectable="true" aria-describedby="library-reorder-help" tabIndex={assets.length ? 0 : undefined} onKeyDown={handleLibraryKeyDown} onScroll={preloadVisibleThumbnails}>
             <span id="library-reorder-help" className="sr-only">{t("library.reorderHint")}</span>
             {assets.length === 0 ? (
               <div className="library-empty"><Icon name="image" size={24} /><span>{t(isWorkspaceLoaded ? "library.empty" : "library.loading")}</span></div>
@@ -2215,6 +2307,7 @@ function App() {
         onReset={resetPreferences}
         onInstallModel={installModelFromSettings}
         onDeleteModel={deleteModelFromSettings}
+        onClearPreviewCache={clearPreviewCacheFromSettings}
         onChooseDefaultDirectory={chooseDefaultOutputDirectory}
         onRefreshDiagnostics={refreshSettingsData}
         onPreviewLanguage={setLanguagePreference}

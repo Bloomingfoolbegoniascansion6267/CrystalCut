@@ -28,11 +28,14 @@ const INPUT_WIDTH: u32 = 320;
 const INPUT_HEIGHT: u32 = 320;
 const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 const STD: [f32; 3] = [0.229, 0.224, 0.225];
+const PREVIEW_MASK_CACHE_MAX_ENTRIES: usize = 8;
+const PREVIEW_MASK_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
 
 pub struct InferenceEngine {
     session: Session,
     model_path: PathBuf,
-    cached_preview_mask: Option<CachedPreviewMask>,
+    cached_preview_masks: VecDeque<CachedPreviewMask>,
+    cached_preview_mask_bytes: usize,
 }
 
 struct CachedPreviewMask {
@@ -62,7 +65,8 @@ impl InferenceEngine {
         Ok(Self {
             session,
             model_path: model_path.to_owned(),
-            cached_preview_mask: None,
+            cached_preview_masks: VecDeque::new(),
+            cached_preview_mask_bytes: 0,
         })
     }
 
@@ -114,17 +118,24 @@ impl InferenceEngine {
             .and_then(|metadata| metadata.modified().ok())
             .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
             .map_or(0, |duration| duration.as_nanos());
-        let mask = if let Some(cached) = self.cached_preview_mask.as_ref().filter(|cached| {
+        let cached_index = self.cached_preview_masks.iter().position(|cached| {
             cached.path == input_path
                 && cached.width == source.width()
                 && cached.height == source.height()
                 && cached.file_bytes == file_bytes
                 && cached.modified_nanos == modified_nanos
-        }) {
-            cached.mask.clone()
+        });
+        let mask = if let Some(index) = cached_index {
+            let cached = self
+                .cached_preview_masks
+                .remove(index)
+                .expect("preview mask cache index must remain valid");
+            let mask = cached.mask.clone();
+            self.cached_preview_masks.push_back(cached);
+            mask
         } else {
             let mask = self.infer_mask(&source)?;
-            self.cached_preview_mask = Some(CachedPreviewMask {
+            self.cache_preview_mask(CachedPreviewMask {
                 path: input_path.to_owned(),
                 width: source.width(),
                 height: source.height(),
@@ -143,6 +154,25 @@ impl InferenceEngine {
             settings,
             edge_settings,
         ))
+    }
+
+    fn cache_preview_mask(&mut self, cached: CachedPreviewMask) {
+        let bytes = cached.mask.as_raw().len();
+        if bytes > PREVIEW_MASK_CACHE_MAX_BYTES {
+            return;
+        }
+        while self.cached_preview_masks.len() >= PREVIEW_MASK_CACHE_MAX_ENTRIES
+            || self.cached_preview_mask_bytes.saturating_add(bytes) > PREVIEW_MASK_CACHE_MAX_BYTES
+        {
+            let Some(evicted) = self.cached_preview_masks.pop_front() else {
+                break;
+            };
+            self.cached_preview_mask_bytes = self
+                .cached_preview_mask_bytes
+                .saturating_sub(evicted.mask.as_raw().len());
+        }
+        self.cached_preview_mask_bytes = self.cached_preview_mask_bytes.saturating_add(bytes);
+        self.cached_preview_masks.push_back(cached);
     }
 
     fn infer_mask(&mut self, source: &DynamicImage) -> Result<GrayImage, String> {
