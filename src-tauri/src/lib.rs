@@ -1,3 +1,4 @@
+mod compute;
 mod engine;
 mod metadata;
 mod model;

@@ -470,6 +470,7 @@ dependencies = [
  "ureq",
  "walkdir",
  "webp",
+ "windows",
 ]
 
 [[package]]
