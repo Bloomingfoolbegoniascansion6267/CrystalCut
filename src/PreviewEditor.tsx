@@ -13,7 +13,7 @@ import { useI18n } from "./i18n/I18nProvider";
 import BrushActionIcon from "./BrushActionIcon";
 import SelectionSourceIcon from "./SelectionSourceIcon";
 import Tooltip from "./Tooltip";
-import { ariaShortcut, formatShortcut, isMacPlatform, matchesShortcut } from "./lib/shortcuts";
+import { ariaShortcut, formatShortcut, isEditableTarget, isMacPlatform, matchesShortcut } from "./lib/shortcuts";
 import { isMaskRecipeReady, selectionSourceForMode, type SelectionSource } from "./lib/mask";
 
 export type PreviewViewMode = "original" | "result" | "mask" | "compare";
@@ -84,6 +84,7 @@ export default function PreviewEditor({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [comparePosition, setComparePosition] = useState(50);
   const [tool, setTool] = useState<EditorTool>("pan");
+  const [isSpacePanning, setIsSpacePanning] = useState(false);
   const [brushSize, setBrushSize] = useState(48);
   const [activeStroke, setActiveStroke] = useState<BrushStroke | null>(null);
   const activeStrokeRef = useRef<BrushStroke | null>(null);
@@ -117,9 +118,26 @@ export default function PreviewEditor({
     setRedoStack([]);
     setActiveStroke(null);
     setTool("pan");
+    setIsSpacePanning(false);
     setIsSourcePickerOpen(false);
     activeStrokeRef.current = null;
   }, [asset.id, asset.width, asset.height]);
+
+  useEffect(() => {
+    const resetTemporaryPan = () => {
+      spacePressed.current = false;
+      setIsSpacePanning(false);
+    };
+    const releaseTemporaryPan = (event: KeyboardEvent) => {
+      if (event.code === "Space") resetTemporaryPan();
+    };
+    window.addEventListener("keyup", releaseTemporaryPan);
+    window.addEventListener("blur", resetTemporaryPan);
+    return () => {
+      window.removeEventListener("keyup", releaseTemporaryPan);
+      window.removeEventListener("blur", resetTemporaryPan);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isSourcePickerOpen) return;
@@ -159,7 +177,7 @@ export default function PreviewEditor({
   const showingEditPreview = Boolean(asset.editBasePreviewUrl) && (previewIsActive || !asset.resultPreviewUrl);
   const resultLabel = t(showingEditPreview ? "editor.unsavedPreview" : "editor.savedPreview");
   const maskId = `manual-mask-${asset.id.replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  const canPaint = editing && tool !== "pan" && asset.maskRecipe.mode !== "automatic";
+  const canPaint = editing && viewMode !== "compare" && tool !== "pan" && asset.maskRecipe.mode !== "automatic";
 
   const normalizedPoint = useCallback((clientX: number, clientY: number): MaskPoint | null => {
     const bounds = imageGroupRef.current?.getBoundingClientRect();
@@ -270,7 +288,7 @@ export default function PreviewEditor({
       event.preventDefault();
       return;
     }
-    if (!editing || tool === "pan" || spacePressed.current || event.button === 1) {
+    if (!editing || viewMode === "compare" || tool === "pan" || spacePressed.current || event.button === 1) {
       event.currentTarget.setPointerCapture(event.pointerId);
       pointerAction.current = { type: "pan", pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, panX: pan.x, panY: pan.y };
       event.preventDefault();
@@ -319,10 +337,13 @@ export default function PreviewEditor({
     setComparePosition(clamp(((clientX - bounds.left) / bounds.width) * 100, 0, 100));
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.code === "Space") {
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement> | KeyboardEvent) => {
+    if (matchesShortcut(event, "editorTemporaryPan")) {
+      if (event.target instanceof HTMLElement && event.target.closest("button, input, select, textarea, [role='option'], [contenteditable='true']")) return;
       spacePressed.current = true;
+      setIsSpacePanning(true);
       event.preventDefault();
+      return;
     }
     if (matchesShortcut(event, "zoomOut")) {
       event.preventDefault();
@@ -340,14 +361,50 @@ export default function PreviewEditor({
       return;
     }
     if (!editing) return;
-    if (event.key === "Escape") onCancel();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel();
+      return;
+    }
     if (matchesShortcut(event, "undo") || matchesShortcut(event, "redo") || (!event.metaKey && event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === "y")) {
       event.preventDefault();
       if (matchesShortcut(event, "redo") || event.key.toLowerCase() === "y") redo(); else undo();
+      return;
     }
-    if (event.key === "[") setBrushSize((value) => clamp(value - 4, 4, 240));
-    if (event.key === "]") setBrushSize((value) => clamp(value + 4, 4, 240));
+    if (matchesShortcut(event, "editorKeep") || matchesShortcut(event, "editorRemove")) {
+      event.preventDefault();
+      if (event.repeat) return;
+      setIsSourcePickerOpen(false);
+      selectBrush(matchesShortcut(event, "editorKeep") ? "keep" : "remove");
+      return;
+    }
+    if (matchesShortcut(event, "editorPan")) {
+      event.preventDefault();
+      if (event.repeat) return;
+      setIsSourcePickerOpen(false);
+      setTool("pan");
+      return;
+    }
+    if (matchesShortcut(event, "editorBrushSmaller")) {
+      event.preventDefault();
+      setBrushSize((value) => clamp(value - 4, 4, 240));
+      return;
+    }
+    if (matchesShortcut(event, "editorBrushLarger")) {
+      event.preventDefault();
+      setBrushSize((value) => clamp(value + 4, 4, 240));
+    }
   };
+
+  useEffect(() => {
+    if (!editing) return;
+    const handleWindowKeyDown = (event: KeyboardEvent) => {
+      if (stageRef.current?.contains(event.target as Node) || isEditableTarget(event.target)) return;
+      handleKeyDown(event);
+    };
+    window.addEventListener("keydown", handleWindowKeyDown);
+    return () => window.removeEventListener("keydown", handleWindowKeyDown);
+  });
 
   const imageStyle = {
     width: `${baseImageSize.width}px`,
@@ -368,7 +425,7 @@ export default function PreviewEditor({
   return (
     <div
       ref={stageRef}
-      className={`preview-stage interactive preview-bg-${background} ${editing ? `mask-editing tool-${tool}` : ""}`}
+      className={`preview-stage interactive preview-bg-${background} ${editing ? `mask-editing tool-${isSpacePanning ? "pan" : tool}` : ""}`}
       tabIndex={0}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -376,7 +433,11 @@ export default function PreviewEditor({
       onPointerCancel={finishPointer}
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
-      onKeyUp={(event) => { if (event.code === "Space") spacePressed.current = false; }}
+      onKeyUp={(event) => {
+        if (event.code !== "Space") return;
+        spacePressed.current = false;
+        setIsSpacePanning(false);
+      }}
       aria-label={t(editing ? "editor.canvasEdit" : "editor.canvasView")}
     >
       <div
@@ -475,14 +536,14 @@ export default function PreviewEditor({
           </div>
           <div className="editor-commit-actions" onPointerDown={(event) => event.stopPropagation()}><button className="editor-cancel" onClick={onCancel}>{t("common.cancel")}</button><button className="editor-apply" onClick={onApply} disabled={previewStatus === "loadingCache" || previewStatus === "updating"}>{t("editor.apply")}</button></div>
           <div className="editor-toolrail" aria-label={t("editor.tools")} onPointerDown={(event) => event.stopPropagation()}>
-            <button className={`tooltip-host ${tool === "keep" ? "active keep" : ""}`} onClick={() => selectBrush("keep")}><BrushActionIcon action="add" /><small>{keepLabel}</small><Tooltip side="right">{t("editor.brush", { tool: keepLabel })}</Tooltip></button>
-            <button className={`tooltip-host ${tool === "remove" ? "active remove" : ""}`} onClick={() => selectBrush("remove")}><BrushActionIcon action="subtract" /><small>{removeLabel}</small><Tooltip side="right">{t("editor.brush", { tool: removeLabel })}</Tooltip></button>
-            <button className={`tooltip-host ${tool === "pan" ? "active" : ""}`} onClick={() => setTool("pan")}><span>✥</span><small>{t("editor.pan")}</small><Tooltip side="right" shortcut="Space">{t("editor.pan")}</Tooltip></button>
+            <button className={`tooltip-host ${tool === "keep" ? "active keep" : ""}`} onClick={() => selectBrush("keep")} aria-keyshortcuts={ariaShortcut("editorKeep")}><BrushActionIcon action="add" /><small>{keepLabel}</small><Tooltip side="right" shortcut={formatShortcut("editorKeep")}>{t("editor.brush", { tool: keepLabel })}</Tooltip></button>
+            <button className={`tooltip-host ${tool === "remove" ? "active remove" : ""}`} onClick={() => selectBrush("remove")} aria-keyshortcuts={ariaShortcut("editorRemove")}><BrushActionIcon action="subtract" /><small>{removeLabel}</small><Tooltip side="right" shortcut={formatShortcut("editorRemove")}>{t("editor.brush", { tool: removeLabel })}</Tooltip></button>
+            <button className={`tooltip-host ${tool === "pan" ? "active" : ""}`} onClick={() => setTool("pan")} aria-keyshortcuts={`${ariaShortcut("editorPan")} ${ariaShortcut("editorTemporaryPan")}`}><span>✥</span><small>{t("editor.pan")}</small><Tooltip side="right" shortcut={`${formatShortcut("editorPan")} · ${formatShortcut("editorTemporaryPan")}`}>{t("editor.pan")}</Tooltip></button>
           </div>
           {inactiveStrokeCount > 0 && <div className="inactive-corrections" onPointerDown={(event) => event.stopPropagation()}><span>{t("editor.inactive", { count: inactiveStrokeCount })}</span><button onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "refine" })}>{t("editor.reapply")}</button><button onClick={() => onMaskChange({ mode: "automatic", strokes: [] })}>{t("editor.clear")}</button></div>}
           <div className="editor-properties" onPointerDown={(event) => event.stopPropagation()}>
             <div className={`editor-mode-summary source-${selectionSource}`}><SelectionSourceIcon source={selectionSource} size={20} /><strong>{sourceLabel}</strong><span>{tool === "pan" ? t("editor.pan") : t("editor.brush", { tool: tool === "keep" ? keepLabel : removeLabel })}</span></div>
-            <label className="brush-size-control">{t("editor.size")} <input type="range" min="4" max="240" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} disabled={tool === "pan"} /><output>{brushSize}px</output></label>
+            <label className="brush-size-control tooltip-host">{t("editor.size")} <input type="range" min="4" max="240" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} disabled={tool === "pan"} aria-keyshortcuts={`${ariaShortcut("editorBrushSmaller")} ${ariaShortcut("editorBrushLarger")}`} /><output>{brushSize}px</output><Tooltip side="top" shortcut={`${formatShortcut("editorBrushSmaller")} / ${formatShortcut("editorBrushLarger")}`}>{t("editor.size")}</Tooltip></label>
             <div className="editor-history-actions"><button className="toolbar-icon tooltip-host" onClick={undo} disabled={!asset.maskRecipe.strokes.length} aria-label={t("context.undo")} aria-keyshortcuts={ariaShortcut("undo")}>↶<Tooltip shortcut={formatShortcut("undo")}>{t("context.undo")}</Tooltip></button><button className="toolbar-icon tooltip-host" onClick={redo} disabled={!redoStack.length} aria-label={t("editor.redo")} aria-keyshortcuts={isMacPlatform() ? ariaShortcut("redo") : "Control+Y"}>↷<Tooltip shortcut={isMacPlatform() ? formatShortcut("redo") : "Ctrl+Y"}>{t("editor.redo")}</Tooltip></button><button className="toolbar-text" onClick={() => { onMaskChange({ ...asset.maskRecipe, strokes: [] }); setRedoStack([]); }} disabled={!asset.maskRecipe.strokes.length}>{t("editor.clearRefinements")}</button></div>
           </div>
         </>

@@ -2058,7 +2058,30 @@ function App() {
         openKeyboardContextMenu(event.target);
         return;
       }
-      if (isEditableTarget(event.target) || isSettingsOpen || isPresetNaming || isMaskEditing) return;
+      const isEditorRange = isMaskEditing && event.target instanceof HTMLInputElement && event.target.type === "range";
+      if ((isEditableTarget(event.target) && !isEditorRange) || isSettingsOpen || isPresetNaming) return;
+
+      const requestedView: PreviewViewMode | null = matchesShortcut(event, "viewOriginal") ? "original"
+        : matchesShortcut(event, "viewResult") ? "result"
+          : matchesShortcut(event, "viewMask") ? "mask"
+            : matchesShortcut(event, "viewCompare") ? "compare"
+              : null;
+      if (requestedView && selected) {
+        event.preventDefault();
+        if (event.repeat) return;
+        if (requestedView === "original") {
+          setViewMode("original");
+        } else if (requestedView === "mask" && !hasMaskView) {
+          setNotice(t("notice.maskNeeded"));
+        } else if ((requestedView === "result" || requestedView === "compare") && !hasResultView) {
+          setNotice(t(requestedView === "result" ? "notice.previewNeeded" : "notice.compareNeeded"));
+        } else {
+          setViewMode(requestedView);
+        }
+        return;
+      }
+
+      if (isMaskEditing) return;
 
       if (matchesShortcut(event, "addFiles")) {
         if (isProcessing || !isWorkspaceLoaded) return;
@@ -2092,23 +2115,6 @@ function App() {
         return;
       }
 
-      const requestedView: PreviewViewMode | null = matchesShortcut(event, "viewOriginal") ? "original"
-        : matchesShortcut(event, "viewResult") ? "result"
-          : matchesShortcut(event, "viewMask") ? "mask"
-            : matchesShortcut(event, "viewCompare") ? "compare"
-              : null;
-      if (!requestedView || !selected) return;
-      event.preventDefault();
-      if (event.repeat) return;
-      if (requestedView === "original") {
-        setViewMode("original");
-      } else if (requestedView === "mask" && !hasMaskView) {
-        setNotice(t("notice.maskNeeded"));
-      } else if ((requestedView === "result" || requestedView === "compare") && !hasResultView) {
-        setNotice(t(requestedView === "result" ? "notice.previewNeeded" : "notice.compareNeeded"));
-      } else {
-        setViewMode(requestedView);
-      }
     };
 
     window.addEventListener("keydown", handleAppShortcut);

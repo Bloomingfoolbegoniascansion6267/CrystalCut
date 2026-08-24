@@ -17,7 +17,13 @@ export type ShortcutId =
   | "zoomOut"
   | "zoomFit"
   | "undo"
-  | "redo";
+  | "redo"
+  | "editorKeep"
+  | "editorRemove"
+  | "editorPan"
+  | "editorTemporaryPan"
+  | "editorBrushSmaller"
+  | "editorBrushLarger";
 
 interface ShortcutDefinition {
   key: string;
@@ -27,7 +33,7 @@ interface ShortcutDefinition {
   displayKey?: string;
 }
 
-type KeyboardLikeEvent = Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">;
+type KeyboardLikeEvent = Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey"> & { code?: string };
 
 const SHORTCUTS: Record<ShortcutId, ShortcutDefinition> = {
   addFiles: { key: "o", primary: true },
@@ -49,6 +55,12 @@ const SHORTCUTS: Record<ShortcutId, ShortcutDefinition> = {
   zoomFit: { key: "0", primary: true },
   undo: { key: "z", primary: true },
   redo: { key: "z", primary: true, shift: true },
+  editorKeep: { key: "b" },
+  editorRemove: { key: "e" },
+  editorPan: { key: "h" },
+  editorTemporaryPan: { key: " ", displayKey: "Space" },
+  editorBrushSmaller: { key: "[" },
+  editorBrushLarger: { key: "]" },
 };
 
 export const isMacPlatform = () => /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
@@ -64,7 +76,11 @@ export const matchesShortcut = (event: KeyboardLikeEvent, shortcutId: ShortcutId
   const normalizedKey = event.key.toLowerCase();
   const keyMatches = shortcutId === "zoomIn"
     ? normalizedKey === "+" || normalizedKey === "="
-    : normalizedKey === shortcut.key;
+    : shortcutId === "editorBrushSmaller"
+      ? normalizedKey === "[" || event.code === "BracketLeft"
+      : shortcutId === "editorBrushLarger"
+        ? normalizedKey === "]" || event.code === "BracketRight"
+        : normalizedKey === shortcut.key;
 
   return keyMatches
     && primaryPressed === Boolean(shortcut.primary)
@@ -90,7 +106,9 @@ export const ariaShortcut = (shortcutId: ShortcutId) => {
   if (shortcut.shift) parts.push("Shift");
   const key = shortcut.key.startsWith("arrow")
     ? `Arrow${shortcut.key.slice(5, 6).toUpperCase()}${shortcut.key.slice(6)}`
-    : shortcut.key === "delete" ? "Delete" : shortcut.key;
+    : shortcut.key === "delete" ? "Delete"
+      : shortcutId === "editorTemporaryPan" ? "Space"
+        : shortcut.key;
   parts.push(key);
   return parts.join("+");
 };
