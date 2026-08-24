@@ -1,4 +1,4 @@
-import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -1003,7 +1003,7 @@ function App() {
     invalidateExportPlan();
   }, [invalidateExportPlan, selectedId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setIsMaskEditing(false);
     setMaskDraft(null);
     maskPreviewSnapshot.current = null;

@@ -3,6 +3,7 @@ import {
   WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -100,7 +101,7 @@ export default function PreviewEditor({
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setSourceSize({ width: asset.width ?? 1, height: asset.height ?? 1 });
     setZoom(null);
     setPan({ x: 0, y: 0 });
@@ -354,17 +355,17 @@ export default function PreviewEditor({
         style={{ width: displaySize.width, height: displaySize.height, transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${effectiveZoom})` }}
       >
         {(viewMode === "original" || viewMode === "compare" || (!resultUrl && viewMode === "result")) && asset.previewUrl && (
-          <img className="editor-source-image" src={asset.previewUrl} alt={t("editor.originalAlt", { name: asset.name })} style={imageStyle} onLoad={(event) => {
+          <img key={`${asset.id}:original`} className="editor-source-image" src={asset.previewUrl} alt={t("editor.originalAlt", { name: asset.name })} style={imageStyle} onLoad={(event) => {
             if (asset.width === null || asset.height === null) {
               setSourceSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight });
             }
           }} draggable={false} />
         )}
-        {viewMode === "result" && resultUrl && <img className="editor-result-image" src={resultUrl} alt={`${asset.name} ${resultLabel}`} draggable={false} />}
-        {viewMode === "mask" && asset.maskPreviewUrl && <img className="editor-result-image mask-image" src={asset.maskPreviewUrl} alt={t("editor.maskAlt", { name: asset.name })} draggable={false} />}
+        {viewMode === "result" && resultUrl && <img key={`${asset.id}:result`} className="editor-result-image" src={resultUrl} alt={`${asset.name} ${resultLabel}`} draggable={false} />}
+        {viewMode === "mask" && asset.maskPreviewUrl && <img key={`${asset.id}:mask`} className="editor-result-image mask-image" src={asset.maskPreviewUrl} alt={t("editor.maskAlt", { name: asset.name })} draggable={false} />}
         {viewMode === "compare" && resultUrl && (
           <div className={`compare-result-clip preview-bg-${background}`} style={{ clipPath: `inset(0 0 0 ${comparePosition}%)` }}>
-            <img className="editor-result-image" src={resultUrl} alt={`${asset.name} ${resultLabel}`} draggable={false} />
+            <img key={`${asset.id}:compare-result`} className="editor-result-image" src={resultUrl} alt={`${asset.name} ${resultLabel}`} draggable={false} />
           </div>
         )}
         {editing && correctionActive && viewMode !== "compare" && (
