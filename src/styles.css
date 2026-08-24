@@ -743,9 +743,10 @@ select:disabled { color: var(--ink-faint); background-color: var(--surface-muted
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px) scale(.98); } }
 @keyframes toast-progress { to { transform: scaleX(0); } }
 
-.app-context-menu { position: fixed; z-index: 80; display: grid; min-width: 184px; padding: 5px; border: 1px solid rgba(31,34,43,.16); border-radius: 10px; background: rgba(255,255,255,.98); box-shadow: 0 14px 42px rgba(22,25,34,.22); backdrop-filter: blur(14px); animation: context-menu-in 90ms ease-out; }
+.app-context-menu { position: fixed; z-index: 80; display: grid; min-width: 196px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 5px; border: 1px solid rgba(31,34,43,.16); border-radius: 10px; background: rgba(255,255,255,.98); box-shadow: 0 14px 42px rgba(22,25,34,.22); backdrop-filter: blur(14px); animation: context-menu-in 90ms ease-out; }
 .app-context-menu button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 34px; gap: 18px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; text-align: left; font-size: 11px; cursor: pointer; }
-.app-context-menu button:hover:not(:disabled) { color: var(--accent-dark); background: var(--accent-soft); }
+.app-context-menu button:hover:not(:disabled), .app-context-menu button:focus-visible { color: var(--accent-dark); background: var(--accent-soft); outline: none; }
+.app-context-menu button:disabled { color: var(--ink-faint); cursor: default; opacity: .48; }
 .app-context-menu button.danger { color: var(--danger); }
 .app-context-menu button.danger:hover:not(:disabled) { color: #b62c40; background: #fff0f2; }
 .app-context-menu kbd { color: var(--ink-faint); font-family: inherit; font-size: 10px; }

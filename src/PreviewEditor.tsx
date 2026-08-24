@@ -18,6 +18,10 @@ import { isMaskRecipeReady, selectionSourceForMode, type SelectionSource } from 
 export type PreviewViewMode = "original" | "result" | "mask" | "compare";
 export type PreviewBackground = "checker" | "light" | "dark";
 export type PreviewStatus = "idle" | "loadingCache" | "updating" | "current" | "error";
+export interface PreviewCommand {
+  id: number;
+  action: "zoomIn" | "zoomOut" | "zoomFit";
+}
 
 interface PreviewEditorProps {
   asset: ImageAsset;
@@ -29,6 +33,7 @@ interface PreviewEditorProps {
   onCancel: () => void;
   previewStatus?: PreviewStatus;
   previewError?: string | null;
+  command?: PreviewCommand | null;
 }
 
 interface Size {
@@ -64,6 +69,7 @@ export default function PreviewEditor({
   onCancel,
   previewStatus = "idle",
   previewError = null,
+  command = null,
 }: PreviewEditorProps) {
   const { t } = useI18n();
   const stageRef = useRef<HTMLDivElement>(null);
@@ -168,6 +174,13 @@ export default function PreviewEditor({
     setZoom(null);
     setPan({ x: 0, y: 0 });
   }, []);
+
+  useEffect(() => {
+    if (!command) return;
+    if (command.action === "zoomFit") fitToScreen();
+    else changeZoom(effectiveZoom * (command.action === "zoomIn" ? 1.2 : 1 / 1.2));
+    stageRef.current?.focus({ preventScroll: true });
+  }, [command?.id]);
 
   const commitStroke = useCallback((stroke: BrushStroke | null) => {
     if (!stroke?.points.length) return;

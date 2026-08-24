@@ -5,7 +5,7 @@ import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin
 import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, MetadataOutputPolicy, ModelStatus, OriginalExportResult, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, ResizeOverride, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
 import type { SettingsTab } from "./SettingsModal";
-import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
+import PreviewEditor, { type PreviewBackground, type PreviewCommand, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
 import SelectionManager from "./SelectionManager";
 import Tooltip from "./Tooltip";
 import appIconUrl from "../assets/app-icon.svg";
@@ -14,7 +14,7 @@ import type { LanguagePreference } from "./i18n/locale";
 import { localizeCommandError } from "./i18n/errors";
 import SelectionSourceIcon from "./SelectionSourceIcon";
 import { isMaskRecipeReady, selectionSourceForMode } from "./lib/mask";
-import { isEditableTarget, matchesShortcut } from "./lib/shortcuts";
+import { formatShortcut, isEditableTarget, isMacPlatform, matchesShortcut } from "./lib/shortcuts";
 
 const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const TOAST_DURATION_MS = 5000;
@@ -74,7 +74,7 @@ interface ModelDownloadProgress {
 interface ContextMenuState {
   x: number;
   y: number;
-  kind: "text" | "asset" | "canvas";
+  kind: "text" | "asset" | "canvas" | "empty";
   textField?: HTMLInputElement | HTMLTextAreaElement | null;
   assetId?: string;
 }
@@ -251,6 +251,7 @@ function App() {
   const [settingsBusyAction, setSettingsBusyAction] = useState<"save" | "model" | "cache" | "reset" | null>(null);
   const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [previewCommand, setPreviewCommand] = useState<PreviewCommand | null>(null);
   const [isPresetNaming, setIsPresetNaming] = useState(false);
   const [presetName, setPresetName] = useState("");
   const [libraryDragVisual, setLibraryDragVisual] = useState<LibraryDragVisual | null>(null);
@@ -259,6 +260,8 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const assetListRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const contextMenuOriginRef = useRef<HTMLElement | null>(null);
   const inspectorPanelRef = useRef<HTMLElement>(null);
   const inspectorScrollPositions = useRef<Record<InspectorMode, number>>({ current: 0, output: 0 });
   const skipNextWorkspaceSave = useRef(false);
@@ -294,6 +297,9 @@ function App() {
   const selectedAssets = useMemo(() => assets.filter((asset) => selectedIdSet.has(asset.id)), [assets, selectedIdSet]);
   const isMultiSelection = selectedAssets.length > 1;
   const contextAsset = contextMenu?.assetId ? assets.find((asset) => asset.id === contextMenu.assetId) ?? null : null;
+  const contextAssets = contextMenu?.kind === "asset" && contextAsset
+    ? selectedIdSet.has(contextAsset.id) ? selectedAssets : [contextAsset]
+    : selectedAssets;
   const totalBytes = useMemo(() => assets.reduce((sum, asset) => sum + asset.sizeBytes, 0), [assets]);
   const previewRecipe = isMaskEditing ? maskDraft ?? selected?.maskRecipe : selected?.maskRecipe;
   const previewRecipeKey = useMemo(() => previewRecipe ? JSON.stringify(previewRecipe) : "", [previewRecipe]);
@@ -1028,21 +1034,49 @@ function App() {
     setPendingMaskEditId(null);
   }, [pendingMaskEditId, selected]);
 
+  const closeContextMenu = useCallback((restoreFocus = false) => {
+    const origin = contextMenuOriginRef.current;
+    contextMenuOriginRef.current = null;
+    setContextMenu(null);
+    if (restoreFocus && origin?.isConnected) window.requestAnimationFrame(() => origin.focus({ preventScroll: true }));
+  }, []);
+
+  useLayoutEffect(() => {
+    const menu = contextMenuRef.current;
+    if (!contextMenu || !menu) return;
+    const bounds = menu.getBoundingClientRect();
+    const x = Math.max(8, Math.min(contextMenu.x, window.innerWidth - bounds.width - 8));
+    const y = Math.max(8, Math.min(contextMenu.y, window.innerHeight - bounds.height - 8));
+    if (x !== contextMenu.x || y !== contextMenu.y) {
+      setContextMenu((current) => current ? { ...current, x, y } : null);
+      return;
+    }
+    menu.querySelector<HTMLButtonElement>("button[role='menuitem']:not(:disabled)")?.focus({ preventScroll: true });
+  }, [contextMenu]);
+
   useEffect(() => {
     if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    const closeOnKey = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("blur", close);
-    window.addEventListener("resize", close);
+    const closeOnPointer = (event: PointerEvent) => {
+      if (!contextMenuRef.current?.contains(event.target as Node)) closeContextMenu(false);
+    };
+    const closeOnBlur = () => closeContextMenu(false);
+    const closeOnResize = () => closeContextMenu(false);
+    const closeOnKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeContextMenu(true);
+    };
+    window.addEventListener("pointerdown", closeOnPointer);
+    window.addEventListener("blur", closeOnBlur);
+    window.addEventListener("resize", closeOnResize);
     window.addEventListener("keydown", closeOnKey);
     return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("blur", close);
-      window.removeEventListener("resize", close);
+      window.removeEventListener("pointerdown", closeOnPointer);
+      window.removeEventListener("blur", closeOnBlur);
+      window.removeEventListener("resize", closeOnResize);
       window.removeEventListener("keydown", closeOnKey);
     };
-  }, [contextMenu]);
+  }, [closeContextMenu, contextMenu]);
 
   const removeAssets = (assetIds: string[]) => {
     const removing = new Set(assetIds);
@@ -1560,11 +1594,14 @@ function App() {
     event.preventDefault();
     const element = event.target as HTMLElement;
     const textField = element.closest("input[type='text'], input[type='search'], input[type='url'], input[type='email'], input[type='tel'], textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+    const isPreviewSurface = Boolean(element.closest(".preview-stage, .canvas"));
+    contextMenuOriginRef.current = textField ?? (element.closest("button, [tabindex]") as HTMLElement | null) ?? (document.activeElement as HTMLElement | null);
     setContextMenu({
-      x: Math.min(event.clientX, window.innerWidth - 190),
-      y: Math.min(event.clientY, window.innerHeight - (textField ? 188 : 230)),
-      kind: textField ? "text" : "canvas",
+      x: event.clientX,
+      y: event.clientY,
+      kind: textField ? "text" : isPreviewSurface && selected ? "canvas" : "empty",
       textField,
+      assetId: isPreviewSurface ? selected?.id : undefined,
     });
   };
 
@@ -1574,16 +1611,40 @@ function App() {
     if (!selectedIdSet.has(assetId)) setSelectedIds([assetId]);
     setSelectedId(assetId);
     selectionAnchorId.current = assetId;
+    contextMenuOriginRef.current = event.currentTarget;
     setContextMenu({
-      x: Math.min(event.clientX, window.innerWidth - 220),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 470)),
+      x: event.clientX,
+      y: event.clientY,
       kind: "asset",
       assetId,
     });
   };
 
+  const openKeyboardContextMenu = (target: HTMLElement) => {
+    const bounds = target.getBoundingClientRect();
+    const x = Math.min(bounds.left + 24, bounds.right);
+    const y = Math.min(bounds.top + 24, bounds.bottom);
+    const assetRow = target.closest<HTMLElement>("[data-asset-id]");
+    const textField = target.closest("input[type='text'], input[type='search'], input[type='url'], input[type='email'], input[type='tel'], textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+    contextMenuOriginRef.current = target;
+    if (assetRow?.dataset.assetId) {
+      const assetId = assetRow.dataset.assetId;
+      if (!selectedIdSet.has(assetId)) setSelectedIds([assetId]);
+      setSelectedId(assetId);
+      selectionAnchorId.current = assetId;
+      setContextMenu({ x, y, kind: "asset", assetId });
+      return;
+    }
+    if (textField) {
+      setContextMenu({ x, y, kind: "text", textField });
+      return;
+    }
+    const isPreviewSurface = Boolean(target.closest(".preview-stage, .canvas"));
+    setContextMenu({ x, y, kind: isPreviewSurface && selected ? "canvas" : "empty", assetId: isPreviewSurface ? selected?.id : undefined });
+  };
+
   const revealAssetPath = async (path: string) => {
-    setContextMenu(null);
+    closeContextMenu(false);
     if (!isTauri()) return;
     try {
       await invoke<void>("reveal_in_file_manager", { path });
@@ -1592,9 +1653,9 @@ function App() {
     }
   };
 
-  const runTextMenuAction = async (action: "undo" | "cut" | "copy" | "paste" | "selectAll") => {
+  const runTextMenuAction = async (action: "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll") => {
     const field = contextMenu?.textField;
-    setContextMenu(null);
+    closeContextMenu(false);
     if (!field) return;
     field.focus();
     if (action === "selectAll") {
@@ -1616,6 +1677,33 @@ function App() {
       return;
     }
     document.execCommand(action);
+  };
+
+  const runPreviewCommand = (action: PreviewCommand["action"]) => {
+    closeContextMenu(false);
+    setPreviewCommand((current) => ({ id: (current?.id ?? 0) + 1, action }));
+  };
+
+  const handleContextMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeContextMenu(true);
+      return;
+    }
+    if (event.key === "Tab") {
+      closeContextMenu(false);
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button[role='menuitem']:not(:disabled)"));
+    if (!items.length) return;
+    const currentIndex = Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement));
+    const nextIndex = event.key === "Home" ? 0
+      : event.key === "End" ? items.length - 1
+        : (currentIndex + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    event.preventDefault();
+    items[nextIndex].focus();
   };
 
   const handleViewTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -1948,7 +2036,14 @@ function App() {
 
   useEffect(() => {
     const handleAppShortcut = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isEditableTarget(event.target) || isSettingsOpen || isPresetNaming || contextMenu || isMaskEditing) return;
+      if (event.defaultPrevented || contextMenu) return;
+      if (!isSettingsOpen && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+        if (!(event.target instanceof HTMLElement)) return;
+        event.preventDefault();
+        openKeyboardContextMenu(event.target);
+        return;
+      }
+      if (isEditableTarget(event.target) || isSettingsOpen || isPresetNaming || isMaskEditing) return;
 
       if (matchesShortcut(event, "addFiles")) {
         if (isProcessing || !isWorkspaceLoaded) return;
@@ -2003,7 +2098,7 @@ function App() {
 
     window.addEventListener("keydown", handleAppShortcut);
     return () => window.removeEventListener("keydown", handleAppShortcut);
-  }, [contextMenu, hasMaskView, hasResultView, isMaskEditing, isPresetNaming, isProcessing, isSettingsOpen, isWorkspaceLoaded, selected, selectedAssets]);
+  }, [contextMenu, hasMaskView, hasResultView, isMaskEditing, isPresetNaming, isProcessing, isSettingsOpen, isWorkspaceLoaded, selected, selectedAssets, selectedIdSet]);
 
   const handleInspectorTabKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -2155,6 +2250,7 @@ function App() {
                   onCancel={cancelMaskEditor}
                   previewStatus={maskPreviewStatus}
                   previewError={maskPreviewError}
+                  command={previewCommand}
                 />
               ) : <div className="preview-stage"><div className="preview-loading"><span className="spinner" />{t("preview.loading")}</div></div>
             ) : (
@@ -2516,47 +2612,66 @@ function App() {
       )}
 
       {contextMenu && (
-        <div className="app-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}>
+        <div ref={contextMenuRef} className="app-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()} onKeyDown={handleContextMenuKeyDown}>
           {contextMenu.kind === "text" ? (
             <>
-              <button role="menuitem" onClick={() => void runTextMenuAction("undo")}><span>{t("context.undo")}</span><kbd>Ctrl+Z</kbd></button>
-              <span className="context-separator" />
-              <button role="menuitem" onClick={() => void runTextMenuAction("cut")}><span>{t("context.cut")}</span><kbd>Ctrl+X</kbd></button>
-              <button role="menuitem" onClick={() => void runTextMenuAction("copy")}><span>{t("context.copy")}</span><kbd>Ctrl+C</kbd></button>
-              <button role="menuitem" onClick={() => void runTextMenuAction("paste")}><span>{t("context.paste")}</span><kbd>Ctrl+V</kbd></button>
-              <span className="context-separator" />
-              <button role="menuitem" onClick={() => void runTextMenuAction("selectAll")}><span>{t("context.selectAll")}</span><kbd>Ctrl+A</kbd></button>
+              <button role="menuitem" onClick={() => void runTextMenuAction("undo")}><span>{t("context.undo")}</span><kbd>{formatShortcut("undo")}</kbd></button>
+              <button role="menuitem" onClick={() => void runTextMenuAction("redo")}><span>{t("editor.redo")}</span><kbd>{isMacPlatform() ? formatShortcut("redo") : "Ctrl+Y"}</kbd></button>
+              <span className="context-separator" role="separator" />
+              <button role="menuitem" onClick={() => void runTextMenuAction("cut")} disabled={(contextMenu.textField?.selectionStart ?? 0) === (contextMenu.textField?.selectionEnd ?? 0)}><span>{t("context.cut")}</span><kbd>{isMacPlatform() ? "Cmd+X" : "Ctrl+X"}</kbd></button>
+              <button role="menuitem" onClick={() => void runTextMenuAction("copy")} disabled={(contextMenu.textField?.selectionStart ?? 0) === (contextMenu.textField?.selectionEnd ?? 0)}><span>{t("context.copy")}</span><kbd>{isMacPlatform() ? "Cmd+C" : "Ctrl+C"}</kbd></button>
+              <button role="menuitem" onClick={() => void runTextMenuAction("paste")}><span>{t("context.paste")}</span><kbd>{isMacPlatform() ? "Cmd+V" : "Ctrl+V"}</kbd></button>
+              <span className="context-separator" role="separator" />
+              <button role="menuitem" onClick={() => void runTextMenuAction("selectAll")} disabled={!contextMenu.textField?.value}><span>{t("context.selectAll")}</span><kbd>{isMacPlatform() ? "Cmd+A" : "Ctrl+A"}</kbd></button>
             </>
           ) : contextMenu.kind === "asset" && contextAsset ? (
             <>
-              <div className="context-file-heading"><strong title={contextAsset.name}>{contextAsset.name}</strong><span>{formatDimensions(contextAsset.width, contextAsset.height, formatLocale, t("format.unknownDimensions"))} · {contextAsset.extension.toUpperCase()}</span></div>
-              <span className="context-separator" />
-              <button role="menuitem" onClick={() => { setContextMenu(null); setViewMode("original"); }}><span>{t("context.openOriginal")}</span></button>
-              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!contextAsset.previewUrl || settings.processingMode === "convert"}><span>{t("selection.editObject")}</span></button>
-              <span className="context-separator" />
-              <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(-1); }}><span>{t("preview.rotateLeft")}</span></button>
-              <button role="menuitem" onClick={() => { setContextMenu(null); rotateSelected(1); }}><span>{t("preview.rotateRight")}</span></button>
-              <span className="context-separator" />
-              <button role="menuitem" onClick={() => { moveLibraryAssets("up", contextAsset.id); setContextMenu(null); }} disabled={isProcessing}><span>{t("library.moveUp")}</span><kbd>Alt+↑</kbd></button>
-              <button role="menuitem" onClick={() => { moveLibraryAssets("down", contextAsset.id); setContextMenu(null); }} disabled={isProcessing}><span>{t("library.moveDown")}</span><kbd>Alt+↓</kbd></button>
-              <button role="menuitem" onClick={() => { moveLibraryAssets("top", contextAsset.id); setContextMenu(null); }} disabled={isProcessing}><span>{t("library.moveTop")}</span><kbd>Alt+Home</kbd></button>
-              <button role="menuitem" onClick={() => { moveLibraryAssets("bottom", contextAsset.id); setContextMenu(null); }} disabled={isProcessing}><span>{t("library.moveBottom")}</span><kbd>Alt+End</kbd></button>
-              <span className="context-separator" />
-              <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.path)}><span>{t("context.openOriginalLocation")}</span></button>
-              <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.outputPath!)} disabled={!contextAsset.outputPath}><span>{t("context.openResultLocation")}</span></button>
-              <span className="context-separator" />
-              <button className="danger" role="menuitem" onClick={() => { setContextMenu(null); removeAsset(contextAsset.id); }} disabled={isProcessing}><span>{t("preview.removeFromList")}</span></button>
+              <div className="context-file-heading">{contextAssets.length > 1 ? <><strong>{t("management.selected", { count: contextAssets.length })}</strong><span>{t("management.toolbarHelp")}</span></> : <><strong title={contextAsset.name}>{contextAsset.name}</strong><span>{formatDimensions(contextAsset.width, contextAsset.height, formatLocale, t("format.unknownDimensions"))} · {contextAsset.extension.toUpperCase()}</span></>}</div>
+              <span className="context-separator" role="separator" />
+              <button role="menuitem" onClick={() => { closeContextMenu(true); setViewMode("original"); }} disabled={contextAssets.length !== 1}><span>{t("context.openOriginal")}</span><kbd>{formatShortcut("viewOriginal")}</kbd></button>
+              <button role="menuitem" onClick={() => { closeContextMenu(true); openMaskEditor(); }} disabled={contextAssets.length !== 1 || !contextAsset.previewUrl || settings.processingMode === "convert"}><span>{t("selection.editObject")}</span></button>
+              <span className="context-separator" role="separator" />
+              <button role="menuitem" onClick={() => { closeContextMenu(true); rotateSelected(-1); }} disabled={isProcessing}><span>{t("preview.rotateLeft")}</span><kbd>{formatShortcut("rotateLeft")}</kbd></button>
+              <button role="menuitem" onClick={() => { closeContextMenu(true); rotateSelected(1); }} disabled={isProcessing}><span>{t("preview.rotateRight")}</span><kbd>{formatShortcut("rotateRight")}</kbd></button>
+              <span className="context-separator" role="separator" />
+              <button role="menuitem" onClick={() => { moveLibraryAssets("up", contextAsset.id); closeContextMenu(true); }} disabled={isProcessing}><span>{t("library.moveUp")}</span><kbd>{formatShortcut("moveUp")}</kbd></button>
+              <button role="menuitem" onClick={() => { moveLibraryAssets("down", contextAsset.id); closeContextMenu(true); }} disabled={isProcessing}><span>{t("library.moveDown")}</span><kbd>{formatShortcut("moveDown")}</kbd></button>
+              <button role="menuitem" onClick={() => { moveLibraryAssets("top", contextAsset.id); closeContextMenu(true); }} disabled={isProcessing}><span>{t("library.moveTop")}</span><kbd>{formatShortcut("moveTop")}</kbd></button>
+              <button role="menuitem" onClick={() => { moveLibraryAssets("bottom", contextAsset.id); closeContextMenu(true); }} disabled={isProcessing}><span>{t("library.moveBottom")}</span><kbd>{formatShortcut("moveBottom")}</kbd></button>
+              <span className="context-separator" role="separator" />
+              <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.path)} disabled={contextAssets.length !== 1}><span>{t("context.openOriginalLocation")}</span></button>
+              <button role="menuitem" onClick={() => void revealAssetPath(contextAsset.outputPath!)} disabled={contextAssets.length !== 1 || !contextAsset.outputPath}><span>{t("context.openResultLocation")}</span></button>
+              <span className="context-separator" role="separator" />
+              <button className="danger" role="menuitem" onClick={() => { closeContextMenu(true); removeCurrentSelection(); }} disabled={isProcessing}><span>{t("preview.removeFromList")}</span><kbd>{formatShortcut("remove")}</kbd></button>
+            </>
+          ) : contextMenu.kind === "canvas" && selected ? (
+            <>
+              <div className="context-file-heading"><strong title={selected.name}>{selected.name}</strong><span>{formatDimensions(selected.width, selected.height, formatLocale, t("format.unknownDimensions"))}</span></div>
+              <span className="context-separator" role="separator" />
+              <button role="menuitem" onClick={() => { setViewMode("original"); closeContextMenu(true); }}><span>{t("common.original")}</span><kbd>{formatShortcut("viewOriginal")}</kbd></button>
+              <button role="menuitem" onClick={() => { setViewMode("result"); closeContextMenu(true); }} disabled={!hasResultView}><span>{t("common.preview")}</span><kbd>{formatShortcut("viewResult")}</kbd></button>
+              <button role="menuitem" onClick={() => { setViewMode("mask"); closeContextMenu(true); }} disabled={!hasMaskView}><span>{t("common.mask")}</span><kbd>{formatShortcut("viewMask")}</kbd></button>
+              <button role="menuitem" onClick={() => { setViewMode("compare"); closeContextMenu(true); }} disabled={!hasResultView}><span>{t("common.compare")}</span><kbd>{formatShortcut("viewCompare")}</kbd></button>
+              <span className="context-separator" role="separator" />
+              <button role="menuitem" onClick={() => { closeContextMenu(true); openMaskEditor(); }} disabled={!selected.previewUrl || settings.processingMode === "convert"}><span>{t("selection.editObject")}</span></button>
+              <button role="menuitem" onClick={() => { closeContextMenu(true); rotateSelected(-1); }} disabled={isProcessing}><span>{t("preview.rotateLeft")}</span><kbd>{formatShortcut("rotateLeft")}</kbd></button>
+              <button role="menuitem" onClick={() => { closeContextMenu(true); rotateSelected(1); }} disabled={isProcessing}><span>{t("preview.rotateRight")}</span><kbd>{formatShortcut("rotateRight")}</kbd></button>
+              <span className="context-separator" role="separator" />
+              <button role="menuitem" onClick={() => runPreviewCommand("zoomIn")}><span>{t("editor.zoomIn")}</span><kbd>{formatShortcut("zoomIn")}</kbd></button>
+              <button role="menuitem" onClick={() => runPreviewCommand("zoomOut")}><span>{t("editor.zoomOut")}</span><kbd>{formatShortcut("zoomOut")}</kbd></button>
+              <button role="menuitem" onClick={() => runPreviewCommand("zoomFit")}><span>{t("editor.fitTitle")}</span><kbd>{formatShortcut("zoomFit")}</kbd></button>
+              <span className="context-separator" role="separator" />
+              <button role="menuitem" onClick={() => void revealAssetPath(selected.path)}><span>{t("context.openOriginalLocation")}</span></button>
+              <button role="menuitem" onClick={() => void revealAssetPath(selected.outputPath!)} disabled={!selected.outputPath}><span>{t("context.openResultLocation")}</span></button>
+              <span className="context-separator" role="separator" />
+              <button className="danger" role="menuitem" onClick={() => { closeContextMenu(true); removeCurrentSelection(); }} disabled={isProcessing}><span>{t("preview.removeFromList")}</span><kbd>{formatShortcut("remove")}</kbd></button>
             </>
           ) : (
             <>
-              <button role="menuitem" onClick={() => { setContextMenu(null); openMaskEditor(); }} disabled={!selected?.previewUrl || settings.processingMode === "convert"}><span>{t("selection.editObject")}</span></button>
-              <span className="context-separator" />
-              <button role="menuitem" onClick={() => { setViewMode("original"); setContextMenu(null); }} disabled={!selected}><span>{t("context.openOriginal")}</span></button>
-              <button role="menuitem" onClick={() => { setViewMode("result"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>{t("context.openSavedResult")}</span></button>
-              <button role="menuitem" onClick={() => { setViewMode("compare"); setContextMenu(null); }} disabled={!selected?.outputPath}><span>{t("context.dragCompare")}</span></button>
-              <span className="context-separator" />
-              <button role="menuitem" onClick={() => { setContextMenu(null); void addFilesFromDialog(); }}><span>{t("context.addImages")}</span></button>
-              <button role="menuitem" onClick={() => { setContextMenu(null); openSettings("general"); }}><span>{t("context.settings")}</span></button>
+              <button role="menuitem" onClick={() => { closeContextMenu(false); void addFilesFromDialog(); }} disabled={isProcessing || !isWorkspaceLoaded}><span>{t("context.addImages")}</span><kbd>{formatShortcut("addFiles")}</kbd></button>
+              <button role="menuitem" onClick={() => { closeContextMenu(false); void addFolderFromDialog(); }} disabled={isProcessing || !isWorkspaceLoaded}><span>{t("app.addFolder")}</span><kbd>{formatShortcut("addFolder")}</kbd></button>
+              <span className="context-separator" role="separator" />
+              <button role="menuitem" onClick={() => { closeContextMenu(false); openSettings("general"); }}><span>{t("context.settings")}</span><kbd>{formatShortcut("settings")}</kbd></button>
             </>
           )}
         </div>
