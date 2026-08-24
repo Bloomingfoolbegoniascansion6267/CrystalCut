@@ -59,6 +59,11 @@ interface MaskPreviewBundle {
   cacheHit?: boolean;
 }
 
+interface ModelDownloadProgress {
+  downloadedBytes: number;
+  totalBytes: number;
+}
+
 interface ContextMenuState {
   x: number;
   y: number;
@@ -200,6 +205,7 @@ function App() {
   const [batchCompleted, setBatchCompleted] = useState(0);
   const [batchTotal, setBatchTotal] = useState(0);
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
+  const [modelDownloadProgress, setModelDownloadProgress] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<PreviewViewMode>("original");
   const [previewBackground, setPreviewBackground] = useState<PreviewBackground>("checker");
   const [isMaskEditing, setIsMaskEditing] = useState(false);
@@ -573,7 +579,7 @@ function App() {
         if (payload.status === "completed") {
           return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, outputPreviewKey: batchPreviewKeys.current.get(asset.id), resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, editPreviewKey: undefined, error: undefined };
         }
-        if (payload.status === "failed") return { ...asset, status: "failed", error: t("notice.processingFailed") };
+        if (payload.status === "failed") return { ...asset, status: "failed", error: payload.error || t("notice.processingFailed") };
         if (payload.status === "cancelled") return { ...asset, status: "cancelled", error: t("notice.userCancelled") };
         return asset;
       }));
@@ -1107,7 +1113,9 @@ function App() {
       const resultById = new Map(result.items.map((item) => [item.assetId, item]));
       setAssets((current) => current.map((asset) => {
         const item = resultById.get(asset.id);
-        return item?.success ? { ...asset, outputBytes: item.outputBytes ?? undefined } : asset;
+        if (!item) return asset;
+        if (item.success) return { ...asset, outputBytes: item.outputBytes ?? undefined, error: undefined };
+        return { ...asset, status: item.cancelled ? "cancelled" : "failed", error: item.error || t(item.cancelled ? "notice.userCancelled" : "notice.processingFailed") };
       }));
       void invoke<ModelStatus>("get_model_status").then(setModelStatus).catch(() => undefined);
       setLastOutputBytes(retainedOutputBytes + result.outputBytes);
@@ -1268,14 +1276,22 @@ function App() {
       return;
     }
     setSettingsBusyAction("model");
+    setModelDownloadProgress(0);
+    let unlisten: (() => void) | null = null;
     try {
+      unlisten = await listen<ModelDownloadProgress>("model-download-progress", ({ payload }) => {
+        const percentage = payload.totalBytes > 0 ? Math.round((payload.downloadedBytes / payload.totalBytes) * 100) : 0;
+        setModelDownloadProgress(Math.max(0, Math.min(100, percentage)));
+      });
       const status = await invoke<ModelStatus>("install_model");
       setModelStatus(status);
       setNotice(t("notice.modelInstalled"));
       await refreshSettingsData();
     } catch (error) {
-      setNotice(t("notice.modelInstallFailed"));
+      setNotice(localizeCommandError(error, t, "error.model.install"));
     } finally {
+      unlisten?.();
+      setModelDownloadProgress(null);
       setSettingsBusyAction(null);
     }
   };
@@ -2183,6 +2199,7 @@ function App() {
           </div>
 
           <div id="current-file-inspector" className={`inspector-tab-panel ${inspectorMode === "current" ? "active" : ""}`} role="tabpanel" aria-labelledby="inspector-tab-current" hidden={inspectorMode !== "current"} inert={inspectorMode !== "current"}>
+          {selected?.error && <div className="current-file-error" role="alert"><strong>{t(`status.${selected.status}`)}</strong><span>{selected.error}</span></div>}
           {!isMultiSelection && <section className={`setting-section mask-summary-section current-file-control current-removal-control ${settings.processingMode === "convert" ? "is-disabled" : ""}`} aria-disabled={settings.processingMode === "convert"}>
             <div className="label-row"><span className="setting-label">{t("selection.object")}</span>{selected && settings.processingMode !== "convert"
               ? <span className={`state-badge-small selection-source-badge source-${selectionSource}`}><SelectionSourceIcon source={selectionSource} size={16} />{t(selectionSource === "automatic" ? "editor.source.auto" : selectionSource === "sam" ? "editor.source.sam" : "editor.source.manualLabel")}</span>
@@ -2425,6 +2442,7 @@ function App() {
         modelStatus={modelStatus}
         diagnostics={diagnostics}
         busyAction={settingsBusyAction}
+        modelDownloadProgress={modelDownloadProgress}
         processing={isProcessing}
         onClose={closeSettings}
         onSave={savePreferences}

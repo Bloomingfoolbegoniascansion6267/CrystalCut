@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{self, Read},
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -64,7 +64,15 @@ pub fn remove_default_model(app: &AppHandle) -> Result<ModelStatus, String> {
 }
 
 pub fn ensure_default_model(app: &AppHandle) -> Result<PathBuf, String> {
+    ensure_default_model_with_progress(app, |_, _| {})
+}
+
+pub fn ensure_default_model_with_progress(
+    app: &AppHandle,
+    mut on_progress: impl FnMut(u64, u64),
+) -> Result<PathBuf, String> {
     if let Some(path) = find_verified_model(app)? {
+        on_progress(MODEL_BYTES, MODEL_BYTES);
         return Ok(path);
     }
 
@@ -88,8 +96,22 @@ pub fn ensure_default_model(app: &AppHandle) -> Result<PathBuf, String> {
     let mut reader = response.body_mut().as_reader();
     let mut partial = File::create(&partial_path)
         .map_err(|error| format!("임시 모델 파일을 만들지 못했습니다: {error}"))?;
-    io::copy(&mut reader, &mut partial)
-        .map_err(|error| format!("모델 파일을 저장하지 못했습니다: {error}"))?;
+    let mut downloaded = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    on_progress(0, MODEL_BYTES);
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("모델을 다운로드하지 못했습니다: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        partial
+            .write_all(&buffer[..read])
+            .map_err(|error| format!("모델 파일을 저장하지 못했습니다: {error}"))?;
+        downloaded = downloaded.saturating_add(read as u64);
+        on_progress(downloaded.min(MODEL_BYTES), MODEL_BYTES);
+    }
     partial
         .sync_all()
         .map_err(|error| format!("모델 파일을 디스크에 반영하지 못했습니다: {error}"))?;

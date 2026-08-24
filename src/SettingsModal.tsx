@@ -14,6 +14,7 @@ interface SettingsModalProps {
   modelStatus: ModelStatus | null;
   diagnostics: AppDiagnostics | null;
   busyAction: "save" | "model" | "cache" | "reset" | null;
+  modelDownloadProgress: number | null;
   processing: boolean;
   onClose: () => void;
   onSave: (preferences: AppPreferences) => Promise<void>;
@@ -40,6 +41,7 @@ export default function SettingsModal({
   modelStatus,
   diagnostics,
   busyAction,
+  modelDownloadProgress,
   processing,
   onClose,
   onSave,
@@ -204,6 +206,9 @@ export default function SettingsModal({
           {!modelStatus?.installed && <button className="button primary compact" type="button" disabled={busyAction !== null || processing} onClick={() => void onInstallModel()}>{busyAction === "model" ? t("common.installing") : t("settings.model.install")}</button>}
           {modelStatus?.installed && modelStatus.canDelete && <button className="button danger compact" type="button" disabled={busyAction !== null || processing} onClick={() => void onDeleteModel()}>{busyAction === "model" ? t("common.processing") : t("settings.model.delete")}</button>}
         </div>
+        {!modelStatus?.installed && busyAction === "model" && modelDownloadProgress !== null && <div className="model-download-progress" role="progressbar" aria-label={t("common.installing")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={modelDownloadProgress}>
+          <span><i style={{ width: `${modelDownloadProgress}%` }} /></span><output>{modelDownloadProgress}%</output>
+        </div>}
         {modelStatus?.path && <code className="path-code" title={modelStatus.path}>{modelStatus.path}</code>}
         <p className="preferences-note">{t("settings.model.samHelp")}</p>
       </section>

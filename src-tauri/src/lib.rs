@@ -713,13 +713,29 @@ async fn install_model(
         .begin()
         .map_err(|error| CommandError::new("model.install", error))?;
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        model::ensure_default_model(&app)?;
+        let progress_app = app.clone();
+        model::ensure_default_model_with_progress(&app, |downloaded_bytes, total_bytes| {
+            let _ = progress_app.emit(
+                "model-download-progress",
+                ModelDownloadProgress {
+                    downloaded_bytes,
+                    total_bytes,
+                },
+            );
+        })?;
         model::status(&app)
     })
     .await;
     controller.finish();
     let outcome = outcome.map_err(|error| CommandError::new("model.install", error))?;
     outcome.map_err(|error| CommandError::new("model.install", error))
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelDownloadProgress {
+    downloaded_bytes: u64,
+    total_bytes: u64,
 }
 
 #[tauri::command]
