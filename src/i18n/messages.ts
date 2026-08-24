@@ -35,6 +35,9 @@ export const en: MessageCatalog = {
   "error.preview.cacheClear": "Could not clear the preview cache.",
   "settings.storage.previewCache": "Preview cache",
   "settings.storage.clearPreviewCache": "Clear preview cache",
+  "edge.selectionRequired": "Select an object in Object editing",
+  "edge.selectionRequiredHelp": "Mark the object to keep before adjusting its edges.",
+  "preview.preparing": "Preparing preview",
 };
 
 export const ko: MessageCatalog = {
@@ -69,4 +72,7 @@ export const ko: MessageCatalog = {
   "error.preview.cacheClear": "미리보기 캐시를 비우지 못했습니다.",
   "settings.storage.previewCache": "미리보기 캐시",
   "settings.storage.clearPreviewCache": "미리보기 캐시 비우기",
+  "edge.selectionRequired": "객체 편집에서 먼저 선택하세요",
+  "edge.selectionRequiredHelp": "유지할 객체를 표시하면 가장자리 설정을 사용할 수 있습니다.",
+  "preview.preparing": "미리보기 준비 중",
 };

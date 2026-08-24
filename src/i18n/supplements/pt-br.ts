@@ -37,4 +37,7 @@ export const ptBRSupplement: MessageCatalog = {
   "error.preview.cacheClear": "Não foi possível limpar o cache de prévias.",
   "settings.storage.previewCache": "Cache de prévias",
   "settings.storage.clearPreviewCache": "Limpar cache de prévias",
+  "edge.selectionRequired": "Selecione primeiro um objeto em Editar objeto",
+  "edge.selectionRequiredHelp": "Marque o objeto que deseja manter antes de ajustar as bordas.",
+  "preview.preparing": "Preparando a prévia",
 };

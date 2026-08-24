@@ -37,4 +37,7 @@ export const frSupplement: MessageCatalog = {
   "error.preview.cacheClear": "Impossible de vider le cache des aperçus.",
   "settings.storage.previewCache": "Cache des aperçus",
   "settings.storage.clearPreviewCache": "Vider le cache des aperçus",
+  "edge.selectionRequired": "Sélectionnez d’abord un objet dans Modifier l’objet",
+  "edge.selectionRequiredHelp": "Marquez l’objet à conserver avant de régler ses contours.",
+  "preview.preparing": "Préparation de l’aperçu",
 };

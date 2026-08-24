@@ -58,4 +58,7 @@ export const zhTWSupplement: MessageCatalog = {
   "error.preview.cacheClear": "無法清除預覽快取。",
   "settings.storage.previewCache": "預覽快取",
   "settings.storage.clearPreviewCache": "清除預覽快取",
+  "edge.selectionRequired": "請先在物件編輯中選取物件",
+  "edge.selectionRequiredHelp": "標記要保留的物件後，才能調整邊緣設定。",
+  "preview.preparing": "正在準備預覽",
 };

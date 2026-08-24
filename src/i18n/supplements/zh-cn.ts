@@ -41,4 +41,7 @@ export const zhCNSupplement: MessageCatalog = {
   "error.preview.cacheClear": "无法清空预览缓存。",
   "settings.storage.previewCache": "预览缓存",
   "settings.storage.clearPreviewCache": "清空预览缓存",
+  "edge.selectionRequired": "请先在对象编辑中选择对象",
+  "edge.selectionRequiredHelp": "标记要保留的对象后，才能调整边缘设置。",
+  "preview.preparing": "正在准备预览",
 };

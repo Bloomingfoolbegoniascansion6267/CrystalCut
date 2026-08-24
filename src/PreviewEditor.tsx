@@ -7,9 +7,11 @@ import {
   useRef,
   useState,
 } from "react";
-import type { BrushMode, BrushStroke, ImageAsset, ManualMaskRecipe, MaskPoint, MaskMode } from "./types";
+import type { BrushMode, BrushStroke, ImageAsset, ManualMaskRecipe, MaskPoint } from "./types";
 import { useI18n } from "./i18n/I18nProvider";
 import BrushActionIcon from "./BrushActionIcon";
+import SelectionSourceIcon from "./SelectionSourceIcon";
+import { isMaskRecipeReady, selectionSourceForMode, type SelectionSource } from "./lib/mask";
 
 export type PreviewViewMode = "original" | "result" | "mask" | "compare";
 export type PreviewBackground = "checker" | "light" | "dark";
@@ -33,8 +35,6 @@ interface Size {
 }
 
 type EditorTool = "keep" | "remove" | "pan";
-type SelectionSource = "automatic" | "sam" | "manual";
-
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
 
 function StrokeShape({ stroke, width, height, color, opacity = 1 }: {
@@ -51,12 +51,6 @@ function StrokeShape({ stroke, width, height, color, opacity = 1 }: {
   }
   return <polyline points={points} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" opacity={opacity} />;
 }
-
-const sourceForMode = (mode: MaskMode): SelectionSource => {
-  if (mode === "sam") return "sam";
-  if (mode === "manual") return "manual";
-  return "automatic";
-};
 
 export default function PreviewEditor({
   asset,
@@ -147,10 +141,9 @@ export default function PreviewEditor({
     ? activeStroke ? [...asset.maskRecipe.strokes, activeStroke] : asset.maskRecipe.strokes
     : [];
   const inactiveStrokeCount = asset.maskRecipe.mode === "automatic" ? asset.maskRecipe.strokes.length : 0;
-  const selectionSource = sourceForMode(asset.maskRecipe.mode);
+  const selectionSource = selectionSourceForMode(asset.maskRecipe.mode);
   const previewIsActive = editing || previewStatus !== "idle";
-  const selectionNeedsPrompt = (asset.maskRecipe.mode === "manual" || asset.maskRecipe.mode === "sam")
-    && !asset.maskRecipe.strokes.some((stroke) => stroke.mode === "keep" && stroke.points.length > 0);
+  const selectionNeedsPrompt = !isMaskRecipeReady(asset.maskRecipe);
   const resultUrl = selectionNeedsPrompt ? null : previewIsActive
     ? asset.editBasePreviewUrl ?? asset.resultPreviewUrl ?? null
     : asset.resultPreviewUrl ?? asset.editBasePreviewUrl ?? null;
@@ -209,7 +202,7 @@ export default function PreviewEditor({
       sourceTriggerRef.current?.focus();
       return;
     }
-    const nextMode: MaskMode = source === "sam" ? "sam" : "manual";
+    const nextMode = source === "sam" ? "sam" : "manual";
     onMaskChange({ mode: nextMode, strokes: [] });
     sourceTriggerRef.current?.focus();
   };
@@ -332,14 +325,13 @@ export default function PreviewEditor({
   };
 
   const sourceLabel = t(selectionSource === "automatic" ? "editor.source.auto" : selectionSource === "sam" ? "editor.source.sam" : "editor.source.manualLabel");
-  const sourceIcon = selectionSource === "automatic" ? "✦" : selectionSource === "sam" ? "◎" : "✎";
   const sourceDescriptionKey = selectionSource === "automatic" ? "editor.source.autoDescription" : selectionSource === "sam" ? "editor.source.samDescription" : "editor.source.manualDescription";
   const keepLabel = t(selectionSource === "sam" ? "editor.include" : "editor.keepArea");
   const removeLabel = t(selectionSource === "sam" ? "editor.exclude" : selectionSource === "manual" ? "editor.eraseArea" : "editor.removeArea");
-  const sourceOptions: Array<{ source: SelectionSource; icon: string; labelKey: string; descriptionKey: string; useCaseKey: string; recommended?: boolean }> = [
-    { source: "automatic", icon: "✦", labelKey: "editor.source.auto", descriptionKey: "editor.source.autoDescription", useCaseKey: "editor.source.autoUseCase", recommended: true },
-    { source: "sam", icon: "◎", labelKey: "editor.source.sam", descriptionKey: "editor.source.samDescription", useCaseKey: "editor.source.samUseCase" },
-    { source: "manual", icon: "✎", labelKey: "editor.source.manualLabel", descriptionKey: "editor.source.manualDescription", useCaseKey: "editor.source.manualUseCase" },
+  const sourceOptions: Array<{ source: SelectionSource; labelKey: string; descriptionKey: string; useCaseKey: string; recommended?: boolean }> = [
+    { source: "automatic", labelKey: "editor.source.auto", descriptionKey: "editor.source.autoDescription", useCaseKey: "editor.source.autoUseCase", recommended: true },
+    { source: "sam", labelKey: "editor.source.sam", descriptionKey: "editor.source.samDescription", useCaseKey: "editor.source.samUseCase" },
+    { source: "manual", labelKey: "editor.source.manualLabel", descriptionKey: "editor.source.manualDescription", useCaseKey: "editor.source.manualUseCase" },
   ];
 
   return (
@@ -393,7 +385,7 @@ export default function PreviewEditor({
 
       {viewMode === "result" && resultUrl && <span className={`preview-kind-label ${showingEditPreview ? "draft" : "saved"}`}>{resultLabel}</span>}
       {viewMode === "compare" && resultUrl && <><span className="compare-label left">{t("common.original")}</span><span className="compare-label right">{resultLabel}</span></>}
-      {!editing && viewMode !== "compare" && <span className="selection-mode-badge"><span aria-hidden="true">{sourceIcon}</span>{sourceLabel}</span>}
+      {!editing && viewMode !== "compare" && <span className={`selection-mode-badge source-${selectionSource}`}><span><SelectionSourceIcon source={selectionSource} size={17} /></span>{sourceLabel}</span>}
       {(editing || previewStatus === "updating" || previewStatus === "error") && <div className={`mask-preview-status ${previewStatus === "error" ? "error" : previewStatus}`} role="status" aria-live="polite" title={previewError ?? undefined}>{previewStatus === "updating" && <span className="spinner" />}{t(previewStatus === "updating" ? "editor.previewUpdating" : previewStatus === "error" ? "editor.previewError" : previewStatus === "current" ? "editor.previewCurrent" : "editor.previewReady")}</div>}
 
       {editing && (
@@ -403,7 +395,7 @@ export default function PreviewEditor({
             <button
               ref={sourceTriggerRef}
               type="button"
-              className={`editor-source-trigger ${isSourcePickerOpen ? "open" : ""}`}
+              className={`editor-source-trigger source-${selectionSource} ${isSourcePickerOpen ? "open" : ""}`}
               aria-haspopup="listbox"
               aria-expanded={isSourcePickerOpen}
               onClick={() => isSourcePickerOpen ? setIsSourcePickerOpen(false) : openSourcePicker()}
@@ -419,7 +411,7 @@ export default function PreviewEditor({
                 }
               }}
             >
-              <span className={`editor-source-icon source-${selectionSource}`} aria-hidden="true">{sourceIcon}</span>
+              <span className="editor-source-icon"><SelectionSourceIcon source={selectionSource} size={24} /></span>
               <span className="editor-source-trigger-copy"><strong>{sourceLabel}</strong><small>{t(sourceDescriptionKey)}</small></span>
               <span className="editor-source-chevron" aria-hidden="true">⌄</span>
             </button>
@@ -434,11 +426,11 @@ export default function PreviewEditor({
                     role="option"
                     aria-selected={selectionSource === option.source}
                     data-source={option.source}
-                    className={`editor-source-option ${selectionSource === option.source ? "selected" : ""}`}
+                    className={`editor-source-option source-${option.source} ${selectionSource === option.source ? "selected" : ""}`}
                     onClick={() => selectSource(option.source)}
                     onKeyDown={(event) => handleSourceOptionKeyDown(event, index)}
                   >
-                    <span className={`editor-source-icon source-${option.source}`} aria-hidden="true">{option.icon}</span>
+                    <span className="editor-source-icon"><SelectionSourceIcon source={option.source} size={25} /></span>
                     <span className="editor-source-option-copy">
                       <span className="editor-source-option-title"><strong>{t(option.labelKey)}</strong>{option.recommended && <em>{t("editor.recommended")}</em>}</span>
                       <span>{t(option.descriptionKey)}</span>
@@ -458,7 +450,7 @@ export default function PreviewEditor({
           </div>
           {inactiveStrokeCount > 0 && <div className="inactive-corrections" onPointerDown={(event) => event.stopPropagation()}><span>{t("editor.inactive", { count: inactiveStrokeCount })}</span><button onClick={() => onMaskChange({ ...asset.maskRecipe, mode: "refine" })}>{t("editor.reapply")}</button><button onClick={() => onMaskChange({ mode: "automatic", strokes: [] })}>{t("editor.clear")}</button></div>}
           <div className="editor-properties" onPointerDown={(event) => event.stopPropagation()}>
-            <div className="editor-mode-summary"><strong>{sourceLabel}</strong><span>{tool === "pan" ? t("editor.pan") : t("editor.brush", { tool: tool === "keep" ? keepLabel : removeLabel })}</span></div>
+            <div className={`editor-mode-summary source-${selectionSource}`}><SelectionSourceIcon source={selectionSource} size={20} /><strong>{sourceLabel}</strong><span>{tool === "pan" ? t("editor.pan") : t("editor.brush", { tool: tool === "keep" ? keepLabel : removeLabel })}</span></div>
             <label className="brush-size-control">{t("editor.size")} <input type="range" min="4" max="240" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} disabled={tool === "pan"} /><output>{brushSize}px</output></label>
             <div className="editor-history-actions"><button className="toolbar-icon" onClick={undo} disabled={!asset.maskRecipe.strokes.length} title={t("editor.undo")}>↶</button><button className="toolbar-icon" onClick={redo} disabled={!redoStack.length} title={t("editor.redo")}>↷</button><button className="toolbar-text" onClick={() => { onMaskChange({ ...asset.maskRecipe, strokes: [] }); setRedoStack([]); }} disabled={!asset.maskRecipe.strokes.length}>{t("editor.clearRefinements")}</button></div>
           </div>

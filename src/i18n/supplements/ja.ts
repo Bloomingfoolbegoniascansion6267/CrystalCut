@@ -266,4 +266,7 @@ export const jaSupplement: MessageCatalog = {
   "error.preview.cacheClear": "プレビューキャッシュを消去できませんでした。",
   "settings.storage.previewCache": "プレビューキャッシュ",
   "settings.storage.clearPreviewCache": "プレビューキャッシュを消去",
+  "edge.selectionRequired": "オブジェクト編集で先に選択してください",
+  "edge.selectionRequiredHelp": "残すオブジェクトを指定すると、エッジ設定を使用できます。",
+  "preview.preparing": "プレビューを準備中",
 };

@@ -37,4 +37,7 @@ export const esSupplement: MessageCatalog = {
   "error.preview.cacheClear": "No se pudo borrar la caché de vistas previas.",
   "settings.storage.previewCache": "Caché de vistas previas",
   "settings.storage.clearPreviewCache": "Borrar caché de vistas previas",
+  "edge.selectionRequired": "Primero selecciona un objeto en Editar objeto",
+  "edge.selectionRequiredHelp": "Marca el objeto que quieres conservar antes de ajustar sus bordes.",
+  "preview.preparing": "Preparando la vista previa",
 };

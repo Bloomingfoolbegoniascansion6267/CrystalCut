@@ -37,4 +37,7 @@ export const deSupplement: MessageCatalog = {
   "error.preview.cacheClear": "Der Vorschau-Cache konnte nicht geleert werden.",
   "settings.storage.previewCache": "Vorschau-Cache",
   "settings.storage.clearPreviewCache": "Vorschau-Cache leeren",
+  "edge.selectionRequired": "Zuerst ein Objekt in der Objektbearbeitung auswählen",
+  "edge.selectionRequiredHelp": "Markieren Sie das zu behaltende Objekt, bevor Sie seine Kanten anpassen.",
+  "preview.preparing": "Vorschau wird vorbereitet",
 };
