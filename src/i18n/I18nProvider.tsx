@@ -1,12 +1,23 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { IntlProvider, useIntl } from "react-intl";
 import { en, ko } from "./messages";
-import { de, es, fr, ja, ptBR, zhCN, zhTW } from "./translations";
 import { LanguagePreference, localeDirection, resolveSupportedLocale, SupportedLocale } from "./locale";
 
 type MessageValues = Record<string, string | number | boolean | Date | null | undefined>;
 
-const catalogs = { en, ko, ja, "zh-CN": zhCN, "zh-TW": zhTW, es, de, fr, "pt-BR": ptBR } as const;
+type ForeignCatalogs = typeof import("./translations");
+
+const foreignCatalogFor = (catalogs: ForeignCatalogs | null, locale: SupportedLocale) => {
+  if (!catalogs) return null;
+  if (locale === "ja") return catalogs.ja;
+  if (locale === "zh-CN") return catalogs.zhCN;
+  if (locale === "zh-TW") return catalogs.zhTW;
+  if (locale === "es") return catalogs.es;
+  if (locale === "de") return catalogs.de;
+  if (locale === "fr") return catalogs.fr;
+  if (locale === "pt-BR") return catalogs.ptBR;
+  return null;
+};
 
 interface LocaleContextValue {
   languagePreference: LanguagePreference;
@@ -21,9 +32,23 @@ const LocaleContext = createContext<LocaleContextValue | null>(null);
 export function CrystalCutI18nProvider({ initialSystemLocale, initialLanguagePreference = "system", children }: { initialSystemLocale: string; initialLanguagePreference?: LanguagePreference; children: ReactNode }) {
   const [systemLocale] = useState(initialSystemLocale);
   const [languagePreference, setLanguagePreference] = useState<LanguagePreference>(initialLanguagePreference);
+  const [foreignCatalogs, setForeignCatalogs] = useState<ForeignCatalogs | null>(null);
   const locale = languagePreference === "system" ? resolveSupportedLocale(systemLocale) : languagePreference;
   const formatLocale = languagePreference === "system" ? systemLocale : languagePreference;
-  const messages = useMemo(() => ({ ...en, ...catalogs[locale] }), [locale]);
+  const needsForeignCatalog = locale !== "en" && locale !== "ko";
+  const messages = useMemo(() => ({
+    ...en,
+    ...(locale === "ko" ? ko : foreignCatalogFor(foreignCatalogs, locale) ?? en),
+  }), [foreignCatalogs, locale]);
+
+  useEffect(() => {
+    if (!needsForeignCatalog || foreignCatalogs) return;
+    let disposed = false;
+    void import("./translations").then((catalogs) => {
+      if (!disposed) setForeignCatalogs(catalogs);
+    }).catch(() => undefined);
+    return () => { disposed = true; };
+  }, [foreignCatalogs, needsForeignCatalog]);
 
   useEffect(() => {
     document.documentElement.lang = formatLocale;

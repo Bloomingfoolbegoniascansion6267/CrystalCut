@@ -1,10 +1,10 @@
-import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { AppDiagnostics, AppPreferences, BatchProgress, BatchResult, EdgeSettings, ExportPlan, ImageAsset, ManualMaskRecipe, MaskPoint, MetadataOutputPolicy, ModelStatus, OriginalExportResult, OutputFormat, OutputPreset, OutputSettings, PersistedAsset, ResizeOverride, RestoredWorkspace, WorkspaceSnapshot } from "./types";
 import { formatBytes, formatDimensions } from "./lib/format";
-import SettingsModal, { type SettingsTab } from "./SettingsModal";
+import type { SettingsTab } from "./SettingsModal";
 import PreviewEditor, { type PreviewBackground, type PreviewStatus, type PreviewViewMode } from "./PreviewEditor";
 import SelectionManager from "./SelectionManager";
 import Tooltip from "./Tooltip";
@@ -22,6 +22,7 @@ const THUMBNAIL_PRELOAD_LIMIT = 32;
 const FULL_PREVIEW_MEMORY_LIMIT = 3;
 const ASSET_ROW_STRIDE = 59;
 const ASSET_LIST_OVERSCAN_ROWS = 8;
+const SettingsModal = lazy(() => import("./SettingsModal"));
 
 const DEFAULT_SETTINGS: OutputSettings = {
   processingMode: "removeBackground",
@@ -2434,7 +2435,7 @@ function App() {
         </div>
       )}
 
-      <SettingsModal
+      {isSettingsOpen && <Suspense fallback={<div className="modal-backdrop" role="status" aria-live="polite"><div className="settings-loading"><span className="spinner" />{t("common.checking")}</div></div>}><SettingsModal
         open={isSettingsOpen}
         initialTab={settingsInitialTab}
         preferences={preferences}
@@ -2453,7 +2454,7 @@ function App() {
         onChooseDefaultDirectory={chooseDefaultOutputDirectory}
         onRefreshDiagnostics={refreshSettingsData}
         onPreviewLanguage={setLanguagePreference}
-      />
+      /></Suspense>}
 
       {notice && (
         <div className="toast" role="alert" aria-live="assertive">

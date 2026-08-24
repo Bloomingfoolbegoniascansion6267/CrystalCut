@@ -757,6 +757,7 @@ select:disabled { color: var(--ink-faint); background-color: var(--surface-muted
 @keyframes context-menu-in { from { opacity: 0; transform: translateY(-3px) scale(.98); } }
 
 .modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 28px; background: rgba(24, 25, 31, .42); backdrop-filter: blur(10px); animation: modal-fade 140ms ease-out; }
+.settings-loading { display: flex; align-items: center; gap: 10px; padding: 16px 20px; color: var(--ink-soft); border-radius: 12px; background: white; box-shadow: var(--shadow-lg); font-size: 12px; font-weight: 650; }
 .preferences-dialog { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: min(860px, 92vw); height: min(680px, 88vh); overflow: hidden; border: 1px solid rgba(255,255,255,.65); border-radius: 20px; background: var(--surface); box-shadow: 0 28px 90px rgba(18, 20, 29, .28); animation: modal-rise 180ms ease-out; }
 .preferences-header { display: flex; align-items: center; justify-content: space-between; min-height: 76px; padding: 15px 18px 15px 24px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.96); }
 .preferences-header h2 { margin: 0; font-size: 18px; letter-spacing: -.035em; }
