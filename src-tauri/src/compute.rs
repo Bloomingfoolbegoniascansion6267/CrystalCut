@@ -355,8 +355,18 @@ fn windows_adapters() -> Vec<ComputeDevice> {
             device_id: Some(index as i32),
             label,
             dedicated_memory_bytes: Some(description.DedicatedVideoMemory as u64),
-            recommended: devices.is_empty(),
+            recommended: false,
         });
+    }
+    devices.sort_by(|left, right| {
+        right
+            .dedicated_memory_bytes
+            .unwrap_or(0)
+            .cmp(&left.dedicated_memory_bytes.unwrap_or(0))
+            .then_with(|| left.device_id.cmp(&right.device_id))
+    });
+    if let Some(recommended) = devices.first_mut() {
+        recommended.recommended = true;
     }
     devices
 }
