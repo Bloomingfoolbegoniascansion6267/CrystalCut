@@ -61,4 +61,7 @@ export const zhTWSupplement: MessageCatalog = {
   "edge.selectionRequired": "請先在物件編輯中選取物件",
   "edge.selectionRequiredHelp": "標記要保留的物件後，才能調整邊緣設定。",
   "preview.preparing": "正在準備預覽",
+  "preview.loadingCache": "正在載入已儲存的預覽…",
+  "settings.diagnostics.previewCacheActivity": "預覽快取命中 / 未命中",
+  "settings.diagnostics.previewInference": "預覽推論次數 / 時間",
 };

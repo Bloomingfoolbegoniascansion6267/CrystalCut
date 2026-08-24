@@ -40,4 +40,7 @@ export const ptBRSupplement: MessageCatalog = {
   "edge.selectionRequired": "Selecione primeiro um objeto em Editar objeto",
   "edge.selectionRequiredHelp": "Marque o objeto que deseja manter antes de ajustar as bordas.",
   "preview.preparing": "Preparando a prévia",
+  "preview.loadingCache": "Carregando a prévia salva…",
+  "settings.diagnostics.previewCacheActivity": "Acertos / falhas do cache de prévia",
+  "settings.diagnostics.previewInference": "Processamentos de prévia / tempo",
 };

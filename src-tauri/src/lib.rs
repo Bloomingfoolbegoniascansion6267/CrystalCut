@@ -15,9 +15,10 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
+    time::Instant,
 };
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -33,6 +34,10 @@ use walkdir::WalkDir;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const MAX_PREVIEW_EDGE: u32 = 1600;
+static PREVIEW_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static PREVIEW_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+static PREVIEW_INFERENCE_RUNS: AtomicU64 = AtomicU64::new(0);
+static PREVIEW_INFERENCE_MS: AtomicU64 = AtomicU64::new(0);
 const MAX_THUMBNAIL_EDGE: u32 = 160;
 
 #[derive(Clone, Default)]
@@ -442,6 +447,13 @@ struct MaskPreviewBundle {
     result_preview_url: String,
     mask_preview_url: String,
     cache_hit: bool,
+    cache_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewInferenceStarted {
+    request_key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -453,15 +465,18 @@ struct PreviewRequest {
     edge_settings: EdgeSettings,
     settings: OutputSettings,
     request_key: String,
+    #[serde(default)]
+    cache_key_hint: Option<String>,
 }
 
 fn encode_mask_preview_bundle(
     result: image::DynamicImage,
     mask: image::DynamicImage,
+    cache_key: Option<&str>,
 ) -> Result<(MaskPreviewBundle, Vec<u8>, Vec<u8>), String> {
     let result_png = encode_preview_png(result)?;
     let mask_png = encode_preview_png(mask)?;
-    let bundle = mask_preview_bundle_from_png(&result_png, &mask_png, false);
+    let bundle = mask_preview_bundle_from_png(&result_png, &mask_png, false, cache_key);
     Ok((bundle, result_png, mask_png))
 }
 
@@ -469,11 +484,13 @@ fn mask_preview_bundle_from_png(
     result_png: &[u8],
     mask_png: &[u8],
     cache_hit: bool,
+    cache_key: Option<&str>,
 ) -> MaskPreviewBundle {
     MaskPreviewBundle {
         result_preview_url: format!("data:image/png;base64,{}", STANDARD.encode(result_png)),
         mask_preview_url: format!("data:image/png;base64,{}", STANDARD.encode(mask_png)),
         cache_hit,
+        cache_key: cache_key.map(str::to_owned),
     }
 }
 
@@ -490,6 +507,7 @@ async fn generate_mask_preview(
         edge_settings,
         settings,
         request_key,
+        cache_key_hint,
     } = request;
     validate_mask_recipe(&mask_recipe)
         .map_err(|error| CommandError::new("preview.invalidMask", error))?;
@@ -498,7 +516,6 @@ async fn generate_mask_preview(
     let controller = controller.inner().clone();
     controller.gate.mark_latest(request_key.clone());
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        let model_path = model::ensure_default_model(&app)?;
         let cache_request = serde_json::json!({
             "kind": "automatic",
             "rotation": rotation,
@@ -508,25 +525,65 @@ async fn generate_mask_preview(
             "resizeValue": settings.resize_value,
             "preventUpscale": settings.prevent_upscale,
         });
-        let cache_key =
-            preview_cache::cache_key(Path::new(&path), &[model_path.as_path()], &cache_request)
-                .ok();
-        if let Some(cached) = cache_key
+        let fast_cache_key = model::existing_default_model(&app)?.and_then(|model_path| {
+            preview_cache::cache_key(Path::new(&path), &[model_path.as_path()], &cache_request).ok()
+        });
+        let fast_lookup_key = cache_key_hint
             .as_deref()
-            .and_then(|key| preview_cache::load(&app, key).ok().flatten())
-        {
+            .filter(|hint| fast_cache_key.as_deref() == Some(*hint))
+            .or(fast_cache_key.as_deref());
+        if let Some((key, cached)) = fast_lookup_key.and_then(|key| {
+            preview_cache::load(&app, key)
+                .ok()
+                .flatten()
+                .map(|cached| (key, cached))
+        }) {
             if !controller.gate.is_latest(&request_key) {
                 return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
             }
+            PREVIEW_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
             return Ok::<MaskPreviewBundle, String>(mask_preview_bundle_from_png(
                 &cached.result_png,
                 &cached.mask_png,
                 true,
+                Some(key),
             ));
+        }
+        let model_path = model::ensure_default_model(&app)?;
+        let cache_key =
+            preview_cache::cache_key(Path::new(&path), &[model_path.as_path()], &cache_request)
+                .ok();
+        if cache_key != fast_cache_key {
+            if let Some((key, cached)) = cache_key.as_deref().and_then(|key| {
+                preview_cache::load(&app, key)
+                    .ok()
+                    .flatten()
+                    .map(|cached| (key, cached))
+            }) {
+                if !controller.gate.is_latest(&request_key) {
+                    return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
+                }
+                PREVIEW_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+                return Ok::<MaskPreviewBundle, String>(mask_preview_bundle_from_png(
+                    &cached.result_png,
+                    &cached.mask_png,
+                    true,
+                    Some(key),
+                ));
+            }
         }
         if !controller.gate.is_latest(&request_key) {
             return Err("새 미리보기 요청으로 대체되었습니다.".to_owned());
         }
+        PREVIEW_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+        PREVIEW_INFERENCE_RUNS.fetch_add(1, Ordering::Relaxed);
+        let _ = app.emit(
+            "preview-inference-started",
+            PreviewInferenceStarted {
+                request_key: request_key.clone(),
+            },
+        );
+        let inference_started = Instant::now();
         let mut slot = controller
             .engine
             .lock()
@@ -550,11 +607,19 @@ async fn generate_mask_preview(
                 &settings,
                 &edge_settings,
             )?;
+        PREVIEW_INFERENCE_MS.fetch_add(
+            inference_started
+                .elapsed()
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64,
+            Ordering::Relaxed,
+        );
         drop(slot);
         if !controller.gate.is_latest(&request_key) {
             return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
         }
-        let (bundle, result_png, mask_png) = encode_mask_preview_bundle(result, mask)?;
+        let (bundle, result_png, mask_png) =
+            encode_mask_preview_bundle(result, mask, cache_key.as_deref())?;
         if !controller.gate.is_latest(&request_key) {
             return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
         }
@@ -581,6 +646,7 @@ async fn generate_sam_preview(
         edge_settings,
         settings,
         request_key,
+        cache_key_hint,
     } = request;
     validate_mask_recipe(&mask_recipe)
         .map_err(|error| CommandError::new("preview.invalidMask", error))?;
@@ -589,7 +655,6 @@ async fn generate_sam_preview(
     let controller = controller.inner().clone();
     controller.gate.mark_latest(request_key.clone());
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        let paths = sam::ensure_models(&app)?;
         let cache_request = serde_json::json!({
             "kind": "sam",
             "rotation": rotation,
@@ -599,28 +664,73 @@ async fn generate_sam_preview(
             "resizeValue": settings.resize_value,
             "preventUpscale": settings.prevent_upscale,
         });
+        let fast_cache_key = sam::existing_model_paths(&app)?.and_then(|paths| {
+            preview_cache::cache_key(
+                Path::new(&path),
+                &[paths.encoder.as_path(), paths.decoder.as_path()],
+                &cache_request,
+            )
+            .ok()
+        });
+        let fast_lookup_key = cache_key_hint
+            .as_deref()
+            .filter(|hint| fast_cache_key.as_deref() == Some(*hint))
+            .or(fast_cache_key.as_deref());
+        if let Some((key, cached)) = fast_lookup_key.and_then(|key| {
+            preview_cache::load(&app, key)
+                .ok()
+                .flatten()
+                .map(|cached| (key, cached))
+        }) {
+            if !controller.gate.is_latest(&request_key) {
+                return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
+            }
+            PREVIEW_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+            return Ok::<MaskPreviewBundle, String>(mask_preview_bundle_from_png(
+                &cached.result_png,
+                &cached.mask_png,
+                true,
+                Some(key),
+            ));
+        }
+        let paths = sam::ensure_models(&app)?;
         let cache_key = preview_cache::cache_key(
             Path::new(&path),
             &[paths.encoder.as_path(), paths.decoder.as_path()],
             &cache_request,
         )
         .ok();
-        if let Some(cached) = cache_key
-            .as_deref()
-            .and_then(|key| preview_cache::load(&app, key).ok().flatten())
-        {
-            if !controller.gate.is_latest(&request_key) {
-                return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
+        if cache_key != fast_cache_key {
+            if let Some((key, cached)) = cache_key.as_deref().and_then(|key| {
+                preview_cache::load(&app, key)
+                    .ok()
+                    .flatten()
+                    .map(|cached| (key, cached))
+            }) {
+                if !controller.gate.is_latest(&request_key) {
+                    return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
+                }
+                PREVIEW_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+                return Ok::<MaskPreviewBundle, String>(mask_preview_bundle_from_png(
+                    &cached.result_png,
+                    &cached.mask_png,
+                    true,
+                    Some(key),
+                ));
             }
-            return Ok::<MaskPreviewBundle, String>(mask_preview_bundle_from_png(
-                &cached.result_png,
-                &cached.mask_png,
-                true,
-            ));
         }
         if !controller.gate.is_latest(&request_key) {
             return Err("새 미리보기 요청으로 대체되었습니다.".to_owned());
         }
+        PREVIEW_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+        PREVIEW_INFERENCE_RUNS.fetch_add(1, Ordering::Relaxed);
+        let _ = app.emit(
+            "preview-inference-started",
+            PreviewInferenceStarted {
+                request_key: request_key.clone(),
+            },
+        );
+        let inference_started = Instant::now();
         let mut slot = controller
             .engine
             .lock()
@@ -644,11 +754,19 @@ async fn generate_sam_preview(
                 &settings,
                 &edge_settings,
             )?;
+        PREVIEW_INFERENCE_MS.fetch_add(
+            inference_started
+                .elapsed()
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64,
+            Ordering::Relaxed,
+        );
         drop(slot);
         if !controller.gate.is_latest(&request_key) {
             return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
         }
-        let (bundle, result_png, mask_png) = encode_mask_preview_bundle(result, mask)?;
+        let (bundle, result_png, mask_png) =
+            encode_mask_preview_bundle(result, mask, cache_key.as_deref())?;
         if !controller.gate.is_latest(&request_key) {
             return Err("더 최신 미리보기 요청으로 대체되었습니다.".to_owned());
         }
@@ -677,6 +795,10 @@ struct AppDiagnostics {
     app_data_directory: String,
     database_bytes: u64,
     preview_cache_bytes: u64,
+    preview_cache_hits: u64,
+    preview_cache_misses: u64,
+    preview_inference_runs: u64,
+    preview_inference_ms: u64,
 }
 
 #[tauri::command]
@@ -695,6 +817,10 @@ fn get_app_diagnostics(app: AppHandle) -> CommandResult<AppDiagnostics> {
         app_data_directory,
         database_bytes,
         preview_cache_bytes,
+        preview_cache_hits: PREVIEW_CACHE_HITS.load(Ordering::Relaxed),
+        preview_cache_misses: PREVIEW_CACHE_MISSES.load(Ordering::Relaxed),
+        preview_inference_runs: PREVIEW_INFERENCE_RUNS.load(Ordering::Relaxed),
+        preview_inference_ms: PREVIEW_INFERENCE_MS.load(Ordering::Relaxed),
     })
 }
 

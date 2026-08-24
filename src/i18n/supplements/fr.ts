@@ -40,4 +40,7 @@ export const frSupplement: MessageCatalog = {
   "edge.selectionRequired": "Sélectionnez d’abord un objet dans Modifier l’objet",
   "edge.selectionRequiredHelp": "Marquez l’objet à conserver avant de régler ses contours.",
   "preview.preparing": "Préparation de l’aperçu",
+  "preview.loadingCache": "Chargement de l’aperçu enregistré…",
+  "settings.diagnostics.previewCacheActivity": "Succès / échecs du cache d’aperçu",
+  "settings.diagnostics.previewInference": "Calculs d’aperçu / durée",
 };

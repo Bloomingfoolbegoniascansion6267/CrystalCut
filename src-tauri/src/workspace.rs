@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 const DATABASE_FILE: &str = "workspace.sqlite3";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +50,10 @@ pub struct PersistedAsset {
     pub output_bytes: Option<u64>,
     #[serde(default)]
     pub output_preview_key: Option<String>,
+    #[serde(default)]
+    pub edit_preview_key: Option<String>,
+    #[serde(default)]
+    pub preview_cache_key: Option<String>,
     pub error: Option<String>,
 }
 
@@ -359,6 +363,20 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                  COMMIT;",
             )
             .map_err(|error| format!("출력 미리보기 식별자 schema를 만들지 못했습니다: {error}"))?;
+        version = 7;
+    }
+    if version == 7 {
+        connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 ALTER TABLE workspace_items ADD COLUMN edit_preview_key TEXT;
+                 ALTER TABLE workspace_items ADD COLUMN preview_cache_key TEXT;
+                 PRAGMA user_version = 8;
+                 COMMIT;",
+            )
+            .map_err(|error| {
+                format!("편집 미리보기 캐시 식별자 schema를 만들지 못했습니다: {error}")
+            })?;
     }
     Ok(())
 }
@@ -498,8 +516,9 @@ fn upsert_asset(
             "INSERT INTO workspace_items(
                 id, position, name, path, size_bytes, modified_at_ms, extension, width, height,
                 exif_json, status, rotation, mask_recipe_json, edge_settings_json, metadata_policy_json,
-                resize_override_json, output_path, output_bytes, output_preview_key, error
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+                resize_override_json, output_path, output_bytes, output_preview_key,
+                edit_preview_key, preview_cache_key, error
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
              ON CONFLICT(id) DO UPDATE SET
                 position = excluded.position,
                 name = excluded.name,
@@ -519,6 +538,8 @@ fn upsert_asset(
                 output_path = excluded.output_path,
                 output_bytes = excluded.output_bytes,
                 output_preview_key = excluded.output_preview_key,
+                edit_preview_key = excluded.edit_preview_key,
+                preview_cache_key = excluded.preview_cache_key,
                 error = excluded.error
              WHERE workspace_items.position IS NOT excluded.position
                 OR workspace_items.name IS NOT excluded.name
@@ -538,6 +559,8 @@ fn upsert_asset(
                 OR workspace_items.output_path IS NOT excluded.output_path
                 OR workspace_items.output_bytes IS NOT excluded.output_bytes
                 OR workspace_items.output_preview_key IS NOT excluded.output_preview_key
+                OR workspace_items.edit_preview_key IS NOT excluded.edit_preview_key
+                OR workspace_items.preview_cache_key IS NOT excluded.preview_cache_key
                 OR workspace_items.error IS NOT excluded.error",
             params![
                 item.id,
@@ -559,6 +582,8 @@ fn upsert_asset(
                 item.output_path,
                 item.output_bytes.map(to_i64),
                 item.output_preview_key,
+                item.edit_preview_key,
+                item.preview_cache_key,
                 item.error,
             ],
         )
@@ -584,7 +609,8 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
         .prepare(
             "SELECT id, name, path, size_bytes, modified_at_ms, extension, width, height, exif_json,
                     status, rotation, mask_recipe_json, edge_settings_json, metadata_policy_json,
-                    resize_override_json, output_path, output_bytes, output_preview_key, error
+                    resize_override_json, output_path, output_bytes, output_preview_key,
+                    edit_preview_key, preview_cache_key, error
              FROM workspace_items ORDER BY position",
         )
         .map_err(|error| format!("저장된 작업 항목 query를 준비하지 못했습니다: {error}"))?;
@@ -610,6 +636,8 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
                 row.get::<_, Option<i64>>(16)?,
                 row.get::<_, Option<String>>(17)?,
                 row.get::<_, Option<String>>(18)?,
+                row.get::<_, Option<String>>(19)?,
+                row.get::<_, Option<String>>(20)?,
             ))
         })
         .map_err(|error| format!("저장된 작업 항목을 읽지 못했습니다: {error}"))?;
@@ -637,6 +665,8 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             output_path,
             output_bytes,
             output_preview_key,
+            edit_preview_key,
+            preview_cache_key,
             error,
         ) = row.map_err(|error| format!("저장된 작업 항목이 올바르지 않습니다: {error}"))?;
         if !Path::new(&path).is_file() {
@@ -677,6 +707,8 @@ fn load_from_connection(connection: &Connection) -> Result<Option<RestoredWorksp
             output_path,
             output_bytes: output_bytes.map(to_u64),
             output_preview_key,
+            edit_preview_key,
+            preview_cache_key,
             error,
         };
         if normalize_restored_asset(&mut item, modified_at_ms) {
@@ -715,6 +747,10 @@ fn normalize_restored_asset(item: &mut PersistedAsset, saved_modified_at_ms: Opt
         item.output_path = None;
         item.output_bytes = None;
         item.output_preview_key = None;
+        if source_changed {
+            item.edit_preview_key = None;
+            item.preview_cache_key = None;
+        }
         item.error = Some(if source_changed {
             "원본 파일이 변경되어 다시 처리가 필요합니다.".to_owned()
         } else if output_missing {
@@ -819,6 +855,8 @@ mod tests {
             output_path: None,
             output_bytes: None,
             output_preview_key: None,
+            edit_preview_key: None,
+            preview_cache_key: None,
             error: None,
         }
     }
@@ -859,6 +897,8 @@ mod tests {
             prevent_upscale: true,
         });
         edited.output_preview_key = Some("preview-v1-fixture".to_owned());
+        edited.edit_preview_key = Some("preview-v1-edit-fixture".to_owned());
+        edited.preview_cache_key = Some("cache-v1-fixture".to_owned());
         let snapshot = WorkspaceSnapshot {
             items: vec![edited, asset(&second, PersistedStatus::Failed)],
             settings: settings(),
@@ -895,6 +935,14 @@ mod tests {
         assert_eq!(
             restored.items[0].output_preview_key.as_deref(),
             Some("preview-v1-fixture")
+        );
+        assert_eq!(
+            restored.items[0].edit_preview_key.as_deref(),
+            Some("preview-v1-edit-fixture")
+        );
+        assert_eq!(
+            restored.items[0].preview_cache_key.as_deref(),
+            Some("cache-v1-fixture")
         );
         assert_eq!(restored.items[1].status, PersistedStatus::Failed);
         assert_eq!(restored.settings.suffix, "_bg");
@@ -955,19 +1003,27 @@ mod tests {
         let source = directory.join("photo.jpg");
         std::fs::write(&source, b"before").expect("write fixture");
         let mut processing = asset(&source, PersistedStatus::Processing);
+        processing.edit_preview_key = Some("preview-v1-processing".to_owned());
+        processing.preview_cache_key = Some("cache-v1-processing".to_owned());
         assert!(normalize_restored_asset(
             &mut processing,
             file_modified_ms(&source)
         ));
         assert_eq!(processing.status, PersistedStatus::Interrupted);
+        assert!(processing.edit_preview_key.is_some());
+        assert!(processing.preview_cache_key.is_some());
 
         let mut changed = asset(&source, PersistedStatus::Done);
+        changed.edit_preview_key = Some("preview-v1-changed".to_owned());
+        changed.preview_cache_key = Some("cache-v1-changed".to_owned());
         changed.size_bytes += 1;
         assert!(normalize_restored_asset(
             &mut changed,
             file_modified_ms(&source)
         ));
         assert_eq!(changed.status, PersistedStatus::Interrupted);
+        assert!(changed.edit_preview_key.is_none());
+        assert!(changed.preview_cache_key.is_none());
 
         std::fs::remove_file(source).expect("remove fixture");
         std::fs::remove_dir(directory).expect("remove fixture directory");

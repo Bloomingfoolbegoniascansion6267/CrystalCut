@@ -19,7 +19,7 @@ const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const TOAST_DURATION_MS = 5000;
 const AUTO_OPEN_OUTPUT_FOLDER_LIMIT = 3;
 const THUMBNAIL_PRELOAD_LIMIT = 32;
-const FULL_PREVIEW_MEMORY_LIMIT = 3;
+const FULL_PREVIEW_MEMORY_BUDGET_BYTES = 192 * 1024 * 1024;
 const ASSET_ROW_STRIDE = 59;
 const ASSET_LIST_OVERSCAN_ROWS = 8;
 const SettingsModal = lazy(() => import("./SettingsModal"));
@@ -57,7 +57,12 @@ const DEFAULT_MASK_RECIPE: ManualMaskRecipe = { mode: "automatic", strokes: [] }
 interface MaskPreviewBundle {
   resultPreviewUrl: string;
   maskPreviewUrl: string;
-  cacheHit?: boolean;
+  cacheHit: boolean;
+  cacheKey?: string;
+}
+
+interface PreviewInferenceStarted {
+  requestKey: string;
 }
 
 interface ModelDownloadProgress {
@@ -134,6 +139,17 @@ const createPreviewRequestKey = (asset: ImageAsset, recipe: ManualMaskRecipe, se
   render: previewRenderIdentity(asset, settings),
 }));
 
+const estimateFullPreviewBytes = (asset: ImageAsset) => {
+  const urls = [asset.previewUrl, asset.resultPreviewUrl, asset.editBasePreviewUrl, asset.maskPreviewUrl].filter((url): url is string => Boolean(url));
+  if (!urls.length) return 0;
+  const width = Math.max(1, asset.width ?? 1600);
+  const height = Math.max(1, asset.height ?? 1600);
+  const scale = Math.min(1, 1600 / Math.max(width, height));
+  const decodedBytes = Math.round(width * scale) * Math.round(height * scale) * 4 * urls.length;
+  const stringBytes = urls.reduce((sum, url) => sum + url.length * 2, 0);
+  return decodedBytes + stringBytes;
+};
+
 const toPersistedAsset = (asset: ImageAsset): PersistedAsset => ({
   id: asset.id,
   name: asset.name,
@@ -148,6 +164,8 @@ const toPersistedAsset = (asset: ImageAsset): PersistedAsset => ({
   outputPath: asset.outputPath,
   outputBytes: asset.outputBytes,
   outputPreviewKey: asset.outputPreviewKey,
+  editPreviewKey: asset.editPreviewKey,
+  previewCacheKey: asset.previewCacheKey,
   error: asset.error,
   maskRecipe: asset.maskRecipe,
   edgeSettings: asset.edgeSettings,
@@ -246,7 +264,8 @@ function App() {
   const workspaceSaveTimer = useRef<number | null>(null);
   const workspaceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const maskPreviewRevision = useRef(0);
-  const maskPreviewSnapshot = useRef<{ editBasePreviewUrl?: string; maskPreviewUrl?: string; editPreviewKey?: string } | null>(null);
+  const maskPreviewSnapshot = useRef<{ editBasePreviewUrl?: string; maskPreviewUrl?: string; editPreviewKey?: string; previewCacheKey?: string } | null>(null);
+  const activePreviewRequestKey = useRef("");
   const latestPreviewKeys = useRef(new Map<string, string>());
   const batchPreviewKeys = useRef(new Map<string, string>());
   const fullPreviewLru = useRef<string[]>([]);
@@ -361,25 +380,41 @@ function App() {
   const invalidateExportPlan = useCallback(() => setExportPlanRevision((revision) => revision + 1), []);
   const invalidateSavedOutput = useCallback(() => setSavedOutputRevision((revision) => revision + 1), []);
   const retainFullPreview = useCallback((assetId: string, patch: Partial<ImageAsset>) => {
-    const retainedIds = [
-      assetId,
-      ...fullPreviewLru.current.filter((id) => id !== assetId),
-    ].slice(0, FULL_PREVIEW_MEMORY_LIMIT);
-    fullPreviewLru.current = retainedIds;
-    const retained = new Set(retainedIds);
-    setAssets((current) => current.map((asset) => {
-      if (asset.id === assetId) return { ...asset, ...patch };
-      if (retained.has(asset.id) || (!asset.previewUrl && !asset.resultPreviewUrl && !asset.editBasePreviewUrl && !asset.maskPreviewUrl)) return asset;
-      return {
-        ...asset,
-        previewUrl: undefined,
-        resultPreviewUrl: undefined,
-        editBasePreviewUrl: undefined,
-        maskPreviewUrl: undefined,
-        editPreviewKey: undefined,
-      };
-    }));
+    setAssets((current) => {
+      const updated = current.map((asset) => asset.id === assetId ? { ...asset, ...patch } : asset);
+      const byId = new Map(updated.map((asset) => [asset.id, asset]));
+      const order = [assetId, ...fullPreviewLru.current.filter((id) => id !== assetId)]
+        .filter((id) => byId.has(id));
+      for (const asset of updated) {
+        if (!order.includes(asset.id) && estimateFullPreviewBytes(asset) > 0) order.push(asset.id);
+      }
+      const retained = new Set<string>();
+      let retainedBytes = 0;
+      for (const id of order) {
+        const bytes = estimateFullPreviewBytes(byId.get(id)!);
+        if (id === assetId || retainedBytes + bytes <= FULL_PREVIEW_MEMORY_BUDGET_BYTES) {
+          retained.add(id);
+          retainedBytes += bytes;
+        }
+      }
+      fullPreviewLru.current = order.filter((id) => retained.has(id));
+      return updated.map((asset) => {
+        if (retained.has(asset.id) || estimateFullPreviewBytes(asset) === 0) return asset;
+        return {
+          ...asset,
+          previewUrl: undefined,
+          resultPreviewUrl: undefined,
+          editBasePreviewUrl: undefined,
+          maskPreviewUrl: undefined,
+        };
+      });
+    });
   }, []);
+
+  useEffect(() => {
+    if (!selected || estimateFullPreviewBytes(selected) === 0) return;
+    fullPreviewLru.current = [selected.id, ...fullPreviewLru.current.filter((id) => id !== selected.id)];
+  }, [selected?.id]);
 
   const addAssets = useCallback((incoming: ImageAsset[]) => {
     if (!incoming.length) return;
@@ -578,7 +613,7 @@ function App() {
         if (payload.status === "processing") return { ...asset, status: "processing", error: undefined };
         if (payload.status === "retryingWorker") return { ...asset, status: "retrying", error: t("status.retrying") };
         if (payload.status === "completed") {
-          return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, outputPreviewKey: batchPreviewKeys.current.get(asset.id), resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, editPreviewKey: undefined, error: undefined };
+          return { ...asset, status: "done", outputPath: payload.outputPath ?? undefined, outputPreviewKey: batchPreviewKeys.current.get(asset.id), resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, error: undefined };
         }
         if (payload.status === "failed") return { ...asset, status: "failed", error: payload.error || t("notice.processingFailed") };
         if (payload.status === "cancelled") return { ...asset, status: "cancelled", error: t("notice.userCancelled") };
@@ -594,6 +629,24 @@ function App() {
       stop?.();
     };
   }, [t]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void listen<PreviewInferenceStarted>("preview-inference-started", ({ payload }) => {
+      if (!disposed && activePreviewRequestKey.current === payload.requestKey) {
+        setMaskPreviewStatus("updating");
+      }
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!isTauri() || !assets.length || isProcessing) {
@@ -667,9 +720,10 @@ function App() {
       setMaskPreviewError(null);
       return;
     }
-    setMaskPreviewStatus("idle");
+    const hasCacheReference = selected.editPreviewKey === previewRequestKey && Boolean(selected.previewCacheKey);
+    activePreviewRequestKey.current = previewRequestKey;
+    setMaskPreviewStatus(hasCacheReference ? "loadingCache" : "idle");
     setMaskPreviewError(null);
-    let statusTimer: number | null = null;
     const timer = window.setTimeout(() => {
       const command = previewRecipe.mode === "sam" ? "generate_sam_preview" : "generate_mask_preview";
       const request = invoke<MaskPreviewBundle>(command, {
@@ -680,21 +734,17 @@ function App() {
           edgeSettings: selected.edgeSettings,
           settings: selectedPreviewSettings,
           requestKey: previewRequestKey,
+          cacheKeyHint: hasCacheReference ? selected.previewCacheKey : undefined,
         },
       });
-      statusTimer = window.setTimeout(() => {
-        if (maskPreviewRevision.current === revision) setMaskPreviewStatus("updating");
-      }, 200);
-      void request.then(({ resultPreviewUrl: editBasePreviewUrl, maskPreviewUrl }) => {
-        if (statusTimer !== null) window.clearTimeout(statusTimer);
+      void request.then(({ resultPreviewUrl: editBasePreviewUrl, maskPreviewUrl, cacheKey }) => {
         if (maskPreviewRevision.current !== revision) return;
         if (latestPreviewKeys.current.get(selected.id) === previewRequestKey) {
-          retainFullPreview(selected.id, { editBasePreviewUrl, maskPreviewUrl, editPreviewKey: previewRequestKey });
+          retainFullPreview(selected.id, { editBasePreviewUrl, maskPreviewUrl, editPreviewKey: previewRequestKey, previewCacheKey: cacheKey });
         }
         setMaskPreviewStatus("current");
         setViewMode((current) => current === "mask" ? "mask" : "result");
       }).catch((error) => {
-        if (statusTimer !== null) window.clearTimeout(statusTimer);
         if (maskPreviewRevision.current !== revision) return;
         const message = String(error);
         setMaskPreviewStatus("error");
@@ -704,9 +754,9 @@ function App() {
     }, 180);
     return () => {
       window.clearTimeout(timer);
-      if (statusTimer !== null) window.clearTimeout(statusTimer);
+      if (activePreviewRequestKey.current === previewRequestKey) activePreviewRequestKey.current = "";
     };
-  }, [retainFullPreview, selected?.id, selected?.path, selected?.rotation, selected?.status, selected?.outputPath, selected?.outputPreviewKey, selected?.editPreviewKey, selected?.editBasePreviewUrl, selected?.maskPreviewUrl, previewRecipeKey, previewRenderKey, previewRequestKey, isMaskEditing, isProcessing]);
+  }, [retainFullPreview, selected?.id, selected?.path, selected?.rotation, selected?.status, selected?.outputPath, selected?.outputPreviewKey, selected?.editPreviewKey, selected?.previewCacheKey, selected?.editBasePreviewUrl, selected?.maskPreviewUrl, previewRecipeKey, previewRenderKey, previewRequestKey, isMaskEditing, isProcessing]);
 
   useEffect(() => {
     if (!selected?.outputPath || selected.resultPreviewUrl || !isTauri()) return;
@@ -836,7 +886,7 @@ function App() {
     if (!selectedId || !selected || settings.processingMode === "convert" || !isMaskRecipeReady(previewRecipe) || isProcessing) return;
     const edgeSettings = { ...selected.edgeSettings, ...patch };
     if (JSON.stringify(edgeSettings) === JSON.stringify(selected.edgeSettings)) return;
-    setMaskPreviewStatus("updating");
+    setMaskPreviewStatus("idle");
     setAssets((current) => current.map((asset) => asset.id === selectedId ? {
       ...asset,
       edgeSettings,
@@ -880,7 +930,7 @@ function App() {
       error: undefined,
     } : asset));
     invalidateExportPlan();
-    if (settings.processingMode === "removeBackground") setMaskPreviewStatus("updating");
+    if (settings.processingMode === "removeBackground") setMaskPreviewStatus("idle");
   }, [invalidateExportPlan, selected, selectedId, settings.preventUpscale, settings.processingMode]);
 
   const resetSelectedResizeOverride = useCallback(() => {
@@ -897,7 +947,7 @@ function App() {
       error: undefined,
     } : asset));
     invalidateExportPlan();
-    if (settings.processingMode === "removeBackground") setMaskPreviewStatus("updating");
+    if (settings.processingMode === "removeBackground") setMaskPreviewStatus("idle");
   }, [invalidateExportPlan, selectedId, settings.processingMode]);
 
   const updateSelectedMetadata = useCallback((patch: Partial<ImageAsset["exif"]>) => {
@@ -965,6 +1015,7 @@ function App() {
       editBasePreviewUrl: selected.editBasePreviewUrl,
       maskPreviewUrl: selected.maskPreviewUrl,
       editPreviewKey: selected.editPreviewKey,
+      previewCacheKey: selected.previewCacheKey,
     };
     setMaskDraft({
       ...selected.maskRecipe,
@@ -1094,7 +1145,7 @@ function App() {
     setBatchTotal(targets.length);
     batchPreviewKeys.current = new Map(targets.map((asset) => [asset.id, createPreviewRequestKey(asset, asset.maskRecipe, settings)]));
     setAssets((current) => current.map((asset) => targetIds.has(asset.id)
-      ? { ...asset, status: "queued", outputPath: undefined, outputBytes: undefined, outputPreviewKey: undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, editPreviewKey: undefined, error: undefined }
+      ? { ...asset, status: "queued", outputPath: undefined, outputBytes: undefined, outputPreviewKey: undefined, resultPreviewUrl: undefined, editBasePreviewUrl: undefined, maskPreviewUrl: undefined, error: undefined }
       : asset));
     try {
       const result = await invoke<BatchResult>("process_batch", {
@@ -1454,6 +1505,7 @@ function App() {
       editBasePreviewUrl: selected.editBasePreviewUrl,
       maskPreviewUrl: selected.maskPreviewUrl,
       editPreviewKey: selected.editPreviewKey,
+      previewCacheKey: selected.previewCacheKey,
     };
     setMaskDraft({
       ...selected.maskRecipe,
@@ -1490,6 +1542,7 @@ function App() {
         editBasePreviewUrl: snapshot.editBasePreviewUrl,
         maskPreviewUrl: snapshot.maskPreviewUrl,
         editPreviewKey: snapshot.editPreviewKey,
+        previewCacheKey: snapshot.previewCacheKey,
       } : asset));
     }
     maskPreviewSnapshot.current = null;
@@ -2025,7 +2078,7 @@ function App() {
                   viewMode={effectiveViewMode}
                   background={previewBackground}
                   editing={isMaskEditing}
-                  onMaskChange={(recipe) => { setMaskDraft(recipe); setMaskPreviewStatus("updating"); }}
+                  onMaskChange={(recipe) => { setMaskDraft(recipe); setMaskPreviewStatus("idle"); }}
                   onApply={applyMaskEditor}
                   onCancel={cancelMaskEditor}
                   previewStatus={maskPreviewStatus}
@@ -2225,7 +2278,7 @@ function App() {
               {settings.processingMode === "convert" ? <small className="edge-preview-state">{t("selection.removeModeOnly")}</small> : selected && <small className={`edge-preview-state ${edgeNeedsSelection ? "selection-required" : maskPreviewStatus}`}>
                 {edgeNeedsSelection
                   ? <Icon name="brush" size={11} />
-                  : maskPreviewStatus === "updating"
+                  : maskPreviewStatus === "updating" || maskPreviewStatus === "loadingCache"
                   ? <span className="spinner" />
                   : maskPreviewStatus !== "error" && hasResultView
                     ? <Icon name="check" size={11} />
@@ -2234,6 +2287,8 @@ function App() {
                   ? "edge.selectionRequired"
                   : maskPreviewStatus === "updating"
                   ? "preview.updating"
+                  : maskPreviewStatus === "loadingCache"
+                    ? "preview.loadingCache"
                   : maskPreviewStatus === "error"
                     ? "editor.previewError"
                     : hasResultView

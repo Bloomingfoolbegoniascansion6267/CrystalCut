@@ -269,4 +269,7 @@ export const jaSupplement: MessageCatalog = {
   "edge.selectionRequired": "オブジェクト編集で先に選択してください",
   "edge.selectionRequiredHelp": "残すオブジェクトを指定すると、エッジ設定を使用できます。",
   "preview.preparing": "プレビューを準備中",
+  "preview.loadingCache": "保存済みプレビューを読み込み中…",
+  "settings.diagnostics.previewCacheActivity": "プレビューキャッシュ ヒット / ミス",
+  "settings.diagnostics.previewInference": "プレビュー推論回数 / 時間",
 };

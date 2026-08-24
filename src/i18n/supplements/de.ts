@@ -40,4 +40,7 @@ export const deSupplement: MessageCatalog = {
   "edge.selectionRequired": "Zuerst ein Objekt in der Objektbearbeitung auswählen",
   "edge.selectionRequiredHelp": "Markieren Sie das zu behaltende Objekt, bevor Sie seine Kanten anpassen.",
   "preview.preparing": "Vorschau wird vorbereitet",
+  "preview.loadingCache": "Gespeicherte Vorschau wird geladen…",
+  "settings.diagnostics.previewCacheActivity": "Vorschau-Cache Treffer / Fehlschläge",
+  "settings.diagnostics.previewInference": "Vorschau-Berechnungen / Zeit",
 };

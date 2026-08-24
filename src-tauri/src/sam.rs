@@ -1,8 +1,10 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     fs::{self, File},
     io::{self, Read},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::UNIX_EPOCH,
 };
 
 use image::{imageops::FilterType as ResizeFilter, DynamicImage, GenericImageView, GrayImage};
@@ -41,6 +43,11 @@ const MASK_SIZE: u32 = 256;
 const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 const STD: [f32; 3] = [0.229, 0.224, 0.225];
 
+type VerifiedModelFingerprint = (u64, u128, String);
+type VerifiedModelCache = HashMap<PathBuf, VerifiedModelFingerprint>;
+
+static VERIFIED_MODELS: OnceLock<Mutex<VerifiedModelCache>> = OnceLock::new();
+
 #[derive(Debug, Clone)]
 pub struct SamModelPaths {
     pub encoder: PathBuf,
@@ -73,6 +80,33 @@ pub fn ensure_models(app: &AppHandle) -> Result<SamModelPaths, String> {
         "프롬프트 디코더",
     )?;
     Ok(paths)
+}
+
+pub fn existing_model_paths(app: &AppHandle) -> Result<Option<SamModelPaths>, String> {
+    if let (Ok(encoder), Ok(decoder)) = (
+        std::env::var("CRYSTALCUT_SAM_ENCODER_PATH")
+            .or_else(|_| std::env::var("CLEARCUT_SAM_ENCODER_PATH")),
+        std::env::var("CRYSTALCUT_SAM_DECODER_PATH")
+            .or_else(|_| std::env::var("CLEARCUT_SAM_DECODER_PATH")),
+    ) {
+        let paths = SamModelPaths {
+            encoder: PathBuf::from(encoder),
+            decoder: PathBuf::from(decoder),
+        };
+        return Ok((paths.encoder.is_file() && paths.decoder.is_file()).then_some(paths));
+    }
+    if let Ok(current_dir) = std::env::current_dir() {
+        let directory = current_dir.join("models").join("cache").join("slimsam");
+        let paths = SamModelPaths {
+            encoder: directory.join(ENCODER_NAME),
+            decoder: directory.join(DECODER_NAME),
+        };
+        if paths.encoder.is_file() && paths.decoder.is_file() {
+            return Ok(Some(paths));
+        }
+    }
+    let paths = installed_model_paths(app)?;
+    Ok((paths.encoder.is_file() && paths.decoder.is_file()).then_some(paths))
 }
 
 fn find_verified_models(app: &AppHandle) -> Result<Option<SamModelPaths>, String> {
@@ -205,6 +239,22 @@ fn verify_model(
             metadata.len()
         ));
     }
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let modified_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_nanos());
+    let fingerprint = (metadata.len(), modified_nanos, expected_hash.to_owned());
+    if VERIFIED_MODELS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|verified| verified.get(&canonical_path).cloned())
+        == Some(fingerprint.clone())
+    {
+        return Ok(());
+    }
     let mut file =
         File::open(path).map_err(|error| format!("SAM {label}를 열지 못했습니다: {error}"))?;
     let mut digest = Sha256::new();
@@ -221,6 +271,12 @@ fn verify_model(
     let actual = format!("{:x}", digest.finalize());
     if actual != expected_hash {
         return Err(format!("SAM {label} SHA-256이 일치하지 않습니다: {actual}"));
+    }
+    if let Ok(mut verified) = VERIFIED_MODELS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        verified.insert(canonical_path, fingerprint);
     }
     Ok(())
 }

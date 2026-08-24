@@ -44,4 +44,7 @@ export const zhCNSupplement: MessageCatalog = {
   "edge.selectionRequired": "请先在对象编辑中选择对象",
   "edge.selectionRequiredHelp": "标记要保留的对象后，才能调整边缘设置。",
   "preview.preparing": "正在准备预览",
+  "preview.loadingCache": "正在加载已保存的预览…",
+  "settings.diagnostics.previewCacheActivity": "预览缓存命中 / 未命中",
+  "settings.diagnostics.previewInference": "预览推理次数 / 时间",
 };

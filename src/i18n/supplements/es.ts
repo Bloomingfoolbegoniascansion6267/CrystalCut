@@ -40,4 +40,7 @@ export const esSupplement: MessageCatalog = {
   "edge.selectionRequired": "Primero selecciona un objeto en Editar objeto",
   "edge.selectionRequiredHelp": "Marca el objeto que quieres conservar antes de ajustar sus bordes.",
   "preview.preparing": "Preparando la vista previa",
+  "preview.loadingCache": "Cargando la vista previa guardada…",
+  "settings.diagnostics.previewCacheActivity": "Aciertos / fallos de caché de vista previa",
+  "settings.diagnostics.previewInference": "Procesamientos de vista previa / tiempo",
 };

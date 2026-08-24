@@ -1,7 +1,10 @@
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::UNIX_EPOCH,
 };
 
 use serde::Serialize;
@@ -18,6 +21,8 @@ pub const MODEL_URL: &str =
     "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx";
 pub const MODEL_SHA256: &str = "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8";
 pub const MODEL_BYTES: u64 = 4_574_861;
+
+static VERIFIED_MODELS: OnceLock<Mutex<HashMap<PathBuf, (u64, u128)>>> = OnceLock::new();
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +70,25 @@ pub fn remove_default_model(app: &AppHandle) -> Result<ModelStatus, String> {
 
 pub fn ensure_default_model(app: &AppHandle) -> Result<PathBuf, String> {
     ensure_default_model_with_progress(app, |_, _| {})
+}
+
+pub fn existing_default_model(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    if let Ok(explicit) =
+        std::env::var("CRYSTALCUT_MODEL_PATH").or_else(|_| std::env::var("CLEARCUT_MODEL_PATH"))
+    {
+        let path = PathBuf::from(explicit);
+        return Ok(path.is_file().then_some(path));
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        let development_cache = current_dir.join("models").join("cache").join("u2netp.onnx");
+        if development_cache.is_file() {
+            return Ok(Some(development_cache));
+        }
+    }
+
+    let installed = installed_model_path(app)?;
+    Ok(installed.is_file().then_some(installed))
 }
 
 pub fn ensure_default_model_with_progress(
@@ -180,6 +204,23 @@ pub fn verify_model(path: &Path) -> Result<(), String> {
         ));
     }
 
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let modified_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_nanos());
+    let fingerprint = (metadata.len(), modified_nanos);
+    if VERIFIED_MODELS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|verified| verified.get(&canonical_path).copied())
+        == Some(fingerprint)
+    {
+        return Ok(());
+    }
+
     let mut file = File::open(path).map_err(|error| format!("모델을 열지 못했습니다: {error}"))?;
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -195,6 +236,12 @@ pub fn verify_model(path: &Path) -> Result<(), String> {
     let actual = format!("{:x}", digest.finalize());
     if actual != MODEL_SHA256 {
         return Err(format!("모델 SHA-256이 일치하지 않습니다: {actual}"));
+    }
+    if let Ok(mut verified) = VERIFIED_MODELS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        verified.insert(canonical_path, fingerprint);
     }
     Ok(())
 }

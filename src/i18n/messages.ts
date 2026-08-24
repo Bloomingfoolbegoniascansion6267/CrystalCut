@@ -38,6 +38,9 @@ export const en: MessageCatalog = {
   "edge.selectionRequired": "Select an object in Object editing",
   "edge.selectionRequiredHelp": "Mark the object to keep before adjusting its edges.",
   "preview.preparing": "Preparing preview",
+  "preview.loadingCache": "Loading cached preview…",
+  "settings.diagnostics.previewCacheActivity": "Preview cache hits / misses",
+  "settings.diagnostics.previewInference": "Preview inference runs / time",
 };
 
 export const ko: MessageCatalog = {
@@ -75,4 +78,7 @@ export const ko: MessageCatalog = {
   "edge.selectionRequired": "객체 편집에서 먼저 선택하세요",
   "edge.selectionRequiredHelp": "유지할 객체를 표시하면 가장자리 설정을 사용할 수 있습니다.",
   "preview.preparing": "미리보기 준비 중",
+  "preview.loadingCache": "저장된 미리보기 불러오는 중…",
+  "settings.diagnostics.previewCacheActivity": "미리보기 캐시 적중 / 누락",
+  "settings.diagnostics.previewInference": "미리보기 추론 횟수 / 시간",
 };

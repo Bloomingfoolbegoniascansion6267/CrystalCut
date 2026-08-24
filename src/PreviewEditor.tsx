@@ -15,7 +15,7 @@ import { isMaskRecipeReady, selectionSourceForMode, type SelectionSource } from 
 
 export type PreviewViewMode = "original" | "result" | "mask" | "compare";
 export type PreviewBackground = "checker" | "light" | "dark";
-export type PreviewStatus = "idle" | "updating" | "current" | "error";
+export type PreviewStatus = "idle" | "loadingCache" | "updating" | "current" | "error";
 
 interface PreviewEditorProps {
   asset: ImageAsset;
@@ -386,7 +386,7 @@ export default function PreviewEditor({
       {viewMode === "result" && resultUrl && <span className={`preview-kind-label ${showingEditPreview ? "draft" : "saved"}`}>{resultLabel}</span>}
       {viewMode === "compare" && resultUrl && <><span className="compare-label left">{t("common.original")}</span><span className="compare-label right">{resultLabel}</span></>}
       {!editing && viewMode !== "compare" && <span className={`selection-mode-badge source-${selectionSource}`}><span><SelectionSourceIcon source={selectionSource} size={17} /></span>{sourceLabel}</span>}
-      {(editing || previewStatus === "updating" || previewStatus === "error") && <div className={`mask-preview-status ${previewStatus === "error" ? "error" : previewStatus}`} role="status" aria-live="polite" title={previewError ?? undefined}>{previewStatus === "updating" && <span className="spinner" />}{t(previewStatus === "updating" ? "editor.previewUpdating" : previewStatus === "error" ? "editor.previewError" : previewStatus === "current" ? "editor.previewCurrent" : "editor.previewReady")}</div>}
+      {(editing || previewStatus === "loadingCache" || previewStatus === "updating" || previewStatus === "error") && <div className={`mask-preview-status ${previewStatus === "error" ? "error" : previewStatus}`} role="status" aria-live="polite" title={previewError ?? undefined}>{(previewStatus === "loadingCache" || previewStatus === "updating") && <span className="spinner" />}{t(previewStatus === "loadingCache" ? "preview.loadingCache" : previewStatus === "updating" ? "editor.previewUpdating" : previewStatus === "error" ? "editor.previewError" : previewStatus === "current" ? "editor.previewCurrent" : "editor.previewReady")}</div>}
 
       {editing && (
         <>
@@ -442,7 +442,7 @@ export default function PreviewEditor({
               </div>
             )}
           </div>
-          <div className="editor-commit-actions" onPointerDown={(event) => event.stopPropagation()}><button className="editor-cancel" onClick={onCancel}>{t("common.cancel")}</button><button className="editor-apply" onClick={onApply} disabled={previewStatus === "updating"}>{t("editor.apply")}</button></div>
+          <div className="editor-commit-actions" onPointerDown={(event) => event.stopPropagation()}><button className="editor-cancel" onClick={onCancel}>{t("common.cancel")}</button><button className="editor-apply" onClick={onApply} disabled={previewStatus === "loadingCache" || previewStatus === "updating"}>{t("editor.apply")}</button></div>
           <div className="editor-toolrail" aria-label={t("editor.tools")} onPointerDown={(event) => event.stopPropagation()}>
             <button className={tool === "keep" ? "active keep" : ""} onClick={() => selectBrush("keep")} title={t("editor.brush", { tool: keepLabel })}><BrushActionIcon action="add" /><small>{keepLabel}</small></button>
             <button className={tool === "remove" ? "active remove" : ""} onClick={() => selectBrush("remove")} title={t("editor.brush", { tool: removeLabel })}><BrushActionIcon action="subtract" /><small>{removeLabel}</small></button>
