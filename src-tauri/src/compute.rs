@@ -245,7 +245,7 @@ fn build_session(model_path: &Path, preference: &ComputePreference) -> Result<Se
             | ComputeMode::CoreMlCpuAndGpu
             | ComputeMode::CoreMlCpuAndNeuralEngine
     ) {
-        use ort::execution_providers::{CoreMLComputeUnits, CoreMLExecutionProvider};
+        use ort::execution_providers::{coreml::CoreMLComputeUnits, CoreMLExecutionProvider};
         let units = match preference.mode {
             ComputeMode::CoreMlCpuAndGpu => CoreMLComputeUnits::CPUAndGPU,
             ComputeMode::CoreMlCpuAndNeuralEngine => CoreMLComputeUnits::CPUAndNeuralEngine,
